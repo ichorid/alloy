@@ -219,6 +219,32 @@ LangGraph raised `EmptyInputError`, which the engine then recorded as a
 crash -- the bead went `failed` for having been unlucky twice. Fixed: with no
 checkpoint, the adopted run starts from the recipe's initial state.
 
+## 28. codex's children leave the process group -- fixed
+
+Watching the resumed run: the node wrapper and the native codex binary
+share the session and group Alloy created, but codex's own children -- its
+MCP servers and `codex-linux-sandbox` -- call `setpgid` and sit in groups of
+their own. A plain `killpg` (entry 8) would have left them running. Fixed:
+`terminate_process_tree` walks `/proc` for every process in the session and
+every descendant by parent id, signals them all, and sweeps survivors with
+SIGKILL after the grace period. Covered by a test with a grandchild in its
+own group.
+
+## 29. Codex ran out of credits mid-run; the fallback carried on -- fixed/observed
+
+Iteration 2's codex call ended after 101 s with `turn.failed: Your workspace
+is out of credits`. The per-role fallback (entry 18) switched to Claude Fable
+without operator involvement -- the first real exercise of that path, one
+hour after it was written. Left as designed.
+
+## 30. The recorded error was stderr noise, not the reason -- fixed
+
+For that same failure the ledger said `Reading additional input from
+stdin...` -- codex's first stderr line -- because `AgentResult.error`
+preferred stderr over the parsed answer. The parsed answer *was* the JSONL
+`error` event with the real message. Fixed: the failure message is the
+parsed text first, then stderr.
+
 ## 23. The tests role can be wrong and only the implementer notices -- open
 
 Claude wrote a test asserting the checkpoint stage after a human gate is

@@ -33,20 +33,76 @@ def signal_group(pid: int, sig: int) -> bool:
         return False
 
 
+def tree_pids(root: int) -> set[int]:
+    """`root`, every process in its session, and every descendant by ppid.
+
+    The session leader's group is not enough: the codex CLI's children (its
+    MCP servers, `codex-linux-sandbox`) call `setpgid`/`setsid` and would
+    survive a plain `killpg`. Walking /proc catches them either way.
+    """
+    children: dict[int, list[int]] = {}
+    by_session: dict[int, list[int]] = {}
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return {root}
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat", encoding="utf-8") as handle:
+                fields = handle.read().rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        # fields after the comm: state ppid pgrp session ...
+        try:
+            ppid, session = int(fields[1]), int(fields[3])
+        except (ValueError, IndexError):
+            continue
+        children.setdefault(ppid, []).append(int(entry))
+        by_session.setdefault(session, []).append(int(entry))
+    found = {root}
+    queue = [root]
+    while queue:
+        pid = queue.pop()
+        for child in children.get(pid, []):
+            if child not in found:
+                found.add(child)
+                queue.append(child)
+    found.update(by_session.get(root, []))
+    return found
+
+
+def signal_tree(root: int, sig: int) -> set[int]:
+    """Signal the whole tree under `root` (see `tree_pids`); returns what was hit."""
+    pids = tree_pids(root)
+    signal_group(root, sig)
+    for pid in pids:
+        try:
+            os.kill(pid, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
+    return pids
+
+
 async def terminate_process_tree(
     process: asyncio.subprocess.Process, *, grace_s: float = DEFAULT_GRACE_S
 ) -> None:
-    """SIGTERM the group, wait `grace_s`, SIGKILL what is left, reap the leader."""
+    """SIGTERM the tree, wait `grace_s`, SIGKILL what is left, reap the leader."""
     if process.returncode is not None:
         return
-    signal_group(process.pid, signal.SIGTERM)
+    signal_tree(process.pid, signal.SIGTERM)
     try:
         await asyncio.wait_for(process.wait(), timeout=grace_s)
-        return
     except asyncio.TimeoutError:
         pass
-    signal_group(process.pid, signal.SIGKILL)
-    await process.wait()
+    # Descendants that ignored SIGTERM, or were re-parented when the leader
+    # died, are still in the session: sweep them.
+    survivors = {pid for pid in tree_pids(process.pid) if pid != process.pid and pid_alive(pid)}
+    if process.returncode is None or survivors:
+        signal_tree(process.pid, signal.SIGKILL)
+        if process.returncode is None:
+            await process.wait()
 
 
 def pid_alive(pid: int | None) -> bool:

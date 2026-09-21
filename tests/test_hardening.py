@@ -120,6 +120,28 @@ async def test_a_timed_out_harness_is_gone_afterwards(fake_harnesses, project, t
     assert not pid_alive(int(pidfile.read_text()))
 
 
+async def test_grandchildren_in_their_own_process_group_die_too(
+    fake_harnesses, project, tmp_path
+):
+    """codex's sandbox helpers setpgid themselves; a bare killpg misses them."""
+    grandchild = tmp_path / "grandchild.pid"
+    fake_harnesses.configure(
+        {"implement": {"sleep": 30, "detached_child_pidfile": str(grandchild)}}
+    )
+    registry = RunnerRegistry(log_dir=tmp_path / "logs")
+
+    result = await registry.get("codex").run(
+        "Implement the smallest change.", project, timeout=timedelta(seconds=1)
+    )
+
+    assert not result.ok
+    pid = int(grandchild.read_text())
+    deadline = time.monotonic() + 3
+    while pid_alive(pid) and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+    assert not pid_alive(pid)
+
+
 # -- journal 18: per-role fallback --------------------------------------------
 
 

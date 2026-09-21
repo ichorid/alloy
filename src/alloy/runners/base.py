@@ -90,6 +90,15 @@ def _balanced_objects(text: str) -> list[str]:
     return spans
 
 
+def _failure_message(text: str, stderr: str, exit_code: int) -> str:
+    """What to record for a failed call: the parsed answer first (for codex
+    that is the JSONL `error` event, e.g. "out of credits"), then stderr --
+    whose first line is often just noise like "Reading additional input
+    from stdin..."."""
+    parts = [part.strip() for part in (text, stderr) if part and part.strip()]
+    return clip("\n".join(parts), 1000) or f"exit {exit_code}"
+
+
 def schema_instructions(schema: dict[str, Any]) -> str:
     """Prompt suffix for harnesses without native structured output."""
     return (
@@ -240,7 +249,7 @@ class CLIRunner:
             usage=usage,
             log_path=log_path,
             prompt_hash=digest,
-            error=None if ok else clip(stderr or text, 1000) or f"exit {exit_code}",
+            error=None if ok else _failure_message(text, stderr, exit_code),
             session_id=session_id,
         )
 

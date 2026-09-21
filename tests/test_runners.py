@@ -76,6 +76,17 @@ async def test_nonzero_exit_is_a_failed_result_not_an_exception(
     assert "rate limited" in result.error
 
 
+async def test_codex_error_event_leads_the_failure_message(fake_harnesses, project, tmp_path):
+    """codex prints chatter on stderr; the JSONL error event is the real reason."""
+    fake_harnesses.configure(
+        {"implement": {"exit": 1, "stderr": "Reading additional input from stdin...\n",
+                       "text": "Your workspace is out of credits."}}
+    )
+    registry = RunnerRegistry(log_dir=tmp_path / "logs")
+    result = await registry.get("codex").run("Implement the smallest change.", project)
+    assert result.error.startswith("Your workspace is out of credits.")
+
+
 async def test_timeout_is_reported_not_raised(fake_harnesses, project, tmp_path):
     fake_harnesses.configure({"implement": {"sleep": 5}})
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
