@@ -239,6 +239,77 @@ async def test_a_slow_snapshot_source_does_not_block_quitting():
     assert elapsed < 0.5
 
 
+# -- detail pane ---------------------------------------------------------------
+
+
+def _detail(app: MonitorApp) -> Static:
+    return app.query_one("#detail", Static)
+
+
+def _detail_text(app: MonitorApp) -> str:
+    return str(getattr(_detail(app), "_Static__content", ""))
+
+
+async def test_enter_shows_the_detail_pane_and_enter_again_hides_it():
+    app = MonitorApp(snapshot_source=lambda: TWO_RUNS, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert _detail(app).display is False
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert _detail(app).display is True
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert _detail(app).display is False
+
+
+async def test_l_toggles_the_detail_pane_like_enter():
+    app = MonitorApp(snapshot_source=lambda: TWO_RUNS, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        await pilot.press("l")
+        await pilot.pause()
+        assert _detail(app).display is True
+
+        await pilot.press("l")
+        await pilot.pause()
+        assert _detail(app).display is False
+
+
+async def test_moving_the_cursor_with_the_pane_open_updates_its_content():
+    app = MonitorApp(snapshot_source=lambda: TWO_RUNS, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        await pilot.press("enter")
+        await pilot.pause()
+        first_content = _detail_text(app)
+
+        await pilot.press("j")
+        await pilot.pause()
+        second_content = _detail_text(app)
+
+        assert first_content != second_content
+
+
+async def test_selected_run_disappearing_hides_the_detail_pane_instead_of_raising():
+    app = MonitorApp(snapshot_source=lambda: THREE_RUNS, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        await pilot.press("j", "j", "enter")
+        await pilot.pause()
+        assert _detail(app).display is True
+
+        app.apply_snapshot(ZERO_RUNS)
+        await pilot.pause()
+
+        assert _detail(app).display is False
+
+
 # -- CLI: `alloy monitor --once` (plain text, no --json) -----------------------
 
 
