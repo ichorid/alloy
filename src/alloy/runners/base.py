@@ -1,0 +1,256 @@
+"""Common interface and subprocess plumbing for coding-agent harnesses.
+
+Every adapter turns one CLI into an :class:`AgentResult`. Provider quirks --
+flag names, JSON envelopes, how structured output is coaxed out -- stop here and
+never reach the workflow graph.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+import shutil
+import time
+from datetime import timedelta
+from pathlib import Path
+from typing import Any, Protocol, runtime_checkable
+
+from alloy.models import AgentResult, RunnerUnavailable, clip, prompt_hash, utcnow
+
+DEFAULT_TIMEOUT = timedelta(minutes=20)
+
+_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+
+
+@runtime_checkable
+class AgentRunner(Protocol):
+    name: str
+
+    async def run(
+        self,
+        prompt: str,
+        cwd: Path,
+        *,
+        model: str | None = None,
+        timeout: timedelta | None = None,
+        structured_schema: dict | None = None,
+    ) -> AgentResult: ...
+
+
+def extract_json_object(text: str) -> dict[str, Any] | None:
+    """Best-effort recovery of a JSON object from free-form agent output."""
+    if not text:
+        return None
+    candidates: list[str] = []
+    stripped = text.strip()
+    if stripped.startswith("{"):
+        candidates.append(stripped)
+    candidates.extend(reversed(_FENCE.findall(text)))
+    candidates.extend(reversed(_balanced_objects(text)))
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _balanced_objects(text: str) -> list[str]:
+    """Every top-level {...} span, in order of appearance."""
+    spans: list[str] = []
+    depth = 0
+    start = -1
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}":
+            if depth:
+                depth -= 1
+                if depth == 0 and start >= 0:
+                    spans.append(text[start : index + 1])
+    return spans
+
+
+def schema_instructions(schema: dict[str, Any]) -> str:
+    """Prompt suffix for harnesses without native structured output."""
+    return (
+        "\n\n---\nRespond with a single JSON object and nothing else -- no prose "
+        "before or after, no markdown fence. It must validate against this schema:\n"
+        f"{json.dumps(schema, indent=2)}\n"
+    )
+
+
+class CLIRunner:
+    """Base adapter: builds argv, runs it, records raw output, normalizes the result.
+
+    Subclasses supply :meth:`build_command` and :meth:`parse`.
+    """
+
+    name: str = "cli"
+    binary: str = ""
+    default_model: str | None = None
+    supports_native_schema: bool = False
+
+    def __init__(
+        self,
+        binary: str | None = None,
+        *,
+        default_model: str | None = None,
+        extra_args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        log_dir: Path | None = None,
+    ) -> None:
+        self.binary = binary or self.binary
+        self.default_model = default_model or self.default_model
+        self.extra_args = list(extra_args or [])
+        self.env_overrides = dict(env or {})
+        self.log_dir = log_dir
+
+    # -- capability -------------------------------------------------------
+
+    def resolve_binary(self) -> str | None:
+        return shutil.which(self.binary)
+
+    def available(self) -> bool:
+        return self.resolve_binary() is not None
+
+    # -- subclass hooks ---------------------------------------------------
+
+    def build_command(
+        self, prompt: str, *, model: str | None, structured_schema: dict | None
+    ) -> list[str]:
+        """Arguments after the binary."""
+        raise NotImplementedError
+
+    def build_prompt(self, prompt: str, structured_schema: dict | None) -> str:
+        if structured_schema and not self.supports_native_schema:
+            return prompt + schema_instructions(structured_schema)
+        return prompt
+
+    def parse(self, stdout: str, stderr: str, exit_code: int) -> tuple[str, dict | None, dict, str | None]:
+        """Return ``(text, structured, usage, session_id)``."""
+        return stdout.strip(), extract_json_object(stdout), {}, None
+
+    # -- execution --------------------------------------------------------
+
+    async def run(
+        self,
+        prompt: str,
+        cwd: Path,
+        *,
+        model: str | None = None,
+        timeout: timedelta | None = None,
+        structured_schema: dict | None = None,
+    ) -> AgentResult:
+        binary_path = self.resolve_binary()
+        if binary_path is None:
+            raise RunnerUnavailable(f"{self.name}: '{self.binary}' not found on PATH")
+
+        model = model or self.default_model
+        effective_prompt = self.build_prompt(prompt, structured_schema)
+        argv = [
+            binary_path,
+            *self.build_command(
+                effective_prompt, model=model, structured_schema=structured_schema
+            ),
+        ]
+        digest = prompt_hash(effective_prompt)
+        started = utcnow()
+        clock = time.monotonic()
+
+        env = {**os.environ, **self.env_overrides}
+        limit_s = (timeout or DEFAULT_TIMEOUT).total_seconds()
+
+        timed_out = False
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=str(cwd),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+        except OSError as exc:
+            raise RunnerUnavailable(f"{self.name}: cannot execute {binary_path}: {exc}") from exc
+
+        try:
+            raw_out, raw_err = await asyncio.wait_for(process.communicate(), timeout=limit_s)
+        except asyncio.TimeoutError:
+            timed_out = True
+            raw_out, raw_err = b"", b""
+            process.kill()
+            await process.wait()
+
+        stdout = raw_out.decode("utf-8", "replace")
+        stderr = raw_err.decode("utf-8", "replace")
+        exit_code = -1 if timed_out else (process.returncode or 0)
+        duration = time.monotonic() - clock
+
+        log_path = self._write_log(digest, argv, effective_prompt, stdout, stderr, exit_code)
+
+        if timed_out:
+            return AgentResult(
+                runner=self.name, model=model, ok=False, exit_code=exit_code,
+                text="", structured=None, started_at=started, ended_at=utcnow(),
+                duration_s=duration, log_path=log_path, prompt_hash=digest,
+                error=f"timed out after {limit_s:.0f}s",
+            )
+
+        text, structured, usage, session_id = self.parse(stdout, stderr, exit_code)
+        ok = exit_code == 0
+        if ok and structured_schema and structured is None:
+            structured = extract_json_object(text)
+        return AgentResult(
+            runner=self.name,
+            model=model,
+            ok=ok,
+            exit_code=exit_code,
+            text=clip(text, 20000),
+            structured=structured,
+            started_at=started,
+            ended_at=utcnow(),
+            duration_s=duration,
+            usage=usage,
+            log_path=log_path,
+            prompt_hash=digest,
+            error=None if ok else clip(stderr or text, 1000) or f"exit {exit_code}",
+            session_id=session_id,
+        )
+
+    def _write_log(
+        self, digest: str, argv: list[str], prompt: str, stdout: str, stderr: str, exit_code: int
+    ) -> str | None:
+        """Raw transcripts live on disk, never in graph state."""
+        if self.log_dir is None:
+            return None
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        path = self.log_dir / f"{int(time.time() * 1000)}-{self.name}-{digest}.json"
+        payload = {
+            "runner": self.name,
+            "argv": argv,
+            "prompt": prompt,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return str(path)

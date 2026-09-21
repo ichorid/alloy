@@ -1,0 +1,307 @@
+"""Starting, resuming and finishing one task's workflow.
+
+The engine is the only place that knows how Beads status, the worktree, the run
+ledger and the LangGraph checkpoint fit together -- and it keeps them consistent
+whether a run ends normally, pauses for a human, or dies mid-flight.
+"""
+
+from __future__ import annotations
+
+import os
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from langgraph.types import Command
+
+from alloy import beads as bd
+from alloy import recipes
+from alloy.beads import Bead, BeadsClient
+from alloy.checkpoints import has_pending_interrupt, open_checkpointer, read_checkpoint
+from alloy.config import ConfigError, RecipeConfig, load_recipe
+from alloy.models import Outcome
+from alloy.paths import AlloyPaths
+from alloy.runners import RunnerRegistry
+from alloy.runtime import RunContext
+from alloy.store import (
+    RUN_CANCELLED,
+    RUN_DONE,
+    RUN_FAILED,
+    RUN_RUNNING,
+    RUN_WAITING_HUMAN,
+    Store,
+)
+from alloy.worktree import WorktreeManager
+
+RECURSION_LIMIT = 200
+
+
+class EngineError(RuntimeError):
+    pass
+
+
+@dataclass
+class RunResult:
+    bead_id: str
+    run_id: str
+    outcome: str
+    reason: str = ""
+    interrupt: dict[str, Any] | None = None
+    worktree: str | None = None
+
+    @property
+    def paused(self) -> bool:
+        return self.outcome == Outcome.WAITING_HUMAN.value
+
+
+@dataclass
+class Engine:
+    repo: Path
+    paths: AlloyPaths
+    store: Store
+    beads: BeadsClient
+
+    @classmethod
+    def open(cls, repo: Path | str, root: Path | str | None = None) -> "Engine":
+        paths = AlloyPaths.resolve(root).ensure()
+        repo = Path(repo).resolve()
+        return cls(
+            repo=repo,
+            paths=paths,
+            store=Store(paths.alloy_db),
+            beads=BeadsClient(repo=repo),
+        )
+
+    # -- public API -------------------------------------------------------
+
+    async def run(self, bead_id: str, *, recipe_name: str | None = None) -> RunResult:
+        """Start a fresh run, or continue one that was interrupted by a crash."""
+        bead = self.beads.show(bead_id)
+        existing = self._resumable_run(bead_id)
+        if existing is not None:
+            return await self._execute(
+                bead, existing["recipe"], run_id=existing["run_id"],
+                thread_id=existing["thread_id"], resume_payload=None,
+            )
+
+        name = recipe_name or bead.recipe
+        if not name:
+            raise EngineError(
+                f"{bead_id} has no recipe; set one with "
+                f"`bd update {bead_id} --set-metadata {bd.META_RECIPE}=tdd-loop`"
+            )
+        if bead.status not in (bd.STATUS_READY, bd.STATUS_IMPLEMENTING):
+            raise EngineError(
+                f"{bead_id} is '{bead.status}'; only '{bd.STATUS_READY}' beads can start"
+            )
+        if bead.status == bd.STATUS_READY and not self.beads.claim(bead_id):
+            raise EngineError(f"{bead_id} was claimed by someone else")
+        return await self._execute(bead, name, run_id=None, resume_payload=None)
+
+    async def resume(self, bead_id: str, instructions: str = "") -> RunResult:
+        """Continue a paused or crashed run, optionally answering the human gate."""
+        record = self.store.latest_run_for_bead(bead_id)
+        if record is None:
+            raise EngineError(f"no run recorded for {bead_id}")
+        if record["status"] in (RUN_DONE, RUN_CANCELLED):
+            raise EngineError(f"run for {bead_id} already finished ({record['status']})")
+        bead = self.beads.show(bead_id)
+        pending = has_pending_interrupt(self.paths.workflows_db, record["thread_id"])
+        return await self._execute(
+            bead,
+            record["recipe"],
+            run_id=record["run_id"],
+            thread_id=record["thread_id"],
+            resume_payload={"instructions": instructions} if pending else None,
+        )
+
+    def cancel(self, bead_id: str) -> bool:
+        record = self.store.latest_run_for_bead(bead_id)
+        if record is None or record["status"] in (RUN_DONE, RUN_FAILED, RUN_CANCELLED):
+            return False
+        self.store.finish_run(
+            record["run_id"], status=RUN_CANCELLED,
+            outcome=Outcome.CANCELLED.value, reason="cancelled by operator",
+        )
+        self.beads.set_status(bead_id, bd.STATUS_READY)
+        self.beads.note(bead_id, f"alloy: run {record['run_id']} cancelled; "
+                                 f"worktree left at {record['worktree']}")
+        return True
+
+    # -- graph plumbing ---------------------------------------------------
+
+    def load_config(self, name: str) -> RecipeConfig:
+        return load_recipe(name, alloy_root=self.paths.root, project=self.repo)
+
+    def build_context(
+        self, bead: Bead, recipe_name: str, *, run_id: str, checkpointer: Any
+    ) -> RunContext:
+        config = self.load_config(recipe_name)
+        worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
+        worktree = worktrees.ensure(bead.id)
+        log_dir = self.paths.run_logs(run_id)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        return RunContext(
+            bead=bead,
+            recipe=config,
+            run_id=run_id,
+            worktree=worktree,
+            worktrees=worktrees,
+            registry=RunnerRegistry(config.runners, log_dir=log_dir),
+            store=self.store,
+            checkpointer=checkpointer,
+            log_dir=log_dir,
+            beads=self.beads,
+        )
+
+    # -- internals --------------------------------------------------------
+
+    async def _execute(
+        self,
+        bead: Bead,
+        recipe_name: str,
+        *,
+        run_id: str | None,
+        resume_payload: dict[str, Any] | None,
+        thread_id: str | None = None,
+    ) -> RunResult:
+        recipe = recipes.get(recipe_name)
+        fresh = run_id is None
+        run_id = run_id or uuid.uuid4().hex
+        # One graph thread per run, not per bead: re-running a cancelled bead
+        # must start from an empty graph, not inherit the abandoned one.
+        thread_id = thread_id or run_id
+
+        async with open_checkpointer(self.paths.workflows_db) as checkpointer:
+            try:
+                ctx = self.build_context(
+                    bead, recipe_name, run_id=run_id, checkpointer=checkpointer
+                )
+            except (ConfigError, KeyError) as exc:
+                raise EngineError(str(exc)) from exc
+
+            if fresh:
+                self.store.create_run(
+                    run_id=run_id, bead_id=bead.id, thread_id=thread_id, recipe=recipe_name,
+                    repo=self.repo, worktree=ctx.worktree.path, branch=ctx.worktree.branch,
+                    log_dir=ctx.log_dir,
+                )
+            else:
+                self.store.update_run(run_id, status=RUN_RUNNING, pid=os.getpid())
+
+            self.beads.set_metadata(bead.id, {
+                bd.META_RUN_ID: run_id,
+                bd.META_WORKTREE: str(ctx.worktree.path),
+                bd.META_BRANCH: ctx.worktree.branch,
+                bd.META_RECIPE: recipe_name,
+            })
+            if bead.status != bd.STATUS_IMPLEMENTING:
+                self.beads.set_status(bead.id, bd.STATUS_IMPLEMENTING)
+
+            graph = recipe.build_graph(ctx)
+            config = {
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": RECURSION_LIMIT,
+            }
+
+            if resume_payload is not None:
+                payload: Any = Command(resume=resume_payload)
+            elif fresh:
+                payload = recipe.initial_state(ctx)
+            else:
+                payload = None  # continue from the last checkpoint
+
+            try:
+                final = await graph.ainvoke(payload, config)
+            except Exception as exc:
+                # A cancellation is not an Exception, so an interrupted process
+                # leaves the run marked running -- which is what makes it
+                # recoverable later. Only a genuine error fails the task here.
+                self.store.finish_run(run_id, status=RUN_FAILED,
+                                      outcome=Outcome.FAILED.value, reason=str(exc))
+                self.beads.set_status(bead.id, bd.STATUS_FAILED)
+                self.beads.note(bead.id, f"alloy: run {run_id} crashed: {exc}. "
+                                         f"Worktree kept at {ctx.worktree.path}")
+                raise
+
+            return self._settle(ctx, bead, recipe_name, run_id, final)
+
+    def _settle(
+        self, ctx: RunContext, bead: Bead, recipe_name: str, run_id: str, final: dict[str, Any]
+    ) -> RunResult:
+        config = ctx.recipe
+        pending = final.get("__interrupt__")
+        if pending:
+            payload = _interrupt_payload(pending)
+            self.store.update_run(run_id, status=RUN_WAITING_HUMAN, stage="waiting-human",
+                                  pid=None)
+            self.beads.set_status(bead.id, bd.STATUS_WAITING_HUMAN)
+            self.beads.set_metadata(bead.id, {bd.META_STAGE: "waiting-human"})
+            self.beads.note(
+                bead.id,
+                f"alloy: waiting for human -- {payload.get('reason', '')} "
+                f"(resume with `alloy resume {bead.id}`)",
+            )
+            return RunResult(bead.id, run_id, Outcome.WAITING_HUMAN.value,
+                             reason=str(payload.get("reason", "")), interrupt=payload,
+                             worktree=str(ctx.worktree.path))
+
+        outcome = final.get("outcome") or Outcome.FAILED.value
+        reason = final.get("outcome_reason", "")
+
+        if outcome == Outcome.DONE.value:
+            self.store.finish_run(run_id, status=RUN_DONE, outcome=outcome, reason=reason)
+            self.beads.set_status(bead.id, config.on_success_status)
+            self.beads.set_metadata(bead.id, {bd.META_STAGE: "finished"})
+            self.beads.note(
+                bead.id,
+                f"alloy: {recipe_name} succeeded in {final.get('iteration', 0)} iteration(s) "
+                f"on branch {ctx.worktree.branch}. {reason}",
+            )
+            if config.cleanup_worktree_on_success:
+                ctx.worktrees.remove(bead.id)
+        else:
+            self.store.finish_run(run_id, status=RUN_FAILED, outcome=outcome, reason=reason)
+            self.beads.set_status(bead.id, bd.STATUS_FAILED)
+            self.beads.set_metadata(bead.id, {bd.META_STAGE: outcome})
+            self.beads.note(
+                bead.id,
+                f"alloy: {recipe_name} failed after {final.get('iteration', 0)} iteration(s): "
+                f"{reason}. Worktree kept at {ctx.worktree.path}",
+            )
+        return RunResult(bead.id, run_id, outcome, reason=reason,
+                         worktree=str(ctx.worktree.path))
+
+    def _resumable_run(self, bead_id: str) -> dict[str, Any] | None:
+        """A run left behind by a crash: marked running, but nobody is running it."""
+        record = self.store.latest_run_for_bead(bead_id)
+        if record is None:
+            return None
+        if record["status"] == RUN_RUNNING and not _pid_alive(record["pid"]):
+            return record
+        return None
+
+    def graph_snapshot(self, bead_id: str) -> dict[str, Any] | None:
+        """The last persisted graph state of this bead's most recent run."""
+        record = self.store.latest_run_for_bead(bead_id)
+        if record is None:
+            return None
+        return read_checkpoint(self.paths.workflows_db, record["thread_id"])
+
+
+def _interrupt_payload(pending: Any) -> dict[str, Any]:
+    if isinstance(pending, (list, tuple)) and pending:
+        first = pending[0]
+        value = getattr(first, "value", first)
+        return value if isinstance(value, dict) else {"reason": str(value)}
+    if isinstance(pending, dict):
+        return pending
+    return {"reason": str(pending)}
+
+
+def _pid_alive(pid: int | None) -> bool:
+    from alloy.store import _pid_alive as impl
+
+    return impl(pid)
+
