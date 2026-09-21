@@ -328,10 +328,14 @@ def status(
     if not rows:
         console.print("alloy is not tracking any beads yet")
         return
-    table = Table(show_header=True, header_style="bold")
-    for column in ("bead", "title", "pri", "queue", "status", "stage", "agent", "iter",
-                   "tests", "elapsed"):
-        table.add_column(column)
+    table = Table(show_header=True, header_style="bold", expand=True)
+    # One line per bead, whatever the terminal width: the title gives way
+    # first, identifiers and numbers keep their minimum widths.
+    for column, min_width in (("bead", 12), ("title", 12), ("pri", 3), ("queue", 5),
+                              ("status", 9), ("stage", 9), ("agent", 14), ("iter", 4),
+                              ("tests", 18), ("elapsed", 7)):
+        table.add_column(column, no_wrap=True, overflow="ellipsis", min_width=min_width,
+                         ratio=4 if column == "title" else (2 if column == "agent" else None))
     for row in rows:
         queue = str(row["queue_position"]) if row["queue_position"] else "-"
         max_iter = row["max_iterations"] if row["max_iterations"] is not None else "-"
