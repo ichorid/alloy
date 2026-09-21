@@ -23,6 +23,8 @@ from alloy import recipes
 from alloy.config import ConfigError, RecipeConfig, RoleSpec, discover_recipes, load_recipe
 from alloy.engine import Engine, EngineError
 from alloy.monitor import build_snapshot
+from alloy.monitor.app import MonitorApp
+from alloy.monitor.render import COLUMNS, header_line, run_rows
 from alloy.paths import AlloyPaths
 from alloy.runners import BUILTIN, RunnerRegistry
 from alloy.scheduler import Scheduler, SchedulerBusy, read_pid, signal_stop, spawn_detached
@@ -355,17 +357,28 @@ def monitor(
     root: Optional[Path] = RootOption,
     once: bool = typer.Option(False, "--once", help="Take one snapshot and exit"),
     json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+    interval: float = typer.Option(1.0, "--interval", help="Refresh interval in seconds"),
 ) -> None:
     """Live view of the scheduler, the queue and every active run.
 
     `--once --json` prints a single snapshot (the frozen shape from
-    docs/plans/execution-monitor.md) and exits; the interactive view is the
-    default without those flags."""
+    docs/plans/execution-monitor.md) and exits; `--once` alone prints it as a
+    plain table; the interactive Textual view is the default without flags."""
     engine = _engine(repo, root)
     if once and json:
         _emit(build_snapshot(engine), True)
         return
-    _fail("the interactive monitor is not available yet; use `alloy monitor --once --json`")
+    if once:
+        snapshot = build_snapshot(engine)
+        console.print(header_line(snapshot))
+        table = Table(show_header=True, header_style="bold")
+        for column in COLUMNS:
+            table.add_column(column)
+        for row in run_rows(snapshot):
+            table.add_row(*row)
+        console.print(table)
+        return
+    MonitorApp(snapshot_source=lambda: build_snapshot(engine), interval=interval).run()
 
 
 @app.command()
