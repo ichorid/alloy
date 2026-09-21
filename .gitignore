@@ -13,3 +13,6 @@ __pycache__/
 
 # IDE / agent tooling state
 .serena/
+
+# local launcher
+.alloy-run.sh

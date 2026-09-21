@@ -48,9 +48,11 @@ class RunnerRegistry:
         self._cache: dict[str, CLIRunner] = {}
 
     def get(self, name: str) -> CLIRunner:
+        # Cached under the name asked for, not the alias target: `astra` and
+        # `codex` may carry different `runners:` overrides.
+        if name in self._cache:
+            return self._cache[name]
         key = ALIASES.get(name, name)
-        if key in self._cache:
-            return self._cache[key]
         config = dict(self.overrides.get(name) or self.overrides.get(key) or {})
         factory_name = config.pop("type", key)
         factory = BUILTIN.get(factory_name)
@@ -65,7 +67,7 @@ class RunnerRegistry:
             config.setdefault("log_dir", self.log_dir)
         runner = factory(**config)
         runner.name = config.get("name", runner.name)
-        self._cache[key] = runner
+        self._cache[name] = runner
         return runner
 
     def available(self, name: str) -> bool:
