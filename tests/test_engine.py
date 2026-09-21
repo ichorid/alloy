@@ -202,12 +202,12 @@ async def test_status_output_is_machine_readable(engine, beads_project, fake_har
     assert row["iteration"] == 1
     assert row["max_iterations"] == 5
     assert row["tests"] == "1 passed, 0 failed"
-    # The last agent call to actually run was the judge (the implementer ran
-    # earlier in the same iteration), so that's the effective runner reported
-    # here -- not a static per-recipe guess about the implementer's role.
-    assert row["agent_role"] == "judge"
-    assert row["runner"] == "claude"
-    assert row["model"] == "sonnet"
+    # A finished run has no current agent; the column must not keep naming
+    # whichever call happened to be last.
+    assert row["stage"] == "finished"
+    assert row["agent_role"] is None
+    assert row["runner"] is None
+    assert row["model"] is None
     assert row["elapsed"].endswith("m")
 
 

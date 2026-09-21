@@ -469,8 +469,11 @@ def _current_agent(
     the run has moved somewhere this function doesn't special-case.
     """
     from alloy.runners import ALIASES
+    from alloy.store import TERMINAL_RUN_STATUSES
 
     stage = record.get("stage")
+    if record.get("status") in TERMINAL_RUN_STATUSES or record.get("status") == "waiting-human":
+        return {"role": None, "runner": None, "model": None}  # nothing is running
 
     if config and stage in _STAGE_ROLES:
         spec = config.roles.get(stage)

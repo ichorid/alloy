@@ -155,8 +155,14 @@ src/alloy/
   runtime.py     what a graph node is allowed to touch
   engine.py      start, resume, settle
   scheduler.py   poll, claim, run — no LLM
+  procs.py       process-tree control: a stopped run takes its harness with it
+  usage.py       one shape for every harness's token report
+  store.py       runs, agent calls, in-flight calls — the ledger
   cli.py         init/run/start/stop/status/resume/cancel/logs/recipes
 ```
+
+`docs/journal.md` records every surprise met while Alloy implemented its own
+execution monitor, with what was done about each.
 
 ## Tests
 
