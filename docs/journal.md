@@ -264,6 +264,17 @@ engine re-reads the bead), found the data layer violated it, fixed it and
 added two tests -- editing beads between iterations is a working way to
 steer a run, cheaper than a human gate.
 
+## 33. Agents leave junk that lands in the judge's diff -- mitigated
+
+The tests role for `alloy-73m` ran `uv` in the worktree and left a
+multi-hundred-line `uv.lock` behind. `WorktreeManager.diff()` stages every
+untracked file so the judge sees new code, which means junk goes in too --
+and the judge's diff is clipped at 12,000 characters, so a lockfile could
+have pushed the real change out of view. Removed by hand and gitignored;
+the general fix is a diff that skips ignored *and* obviously generated files
+(lockfiles, `.serena/`, `__pycache__`), or a much larger diff budget for the
+judge with head/tail clipping per file.
+
 ## 23. The tests role can be wrong and only the implementer notices -- open
 
 Claude wrote a test asserting the checkpoint stage after a human gate is
