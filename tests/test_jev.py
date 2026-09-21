@@ -63,7 +63,9 @@ async def test_jev_classifies_into_the_schema_enum_and_returns_confidence(tmp_pa
     result = await runner.run("tests are still failing on foo.py", Path("."), structured_schema=SCHEMA)
 
     assert result.ok
-    assert result.structured == {"decision": "retry", "confidence": 0.83}
+    assert result.structured["decision"] == "retry"
+    assert result.structured["confidence"] == 0.83
+    assert result.structured["reason"].startswith("jev p: retry 0.83")
     assert result.usage == {"input_tokens": 120, "output_tokens": 4}
     assert captured["auth"] == "Bearer test-key"
     assert captured["payload"]["questions"]["decision"]["type"] == "choice"

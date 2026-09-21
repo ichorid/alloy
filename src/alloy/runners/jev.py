@@ -157,6 +157,13 @@ class JevRunner:
                 enum_field: answer.get("choice"),
                 "confidence": answer.get("confidence", 0.0),
             }
+            if probabilities:
+                # Jev writes no prose; the distribution is the reason. It ends
+                # up in the bead note and `alloy run`'s outcome line.
+                ranked = sorted(probabilities.items(), key=lambda item: -item[1])
+                structured["reason"] = "jev p: " + ", ".join(
+                    f"{label} {value:.2f}" for label, value in ranked
+                )
 
         log_path = self._write_log(
             digest, payload, body_text, response.status_code, probabilities, started=started

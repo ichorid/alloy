@@ -245,6 +245,25 @@ preferred stderr over the parsed answer. The parsed answer *was* the JSONL
 `error` event with the real message. Fixed: the failure message is the
 parsed text first, then stderr.
 
+## 31. First bead through the whole loop -- observed
+
+`alloy-626` finished at 23:32: 5 agent calls plus the fallback's, 165 tests
+green, Jev's verdict `done` with p=0.62 (retry 0.27, human 0.10) and a
+reported confidence of 0.51, on 6.8k input tokens in one second. The judge
+gave no reason and no instructions -- by design for Jev -- so `alloy run`
+printed `done alloy-626 --` with an empty reason. Worth showing the
+probabilities in that line instead (idea for the monitor's judge panel,
+already in the plan). Integration was manual: commit the worktree on its
+branch, `git merge --no-ff` into main, full suite, `bd close`.
+
+## 32. Fable fixed a spec change made mid-run -- observed
+
+The `cost_usd` rule was added to the bead's acceptance criteria while the
+run was orphaned. On resume the implementer read the fresh bead text (the
+engine re-reads the bead), found the data layer violated it, fixed it and
+added two tests -- editing beads between iterations is a working way to
+steer a run, cheaper than a human gate.
+
 ## 23. The tests role can be wrong and only the implementer notices -- open
 
 Claude wrote a test asserting the checkpoint stage after a human gate is
