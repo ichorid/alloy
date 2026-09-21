@@ -62,6 +62,7 @@ class Scheduler:
 
     async def recover(self) -> list[str]:
         """Adopt runs whose process died -- the reboot-survival path."""
+        self.engine.store.reconcile_inflight()
         recovered: list[str] = []
         for record in self.engine.store.orphaned_runs():
             bead_id = record["bead_id"]

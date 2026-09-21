@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -80,26 +81,39 @@ class RunContext:
         schema: dict[str, Any] | None,
         iteration: int,
     ) -> AgentResult:
+        """One harness invocation, visible in `inflight_calls` while it runs
+        and moved into `agent_calls` in the same transaction when it ends."""
         log.info("%s: calling %s (iteration %d)", role, spec.label, iteration)
-        try:
-            runner = self.registry.get(spec.runner)
-            result = await runner.run(
-                prompt,
-                self.worktree.path,
-                model=spec.model,
-                timeout=spec.timeout,
-                structured_schema=schema,
-            )
-        except RunnerUnavailable as exc:
-            now = utcnow()
-            result = AgentResult(
-                runner=spec.runner, model=spec.model, ok=False, exit_code=127,
-                started_at=now, ended_at=now, duration_s=0.0, error=str(exc),
-            )
-        self.store.record_agent_call(
-            run_id=self.run_id, bead_id=self.bead.id, role=role,
-            iteration=iteration, result=result,
+        call_id = uuid.uuid4().hex
+        self.store.start_call(
+            call_id, run_id=self.run_id, bead_id=self.bead.id, role=role,
+            runner=spec.runner, model=spec.model,
         )
+        finished = False
+        try:
+            try:
+                runner = self.registry.get(spec.runner)
+                result = await runner.run(
+                    prompt,
+                    self.worktree.path,
+                    model=spec.model,
+                    timeout=spec.timeout,
+                    structured_schema=schema,
+                )
+            except RunnerUnavailable as exc:
+                now = utcnow()
+                result = AgentResult(
+                    runner=spec.runner, model=spec.model, ok=False, exit_code=127,
+                    started_at=now, ended_at=now, duration_s=0.0, error=str(exc),
+                )
+            self.store.finish_call(
+                call_id, run_id=self.run_id, bead_id=self.bead.id, role=role,
+                iteration=iteration, result=result,
+            )
+            finished = True
+        finally:
+            if not finished:
+                self.store.discard_call(call_id)
         log.info(
             "%s: %s %s in %.0fs%s", role, result.runner,
             "ok" if result.ok else f"failed (exit {result.exit_code})", result.duration_s,

@@ -148,6 +148,48 @@ def test_a_stale_pidfile_is_cleared(scheduler):
     assert not scheduler.pidfile.exists()
 
 
+async def test_recover_reconciles_inflight_before_adopting_orphaned_runs(
+    scheduler, beads_project, fake_harnesses, monkeypatch
+):
+    """Per the plan, `Scheduler.recover()` must reconcile stale `inflight_calls`
+    rows before it re-adopts any orphaned run, so a leaked row from the crashed
+    process is never attributed to whatever runs next."""
+    import asyncio
+
+    engine = scheduler.engine
+    fake_harnesses.configure(script(implement=[{"sleep": 60}]))
+    bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop")
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(engine.run(bead_id), timeout=8)
+
+    record = engine.store.latest_run_for_bead(bead_id)
+    engine.store.update_run(record["run_id"], pid=dead_pid())
+
+    order: list[str] = []
+    original_reconcile = engine.store.reconcile_inflight
+    original_orphaned_runs = engine.store.orphaned_runs
+
+    def spy_reconcile():
+        order.append("reconcile")
+        return original_reconcile()
+
+    def spy_orphaned_runs():
+        order.append("orphaned_runs")
+        return original_orphaned_runs()
+
+    monkeypatch.setattr(engine.store, "reconcile_inflight", spy_reconcile)
+    monkeypatch.setattr(engine.store, "orphaned_runs", spy_orphaned_runs)
+
+    fake_harnesses.reset_calls()
+    fake_harnesses.configure(script())
+    await scheduler.recover()
+
+    assert "reconcile" in order
+    assert "orphaned_runs" in order
+    assert order.index("reconcile") < order.index("orphaned_runs")
+
+
 def dead_pid() -> int:
     """The pid of a process that has exited and been reaped."""
     import subprocess

@@ -234,3 +234,82 @@ async def test_rerunning_a_cancelled_bead_starts_from_a_clean_graph(
         "context", "tests", "implement", "judge"
     ]
     assert engine.store.get_run(result.run_id)["iteration"] == 1
+
+
+async def test_graph_snapshot_for_run_returns_that_specific_runs_state(
+    engine, beads_project, fake_harnesses
+):
+    """A bead with two recorded runs must not have `graph_snapshot_for_run` collapse
+    to whichever run happens to be latest -- each run keeps its own checkpoint."""
+    fake_harnesses.configure(
+        script(implement=[implement_entry(succeed=False)],
+               judge=[judge_entry("human", "need a decision")])
+    )
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    first = await engine.run(bead_id)
+    engine.cancel(bead_id)
+
+    fake_harnesses.reset_calls()
+    fake_harnesses.configure(script())
+    second = await engine.run(bead_id)
+
+    assert first.run_id != second.run_id
+
+    first_snapshot = engine.graph_snapshot_for_run(first.run_id)
+    second_snapshot = engine.graph_snapshot_for_run(second.run_id)
+
+    assert first_snapshot is not None
+    assert second_snapshot is not None
+    # The human interrupt retains the preceding graph node's stage;
+    # "waiting-human" is the run ledger's stage, not checkpoint state.
+    assert first_snapshot["values"]["stage"] == "guard"
+    assert second_snapshot["values"]["stage"] == "finished"
+    assert second_snapshot["values"]["outcome"] == "done"
+    assert first_snapshot != second_snapshot
+
+    # graph_snapshot(bead_id) is untouched and still resolves to the *latest* run --
+    # graph_snapshot_for_run exists precisely because that is not what the
+    # first run's own state should be read from.
+    assert engine.graph_snapshot(bead_id) == second_snapshot
+
+
+async def test_graph_snapshot_for_run_is_none_for_an_unknown_run_id(engine, beads_project):
+    assert engine.graph_snapshot_for_run("no-such-run") is None
+
+
+async def test_resume_reconciles_inflight_calls_before_reassigning_pid(
+    engine, beads_project, fake_harnesses, monkeypatch
+):
+    """Per the plan: `Engine._execute`'s resume path must call
+    `Store.reconcile_inflight()` before it overwrites `runs.pid` with the current
+    process's pid -- otherwise a stale in-flight row becomes indistinguishable
+    from a fresh one, since the run now looks alive again."""
+    fake_harnesses.configure(
+        script(implement=[implement_entry(succeed=False)],
+               judge=[judge_entry("human", "need a decision")])
+    )
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    await engine.run(bead_id)
+
+    order: list[str] = []
+    original_reconcile = engine.store.reconcile_inflight
+    original_update_run = engine.store.update_run
+
+    def spy_reconcile():
+        order.append("reconcile")
+        return original_reconcile()
+
+    def spy_update_run(run_id, **fields):
+        if "pid" in fields:
+            order.append("pid_reassign")
+        return original_update_run(run_id, **fields)
+
+    monkeypatch.setattr(engine.store, "reconcile_inflight", spy_reconcile)
+    monkeypatch.setattr(engine.store, "update_run", spy_update_run)
+
+    fake_harnesses.configure(script())
+    await engine.resume(bead_id, "use a fix")
+
+    assert "reconcile" in order
+    assert "pid_reassign" in order
+    assert order.index("reconcile") < order.index("pid_reassign")

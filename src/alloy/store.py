@@ -15,9 +15,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 from alloy.models import AgentCallRecord, AgentResult, utcnow
+from alloy.usage import normalize
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -59,10 +60,22 @@ CREATE TABLE IF NOT EXISTS agent_calls (
     exit_code    INTEGER NOT NULL,
     ok           INTEGER NOT NULL,
     usage_json   TEXT NOT NULL DEFAULT '{}',
+    structured_json TEXT,
     log_path     TEXT,
     iteration    INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS agent_calls_run_idx ON agent_calls(run_id);
+
+CREATE TABLE IF NOT EXISTS inflight_calls (
+    call_id      TEXT PRIMARY KEY,
+    run_id       TEXT NOT NULL,
+    bead_id      TEXT NOT NULL,
+    role         TEXT NOT NULL,
+    runner       TEXT NOT NULL,
+    model        TEXT,
+    started_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS inflight_calls_run_idx ON inflight_calls(run_id);
 """
 
 RUN_RUNNING = "running"
@@ -80,6 +93,9 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     "runs": {
         "paused_at": "TEXT",                       # set while waiting for a human
         "paused_s": "REAL NOT NULL DEFAULT 0",     # total time spent paused
+    },
+    "agent_calls": {
+        "structured_json": "TEXT",                 # the raw structured output, e.g. the judge's verdict
     },
 }
 
@@ -188,20 +204,34 @@ class Store:
             ).fetchone()
         return dict(row) if row else None
 
-    def active_runs(self) -> list[dict[str, Any]]:
+    def active_runs(self, repo: Path | None = None) -> list[dict[str, Any]]:
+        repo_filter = " AND repo = ?" if repo is not None else ""
+        params = (RUN_DONE, RUN_FAILED, RUN_CANCELLED)
+        if repo is not None:
+            params += (str(repo),)
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM runs WHERE status NOT IN (?,?,?) ORDER BY started_at",
-                (RUN_DONE, RUN_FAILED, RUN_CANCELLED),
+                "SELECT * FROM runs WHERE status NOT IN (?,?,?)" + repo_filter + " ORDER BY started_at",
+                params,
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def all_runs(self, limit: int = 100) -> list[dict[str, Any]]:
+    def all_runs(self, limit: int = 100, repo: Path | None = None) -> list[dict[str, Any]]:
+        repo_filter = " WHERE repo = ?" if repo is not None else ""
+        params = (str(repo), limit) if repo is not None else (limit,)
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM runs ORDER BY started_at DESC LIMIT ?", (limit,)
+                "SELECT * FROM runs" + repo_filter + " ORDER BY started_at DESC LIMIT ?", params
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def run_status_totals(self, repo: Path) -> dict[str, int]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) AS n FROM runs WHERE repo = ? GROUP BY status",
+                (str(repo),),
+            ).fetchall()
+        return {row["status"]: row["n"] for row in rows}
 
     def orphaned_runs(self) -> list[dict[str, Any]]:
         """Runs marked running whose process is gone -- i.e. crash survivors."""
@@ -210,8 +240,49 @@ class Store:
 
     # -- agent call ledger ------------------------------------------------
 
-    def record_agent_call(
-        self, *, run_id: str, bead_id: str, role: str, iteration: int, result: AgentResult
+    def start_call(
+        self, call_id: str, *, run_id: str, bead_id: str, role: str,
+        runner: str, model: str | None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO inflight_calls (call_id, run_id, bead_id, role, runner, model, started_at)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (call_id, run_id, bead_id, role, runner, model, utcnow().isoformat()),
+            )
+
+    def discard_call(self, call_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM inflight_calls WHERE call_id = ?", (call_id,))
+
+    def active_calls(self, run_id: str | None = None) -> list[dict[str, Any]]:
+        run_filter = " WHERE run_id = ?" if run_id is not None else ""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM inflight_calls" + run_filter + " ORDER BY started_at, call_id",
+                (run_id,) if run_id is not None else (),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def reconcile_inflight(self) -> list[dict[str, Any]]:
+        """Remove calls left behind by processes that no longer own a live run."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT inflight_calls.*, runs.pid FROM inflight_calls"
+                " JOIN runs ON runs.run_id = inflight_calls.run_id"
+            ).fetchall()
+            removed = []
+            for row in rows:
+                if not _pid_alive(row["pid"]):
+                    call = dict(row)
+                    del call["pid"]
+                    conn.execute("DELETE FROM inflight_calls WHERE call_id = ?", (call["call_id"],))
+                    removed.append(call)
+        return removed
+
+    def finish_call(
+        self, call_id: str, *, run_id: str, bead_id: str, role: str,
+        iteration: int, result: AgentResult,
     ) -> None:
         record = AgentCallRecord(
             run_id=run_id,
@@ -230,15 +301,17 @@ class Store:
             iteration=iteration,
         )
         with self.connect() as conn:
+            conn.execute("DELETE FROM inflight_calls WHERE call_id = ?", (call_id,))
             conn.execute(
                 "INSERT INTO agent_calls (run_id, bead_id, role, runner, model, prompt_hash,"
-                " started_at, ended_at, duration_s, exit_code, ok, usage_json, log_path, iteration)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " started_at, ended_at, duration_s, exit_code, ok, usage_json, log_path, iteration,"
+                " structured_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     record.run_id, record.bead_id, record.role, record.runner, record.model,
                     record.prompt_hash, _iso(record.started_at), _iso(record.ended_at),
                     record.duration_s, record.exit_code, int(record.ok),
                     record.usage_json, record.log_path, record.iteration,
+                    json.dumps(result.structured) if result.structured is not None else None,
                 ),
             )
             conn.execute(
@@ -258,6 +331,30 @@ class Store:
                 "SELECT COUNT(*) AS n FROM agent_calls WHERE run_id = ?", (run_id,)
             ).fetchone()
         return int(row["n"]) if row else 0
+
+    def token_totals(self, run_id: str) -> dict:
+        """Token sums for the run; `cost_usd` is None unless some call reported one."""
+        return _sum_usage(
+            normalize(json.loads(call["usage_json"])) for call in self.agent_calls(run_id)
+        )
+
+    def token_totals_by_role(self, run_id: str) -> dict[str, dict]:
+        by_role: dict[str, list[dict]] = {}
+        for call in self.agent_calls(run_id):
+            by_role.setdefault(call["role"], []).append(normalize(json.loads(call["usage_json"])))
+        return {role: _sum_usage(records) for role, records in by_role.items()}
+
+
+def _sum_usage(records: Iterable[dict]) -> dict:
+    """Unreported token counts sum as 0; an unreported cost stays None, since
+    `0.0` would claim a free run rather than an unpriced one."""
+    totals = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
+    for record in records:
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            totals[key] += record[key] or 0
+        if record["cost_usd"] is not None:
+            totals["cost_usd"] = (totals["cost_usd"] or 0.0) + record["cost_usd"]
+    return totals
 
 
 def _iso(value: datetime | str) -> str:
