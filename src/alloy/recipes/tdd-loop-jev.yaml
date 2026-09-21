@@ -51,6 +51,6 @@ limits:
 on_success_status: review-ready
 cleanup_worktree_on_success: false
 
-# runners:
-#   jev:
-#     api_key_file: ~/MY_SRC/jev.key   # never commit the raw key; env var works too
+runners:
+  jev:
+    api_key_file: ~/MY_SRC/jev.key   # never commit the raw key; TYPESAFE_API_KEY env var also works

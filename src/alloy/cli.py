@@ -366,27 +366,49 @@ def recipes_command(
 # --------------------------------------------------------------------------
 
 
+_STAGE_ROLES = ("context", "tests", "implement", "judge")
+
+
 def _current_agent(
     engine: Engine, config: "RecipeConfig | None", record: dict[str, Any]
 ) -> dict[str, Any]:
     """The role/runner/model actually behind this run right now.
 
-    The most recent completed call is real, recorded fact -- unlike a static
-    per-recipe guess, it reflects the *effective* runner (e.g. `codex`, not
-    the `astra` alias) and whichever role last ran (context/tests/implement/
-    judge/critic:.../synthesize), not always the implementer. Before the
-    first call completes, fall back to the recipe's configured role for the
-    current stage, if that stage names one.
+    `record["stage"]` names the *current* graph node (set by `ctx.set_stage`
+    as each node starts), which can be well ahead of the *last completed*
+    agent call in `agent_calls` -- e.g. stage "implement" while the most
+    recently finished call was still "tests", because the implement call
+    itself hasn't returned yet. Showing the last completed call there would
+    claim "tests" is still going on when it manifestly isn't (the stage
+    already says otherwise), so: when the stage names one of the roles this
+    recipe configures directly, trust the stage and show *that* role's
+    configured runner/model (resolving the `astra`-style alias to what will
+    actually execute) -- it is either running right now or about to be. Only
+    fall back to the last completed call for stages with no directly agent
+    (`verify`/`baseline` are deterministic Python, not an agent call) or once
+    the run has moved somewhere this function doesn't special-case.
     """
+    from alloy.runners import ALIASES
+
+    stage = record.get("stage")
+
+    if config and stage in _STAGE_ROLES:
+        spec = config.roles.get(stage)
+        if spec:
+            runner = ALIASES.get(spec.runner, spec.runner)
+            return {"role": stage, "runner": runner, "model": spec.model}
+    if config and stage == "consilium":
+        return {"role": stage, "runner": "multiple critics", "model": None}
+    if config and stage == "synthesize":
+        spec = config.consilium.synthesizer
+        runner = ALIASES.get(spec.runner, spec.runner)
+        return {"role": stage, "runner": runner, "model": spec.model}
+
     calls = engine.store.agent_calls(record["run_id"])
     if calls:
         last = calls[-1]
         return {"role": last["role"], "runner": last["runner"], "model": last["model"]}
-    stage = record.get("stage")
-    spec = config.roles.get(stage) if config and stage else None
-    if spec:
-        return {"role": stage, "runner": spec.runner, "model": spec.model}
-    return {"role": None, "runner": None, "model": None}
+    return {"role": stage, "runner": None, "model": None}
 
 
 def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
