@@ -242,6 +242,7 @@ class Engine:
                 log.info("%s: run %s started (%s) in %s",
                          bead.id, run_id, recipe_name, ctx.worktree.path)
             else:
+                self.store.reconcile_inflight()
                 self.store.mark_resumed(run_id)
                 self.store.update_run(run_id, status=RUN_RUNNING, pid=os.getpid())
                 log.info("%s: run %s resumed (%s)", bead.id, run_id, recipe_name)
@@ -350,6 +351,13 @@ class Engine:
     def graph_snapshot(self, bead_id: str) -> dict[str, Any] | None:
         """The last persisted graph state of this bead's most recent run."""
         record = self.store.latest_run_for_bead(bead_id)
+        if record is None:
+            return None
+        return read_checkpoint(self.paths.workflows_db, record["thread_id"])
+
+    def graph_snapshot_for_run(self, run_id: str) -> dict[str, Any] | None:
+        """The last persisted graph state for this specific run."""
+        record = self.store.get_run(run_id)
         if record is None:
             return None
         return read_checkpoint(self.paths.workflows_db, record["thread_id"])
