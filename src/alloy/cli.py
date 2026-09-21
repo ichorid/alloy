@@ -216,22 +216,39 @@ def status(
     repo: Optional[Path] = RepoOption,
     root: Optional[Path] = RootOption,
     json: bool = typer.Option(False, "--json", help="Machine-readable output"),
-    limit: int = typer.Option(20, "--limit"),
+    limit: int = typer.Option(50, "--limit", help="Cap when listing every bead"),
 ) -> None:
-    """Show what Alloy is doing. Designed to be read by humans and by agents."""
+    """Show every bead Alloy tracks -- queued, running, or finished -- with its
+    place in the schedule. Designed to be read by humans and by agents."""
     engine = _engine(repo, root)
     scheduler_pid = read_pid(engine.paths.scheduler_pid)
 
-    runs = ([engine.store.latest_run_for_bead(bead_id)] if bead_id
-            else engine.store.all_runs(limit))
-    runs = [record for record in runs if record]
+    if bead_id:
+        try:
+            beads_list = [engine.beads.show(bead_id)]
+        except bd.BeadsError as exc:
+            _fail(str(exc))
+            return
+    else:
+        beads_list = engine.beads.alloy_beads()
 
-    rows = [_status_row(engine, record) for record in runs]
+    ready_ids = {b.id for b in engine.beads.ready(limit=max(limit, 1000))}
+    queue_order = sorted((b for b in beads_list if b.id in ready_ids),
+                         key=lambda b: (b.priority, b.id))
+    queue_position = {b.id: index + 1 for index, b in enumerate(queue_order)}
+
+    rows = [_bead_row(engine, b, ready_ids) for b in beads_list]
+    for row in rows:
+        row["queue_position"] = queue_position.get(row["bead"])
+    rows.sort(key=_status_sort_key)
+    if not bead_id:
+        rows = rows[:limit]
+
     payload = {
         "root": str(engine.paths.root),
         "repo": str(engine.repo),
         "scheduler": {"running": scheduler_pid is not None, "pid": scheduler_pid},
-        "runs": rows,
+        "beads": rows,
     }
     if json:
         _emit(payload, True)
@@ -242,16 +259,20 @@ def status(
         f"{'running (pid ' + str(scheduler_pid) + ')' if scheduler_pid else 'stopped'}[/]"
     )
     if not rows:
-        console.print("no runs yet")
+        console.print("alloy is not tracking any beads yet")
         return
     table = Table(show_header=True, header_style="bold")
-    for column in ("bead", "recipe", "status", "stage", "iter", "tests", "elapsed", "runner"):
+    for column in ("bead", "title", "pri", "queue", "status", "stage", "agent", "iter",
+                   "tests", "elapsed"):
         table.add_column(column)
     for row in rows:
+        queue = str(row["queue_position"]) if row["queue_position"] else "-"
+        max_iter = row["max_iterations"] if row["max_iterations"] is not None else "-"
         table.add_row(
-            row["bead"], row["recipe"], _coloured(row["status"]), row["stage"] or "-",
-            f"{row['iteration']}/{row['max_iterations']}", row["tests"] or "-",
-            row["elapsed"], row["runner"] or "-",
+            row["bead"], _truncate(row["title"], 32), str(row["priority"]), queue,
+            _coloured(row["status"] or row["bead_status"]), row["stage"] or "-",
+            _agent_label(row), f"{row['iteration']}/{max_iter}",
+            row["tests"] or "-", row["elapsed"],
         )
     console.print(table)
 
@@ -345,16 +366,39 @@ def recipes_command(
 # --------------------------------------------------------------------------
 
 
+def _current_agent(
+    engine: Engine, config: "RecipeConfig | None", record: dict[str, Any]
+) -> dict[str, Any]:
+    """The role/runner/model actually behind this run right now.
+
+    The most recent completed call is real, recorded fact -- unlike a static
+    per-recipe guess, it reflects the *effective* runner (e.g. `codex`, not
+    the `astra` alias) and whichever role last ran (context/tests/implement/
+    judge/critic:.../synthesize), not always the implementer. Before the
+    first call completes, fall back to the recipe's configured role for the
+    current stage, if that stage names one.
+    """
+    calls = engine.store.agent_calls(record["run_id"])
+    if calls:
+        last = calls[-1]
+        return {"role": last["role"], "runner": last["runner"], "model": last["model"]}
+    stage = record.get("stage")
+    spec = config.roles.get(stage) if config and stage else None
+    if spec:
+        return {"role": stage, "runner": spec.runner, "model": spec.model}
+    return {"role": None, "runner": None, "model": None}
+
+
 def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
     from datetime import datetime, timezone
 
     try:
         config = engine.load_config(record["recipe"])
         max_iterations = config.limits.max_iterations
-        implement_runner = config.roles.get("implement")
-        runner = implement_runner.runner if implement_runner else None
     except ConfigError:
-        max_iterations, runner = 0, None
+        config, max_iterations = None, 0
+
+    agent = _current_agent(engine, config, record)
 
     started = _parse(record["started_at"])
     ended = _parse(record["ended_at"]) if record["ended_at"] else None
@@ -374,13 +418,76 @@ def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
         "tests": record["tests_summary"],
         "elapsed": f"{elapsed}m",
         "elapsed_minutes": elapsed,
-        "runner": runner,
+        "agent_role": agent["role"],
+        "runner": agent["runner"],
+        "model": agent["model"],
         "worktree": record["worktree"],
         "branch": record["branch"],
         "log_dir": record["log_dir"],
         "outcome": record["outcome"],
         "outcome_reason": record["outcome_reason"],
     }
+
+
+_EMPTY_RUN_FIELDS: dict[str, Any] = {
+    "run_id": None, "status": None, "stage": None, "iteration": 0,
+    "max_iterations": None, "consiliums": 0, "agent_calls": 0, "tests": None,
+    "elapsed": "-", "elapsed_minutes": 0, "agent_role": None, "runner": None,
+    "model": None, "worktree": None, "branch": None, "log_dir": None,
+    "outcome": None, "outcome_reason": None,
+}
+
+# Beads not currently offered by `bd ready` (running, waiting on a human, or
+# already terminal) sort first by this rank; a bead that *is* ready sorts by
+# its queue position instead (see `_status_sort_key`).
+_STATUS_RANK = {
+    bd.STATUS_IMPLEMENTING: 0,
+    bd.STATUS_WAITING_HUMAN: 1,
+    bd.STATUS_REVIEW_READY: 3,
+    bd.STATUS_FAILED: 4,
+    bd.STATUS_DONE: 5,
+}
+
+
+def _bead_row(engine: Engine, bead: bd.Bead, ready_ids: set[str]) -> dict[str, Any]:
+    """One bead, merged with its most recent run (if it has ever been run)."""
+    row: dict[str, Any] = {
+        "bead": bead.id,
+        "title": bead.title,
+        "priority": bead.priority,
+        "bead_status": bead.status,
+        "ready": bead.id in ready_ids,
+        "recipe": bead.recipe,
+    }
+    record = engine.store.latest_run_for_bead(bead.id)
+    if record:
+        run_row = _status_row(engine, record)
+        run_row.pop("bead", None)
+        run_row.pop("recipe", None)
+        row.update(run_row)
+    else:
+        row.update(_EMPTY_RUN_FIELDS)
+    return row
+
+
+def _status_sort_key(row: dict[str, Any]) -> tuple[int, int, str]:
+    if row["ready"]:
+        rank = 2
+    else:
+        rank = _STATUS_RANK.get(row["bead_status"], 2)
+    return (rank, row["priority"], row["bead"])
+
+
+def _agent_label(row: dict[str, Any]) -> str:
+    if not row.get("runner"):
+        return "-"
+    model = f":{row['model']}" if row.get("model") else ""
+    return f"{row.get('agent_role') or '?'}:{row['runner']}{model}"
+
+
+def _truncate(text: str | None, width: int) -> str:
+    text = text or ""
+    return text if len(text) <= width else text[: width - 1] + "…"
 
 
 def _parse(value: str | None):
