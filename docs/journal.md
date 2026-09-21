@@ -325,6 +325,17 @@ was reset to `open` by hand and relaunched after the reset time. The same
 session limit applies to every Claude model on the account, so a Claude
 fallback for this role would not have helped; Codex was out of credits.
 
+## 39. The change summary is whatever the agent said last -- open
+
+`AgentResult.text` for Claude is the harness's final message. On
+`alloy-c5v.2` the implementer had started a background wait loop inside its
+own session, and its last message was a reply to that loop's completion
+("That notification is just the wait loop I started earlier finishing…")
+rather than the requested summary paragraph. The judge and the attempt
+history got that sentence as the change summary. Cheap mitigation: ask for
+the summary inside a fenced marker (e.g. `<summary>…</summary>`) and extract
+it from the whole transcript rather than trusting the last message.
+
 ## 23. The tests role can be wrong and only the implementer notices -- open
 
 Claude wrote a test asserting the checkpoint stage after a human gate is
