@@ -49,6 +49,8 @@ def take(config: dict, role: str, runner: str, counters: Path) -> dict:
 
 
 def apply_side_effects(entry: dict) -> None:
+    if entry.get("pidfile"):
+        Path(entry["pidfile"]).write_text(str(os.getpid()), encoding="utf-8")
     for spec in entry.get("write", []):
         path = Path(spec["path"])
         path.parent.mkdir(parents=True, exist_ok=True)

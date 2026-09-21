@@ -112,7 +112,9 @@ Graph logic is Python. YAML only says who plays which role:
 roles:
   context:   {runner: cursor-plan}
   tests:     {runner: claude-write, model: sonnet}
-  implement: {runner: astra}          # alias for codex
+  implement:
+    runner: astra                     # alias for codex
+    fallback: {runner: claude-write, model: fable}   # if codex is missing or fails
   judge:     {runner: claude, model: sonnet}
 ```
 

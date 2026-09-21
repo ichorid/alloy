@@ -23,11 +23,19 @@ roles:
   implement:
     runner: astra
     timeout_minutes: 25
+    fallback:                    # when codex is missing, rate-limited or times out
+      runner: claude-write
+      model: fable               # Claude Fable 5.1
+      timeout_minutes: 25
 
   judge:
     runner: jev
     model: jev-latest
     timeout_minutes: 10
+    fallback:                    # no key / API down: a judge that can also write instructions
+      runner: claude
+      model: sonnet
+      timeout_minutes: 10
 
 consilium:
   critics:

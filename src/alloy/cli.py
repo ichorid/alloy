@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import json as jsonlib
+import logging
+import signal
+import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Coroutine, Optional, TypeVar
 
 import typer
 from rich.console import Console
@@ -17,10 +20,10 @@ from rich.table import Table
 
 from alloy import beads as bd
 from alloy import recipes
-from alloy.config import ConfigError, discover_recipes, load_recipe
+from alloy.config import ConfigError, RecipeConfig, discover_recipes, load_recipe
 from alloy.engine import Engine, EngineError
 from alloy.paths import AlloyPaths
-from alloy.runners import RunnerRegistry
+from alloy.runners import BUILTIN, RunnerRegistry
 from alloy.scheduler import Scheduler, SchedulerBusy, read_pid, signal_stop, spawn_detached
 from alloy.store import Store
 
@@ -36,9 +39,52 @@ err = Console(stderr=True)
 RepoOption = typer.Option(None, "--repo", help="Repository root (default: cwd)")
 RootOption = typer.Option(None, "--root", help="Alloy home (default: $ALLOY_HOME or ~/.alloy)")
 
+T = TypeVar("T")
+
 
 def _engine(repo: Optional[Path], root: Optional[Path]) -> Engine:
     return Engine.open(repo or Path.cwd(), root)
+
+
+def _setup_logging(verbose: bool = True) -> None:
+    """Progress on stderr for the long-running commands; `--json` stays clean
+    because JSON goes to stdout."""
+    logging.basicConfig(
+        level=logging.INFO if verbose else logging.WARNING,
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+        stream=sys.stderr,
+        force=True,
+    )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+def _run_async(coro: Coroutine[Any, Any, T]) -> T:
+    """`asyncio.run` with SIGINT/SIGTERM turned into a cancellation.
+
+    Cancellation unwinds through the graph into the runner, which kills the
+    harness's process group, and leaves the run marked running with a dead
+    pid -- i.e. resumable. The default SIGTERM disposition would have killed
+    only this process and left the harness editing the worktree.
+    """
+
+    async def main() -> T:
+        task = asyncio.ensure_future(coro)
+        loop = asyncio.get_running_loop()
+        installed = []
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, task.cancel)
+                installed.append(sig)
+            except (NotImplementedError, ValueError):
+                pass
+        try:
+            return await task
+        finally:
+            for sig in installed:
+                loop.remove_signal_handler(sig)
+
+    return asyncio.run(main())
 
 
 def _emit(payload: Any, as_json: bool) -> None:
@@ -83,8 +129,9 @@ def init(
             report["beads"] = f"not initialized here ({exc}); run `bd init` in {repo_path}"
 
     registry = RunnerRegistry()
-    for name in ("claude", "codex", "cursor", "pi"):
-        report["runners"][name] = registry.available(name)
+    for name in BUILTIN:
+        if name != "generic":
+            report["runners"][name] = registry.available(name)
 
     if json:
         _emit(report, True)
@@ -108,12 +155,17 @@ def run(
     json: bool = typer.Option(False, "--json"),
 ) -> None:
     """Run one bead's workflow to completion, a human gate, or failure."""
+    _setup_logging(verbose=not json)
     engine = _engine(repo, root)
     try:
-        result = asyncio.run(engine.run(bead_id, recipe_name=recipe))
+        result = _run_async(engine.run(bead_id, recipe_name=recipe))
     except (EngineError, ConfigError, bd.BeadsError) as exc:
         _fail(str(exc))
         return
+    except asyncio.CancelledError:
+        err.print(f"[yellow]interrupted[/yellow] {bead_id}; resume with "
+                  f"[bold]alloy run {bead_id}[/bold]")
+        raise typer.Exit(130)
 
     payload = {
         "bead": result.bead_id, "run_id": result.run_id, "outcome": result.outcome,
@@ -140,12 +192,16 @@ def resume(
     json: bool = typer.Option(False, "--json"),
 ) -> None:
     """Continue a paused or crashed run from its last checkpoint."""
+    _setup_logging(verbose=not json)
     engine = _engine(repo, root)
     try:
-        result = asyncio.run(engine.resume(bead_id, message))
+        result = _run_async(engine.resume(bead_id, message))
     except (EngineError, ConfigError, bd.BeadsError) as exc:
         _fail(str(exc))
         return
+    except asyncio.CancelledError:
+        err.print(f"[yellow]interrupted[/yellow] {bead_id}; it stays resumable")
+        raise typer.Exit(130)
     payload = {"bead": result.bead_id, "run_id": result.run_id,
                "outcome": result.outcome, "reason": result.reason}
     if json:
@@ -161,9 +217,15 @@ def cancel(
     root: Optional[Path] = RootOption,
     json: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Stop tracking a run and return the bead to ready. The worktree is kept."""
+    """Stop the run (process included) and return the bead to ready. The
+    worktree is kept."""
+    _setup_logging(verbose=not json)
     engine = _engine(repo, root)
-    cancelled = engine.cancel(bead_id)
+    try:
+        cancelled = engine.cancel(bead_id)
+    except EngineError as exc:
+        _fail(str(exc))
+        return
     if json:
         _emit({"bead": bead_id, "cancelled": cancelled}, True)
         return
@@ -184,30 +246,35 @@ def start(
         existing = read_pid(engine.paths.scheduler_pid)
         if existing:
             _fail(f"scheduler already running (pid {existing})")
-        pid = spawn_detached(engine.repo, engine.paths.root, poll)
-        console.print(f"scheduler started (pid {pid})")
+        pid = spawn_detached(engine.repo, engine.paths.root, poll,
+                             log_file=engine.paths.scheduler_log)
+        console.print(f"scheduler started (pid {pid}); log: {engine.paths.scheduler_log}")
         return
+    _setup_logging()
     scheduler = Scheduler(engine=engine, poll_seconds=poll, recipe_filter=recipe)
     try:
         asyncio.run(scheduler.serve())
     except SchedulerBusy as exc:
         _fail(str(exc))
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         pass
 
 
 @app.command()
 def stop(
     root: Optional[Path] = RootOption,
+    now: bool = typer.Option(False, "--now", help="Also cancel the task being run; "
+                                                   "it stays resumable"),
     json: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Signal the scheduler to stop after the current task."""
+    """Signal the scheduler to stop after the current task (or right away)."""
     paths = AlloyPaths.resolve(root)
-    pid = signal_stop(paths.scheduler_pid)
+    pid = signal_stop(paths.scheduler_pid, now=now)
     if json:
-        _emit({"stopped": pid is not None, "pid": pid}, True)
+        _emit({"stopped": pid is not None, "pid": pid, "now": now}, True)
         return
-    console.print(f"sent stop to pid {pid}" if pid else "scheduler is not running")
+    console.print(f"sent stop{' --now' if now else ''} to pid {pid}" if pid
+                  else "scheduler is not running")
 
 
 @app.command()
@@ -370,7 +437,7 @@ _STAGE_ROLES = ("context", "tests", "implement", "judge")
 
 
 def _current_agent(
-    engine: Engine, config: "RecipeConfig | None", record: dict[str, Any]
+    engine: Engine, config: RecipeConfig | None, record: dict[str, Any]
 ) -> dict[str, Any]:
     """The role/runner/model actually behind this run right now.
 
@@ -395,6 +462,19 @@ def _current_agent(
     if config and stage in _STAGE_ROLES:
         spec = config.roles.get(stage)
         if spec:
+            # A failed primary call for this very stage/iteration means the
+            # fallback is what is running now.
+            calls = engine.store.agent_calls(record["run_id"])
+            last = calls[-1] if calls else None
+            while (
+                spec.fallback is not None and last is not None
+                and last["role"] == stage and not last["ok"]
+                and last["iteration"] == record.get("iteration", 0)
+                and ALIASES.get(spec.runner, spec.runner) == ALIASES.get(last["runner"], last["runner"])
+            ):
+                spec = spec.fallback
+                calls = [c for c in calls if c is not last]
+                last = calls[-1] if calls else None
             runner = ALIASES.get(spec.runner, spec.runner)
             return {"role": stage, "runner": runner, "model": spec.model}
     if config and stage == "consilium":

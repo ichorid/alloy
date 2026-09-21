@@ -73,6 +73,16 @@ RUN_CANCELLED = "cancelled"
 
 TERMINAL_RUN_STATUSES = {RUN_DONE, RUN_FAILED, RUN_CANCELLED}
 
+# Columns added after the first release. `CREATE TABLE IF NOT EXISTS` never
+# alters an existing table, so each is added on open when missing. Keep this
+# additive: a column is never renamed or dropped here.
+MIGRATIONS: dict[str, dict[str, str]] = {
+    "runs": {
+        "paused_at": "TEXT",                       # set while waiting for a human
+        "paused_s": "REAL NOT NULL DEFAULT 0",     # total time spent paused
+    },
+}
+
 
 @dataclass
 class Store:
@@ -83,6 +93,7 @@ class Store:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            _ensure_columns(conn, MIGRATIONS)
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -143,6 +154,25 @@ class Store:
             outcome_reason=reason,
             ended_at=utcnow().isoformat(),
             pid=None,
+        )
+
+    def mark_paused(self, run_id: str) -> None:
+        """The run is waiting for a human; the clock stops here (see `elapsed`)."""
+        self.update_run(run_id, paused_at=utcnow().isoformat())
+
+    def mark_resumed(self, run_id: str) -> None:
+        """Bank the time spent paused so wall-time limits ignore it."""
+        record = self.get_run(run_id)
+        if not record or not record.get("paused_at"):
+            return
+        try:
+            paused_at = datetime.fromisoformat(record["paused_at"])
+        except ValueError:
+            self.update_run(run_id, paused_at=None)
+            return
+        paused_for = max(0.0, (utcnow() - paused_at).total_seconds())
+        self.update_run(
+            run_id, paused_at=None, paused_s=float(record.get("paused_s") or 0) + paused_for
         )
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
@@ -234,13 +264,15 @@ def _iso(value: datetime | str) -> str:
     return value.isoformat() if isinstance(value, datetime) else str(value)
 
 
+def _ensure_columns(conn: sqlite3.Connection, migrations: dict[str, dict[str, str]]) -> None:
+    for table, columns in migrations.items():
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for column, declaration in columns.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+
 def _pid_alive(pid: int | None) -> bool:
-    if not pid:
-        return False
-    try:
-        os.kill(int(pid), 0)
-    except (ProcessLookupError, ValueError):
-        return False
-    except PermissionError:
-        return True
-    return True
+    from alloy.procs import pid_alive
+
+    return pid_alive(pid)

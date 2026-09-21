@@ -158,7 +158,9 @@ class JevRunner:
                 "confidence": answer.get("confidence", 0.0),
             }
 
-        log_path = self._write_log(digest, payload, body_text, response.status_code, probabilities)
+        log_path = self._write_log(
+            digest, payload, body_text, response.status_code, probabilities, started=started
+        )
         return AgentResult(
             runner=self.name,
             model=effective_model,
@@ -182,11 +184,14 @@ class JevRunner:
         body_text: str,
         status: int,
         probabilities: dict[str, float],
+        *,
+        started=None,
     ) -> str | None:
         if self.log_dir is None:
             return None
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        path = self.log_dir / f"{int(time.time() * 1000)}-jev-{digest}.json"
+        stamp = int((started.timestamp() if started else time.time()) * 1000)
+        path = self.log_dir / f"{stamp}-jev-{digest}.json"
         record = {
             "runner": self.name,
             "request": payload,

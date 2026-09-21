@@ -13,11 +13,12 @@ import os
 import re
 import shutil
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from alloy.models import AgentResult, RunnerUnavailable, clip, prompt_hash, utcnow
+from alloy.procs import terminate_process_tree
 
 DEFAULT_TIMEOUT = timedelta(minutes=20)
 
@@ -188,6 +189,7 @@ class CLIRunner:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                start_new_session=True,  # own process group: see alloy.procs
             )
         except OSError as exc:
             raise RunnerUnavailable(f"{self.name}: cannot execute {binary_path}: {exc}") from exc
@@ -197,15 +199,21 @@ class CLIRunner:
         except asyncio.TimeoutError:
             timed_out = True
             raw_out, raw_err = b"", b""
-            process.kill()
-            await process.wait()
+            await terminate_process_tree(process)
+        except BaseException:
+            # Cancellation (operator stop, scheduler shutdown, SIGTERM): the
+            # harness must die with us, not keep editing the worktree.
+            await terminate_process_tree(process)
+            raise
 
         stdout = raw_out.decode("utf-8", "replace")
         stderr = raw_err.decode("utf-8", "replace")
         exit_code = -1 if timed_out else (process.returncode or 0)
         duration = time.monotonic() - clock
 
-        log_path = self._write_log(digest, argv, effective_prompt, stdout, stderr, exit_code)
+        log_path = self._write_log(
+            digest, argv, effective_prompt, stdout, stderr, exit_code, started=started
+        )
 
         if timed_out:
             return AgentResult(
@@ -237,13 +245,27 @@ class CLIRunner:
         )
 
     def _write_log(
-        self, digest: str, argv: list[str], prompt: str, stdout: str, stderr: str, exit_code: int
+        self,
+        digest: str,
+        argv: list[str],
+        prompt: str,
+        stdout: str,
+        stderr: str,
+        exit_code: int,
+        *,
+        started: datetime | None = None,
     ) -> str | None:
-        """Raw transcripts live on disk, never in graph state."""
+        """Raw transcripts live on disk, never in graph state.
+
+        The filename carries the call's *start* time so `ls` shows calls in
+        the order they began -- a 20-minute call must not sort after the
+        test log written a second after it finished.
+        """
         if self.log_dir is None:
             return None
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        path = self.log_dir / f"{int(time.time() * 1000)}-{self.name}-{digest}.json"
+        stamp = int((started.timestamp() if started else time.time()) * 1000)
+        path = self.log_dir / f"{stamp}-{self.name}-{digest}.json"
         payload = {
             "runner": self.name,
             "argv": argv,

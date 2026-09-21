@@ -7,6 +7,7 @@ named methods.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -20,6 +21,8 @@ from alloy.runners import RunnerRegistry
 from alloy.store import Store
 from alloy.verify import run_tests
 from alloy.worktree import Worktree, WorktreeManager
+
+log = logging.getLogger("alloy.runtime")
 
 
 @dataclass
@@ -51,9 +54,35 @@ class RunContext:
         schema: dict[str, Any] | None = None,
         iteration: int = 0,
     ) -> AgentResult:
-        """Run one harness, always inside this task's worktree, always recorded."""
-        runner = self.registry.get(spec.runner)
+        """Run one harness, always inside this task's worktree, always recorded.
+
+        If the role names a fallback and the primary runner is unavailable,
+        times out, or exits non-zero, the same prompt goes to the fallback.
+        Every attempt is recorded, so the ledger shows what actually ran.
+        """
+        result = await self._call_one(role, spec, prompt, schema=schema, iteration=iteration)
+        while not result.ok and spec.fallback is not None:
+            log.warning(
+                "%s: %s failed (%s); falling back to %s",
+                role, spec.label, (result.error or f"exit {result.exit_code}")[:200],
+                spec.fallback.label,
+            )
+            spec = spec.fallback
+            result = await self._call_one(role, spec, prompt, schema=schema, iteration=iteration)
+        return result
+
+    async def _call_one(
+        self,
+        role: str,
+        spec: RoleSpec,
+        prompt: str,
+        *,
+        schema: dict[str, Any] | None,
+        iteration: int,
+    ) -> AgentResult:
+        log.info("%s: calling %s (iteration %d)", role, spec.label, iteration)
         try:
+            runner = self.registry.get(spec.runner)
             result = await runner.run(
                 prompt,
                 self.worktree.path,
@@ -70,6 +99,11 @@ class RunContext:
         self.store.record_agent_call(
             run_id=self.run_id, bead_id=self.bead.id, role=role,
             iteration=iteration, result=result,
+        )
+        log.info(
+            "%s: %s %s in %.0fs%s", role, result.runner,
+            "ok" if result.ok else f"failed (exit {result.exit_code})", result.duration_s,
+            f" -- {result.error[:200]}" if result.error else "",
         )
         return result
 
@@ -141,7 +175,9 @@ class RunContext:
         return None
 
     def elapsed(self) -> timedelta:
-        """Wall time since the run was first created, across restarts."""
+        """Wall time since the run was first created, across restarts, minus
+        the time it spent parked at a human gate -- otherwise a run resumed
+        after a night's wait would breach `max_wall_time` on the spot."""
         record = self.store.get_run(self.run_id)
         if record and record.get("started_at"):
             from datetime import datetime
@@ -150,7 +186,8 @@ class RunContext:
                 started = datetime.fromisoformat(record["started_at"])
             except ValueError:
                 return timedelta(seconds=time.monotonic() - self.started_monotonic)
-            return utcnow() - started
+            paused = timedelta(seconds=float(record.get("paused_s") or 0))
+            return max(utcnow() - started - paused, timedelta(0))
         return timedelta(seconds=time.monotonic() - self.started_monotonic)
 
     def limits_note(self, state: dict[str, Any]) -> str:

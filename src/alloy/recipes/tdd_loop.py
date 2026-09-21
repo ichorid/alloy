@@ -57,6 +57,7 @@ class TddState(TypedDict, total=False):
     iteration: int
     consiliums: int
     instructions: str
+    implementer: str  # the runner that actually produced the last change
 
     last_tests: dict[str, Any] | None
     decision: dict[str, Any] | None
@@ -136,6 +137,8 @@ Requirements:
 - The tests must fail right now, because the behavior does not exist yet.
 - Do not write or modify implementation code. Tests only.
 - Do not weaken or delete existing tests.
+- Alloy owns task tracking, verification and git: do not run `bd`, do not commit,
+  and do not run the whole test suite -- run only the tests you wrote.
 
 When you are done, state in one paragraph which test files you added or changed and what each asserts.
 """
@@ -169,8 +172,12 @@ def implement_prompt(
         "- Change implementation code, not the tests, unless a test is provably wrong "
         "about the stated acceptance criteria -- and say so explicitly if you do.\n"
         "- Do not disable, skip or loosen assertions to get green.\n"
-        "- Keep the change minimal and consistent with the repo's conventions.\n\n"
-        "Finish with one paragraph describing what you changed and why."
+        "- Keep the change minimal and consistent with the repo's conventions.\n"
+        "- Alloy owns task tracking, verification and git: do not run `bd`, do not "
+        "commit, and do not run the whole test suite -- run the tests relevant to "
+        "your change; Alloy runs the full suite when you finish.\n\n"
+        "Finish with one paragraph describing what you changed and why, and say "
+        "explicitly if you changed any test."
     )
     return "\n\n".join(sections)
 
@@ -219,6 +226,8 @@ Choose exactly one decision:
 
 Do not answer "done" if tests are failing. Do not answer "done" if the diff is empty.
 Judge the diff on merit: green tests that were weakened or skipped are not done.
+If the diff edits or deletes tests, say so in `reason` and decide whether the edit
+was justified by the acceptance criteria.
 """
 
 
@@ -402,6 +411,7 @@ def build_graph(ctx: RunContext):
             "iteration": iteration,
             "stage": "implement",
             "instructions": "",
+            "implementer": result.runner,
             "change_summary": result.summary,
         }
 
@@ -441,7 +451,7 @@ def build_graph(ctx: RunContext):
         decision = _decision_from(result, state)
         attempt = Attempt(
             iteration=state.get("iteration", 0),
-            implementer=ctx.recipe.role("implement").runner,
+            implementer=state.get("implementer") or ctx.recipe.role("implement").runner,
             change_summary=state.get("change_summary", ""),
             tests=TestReport.model_validate(state["last_tests"]).headline()
             if state.get("last_tests")
@@ -627,6 +637,7 @@ def build_graph(ctx: RunContext):
         }
 
     def finish(state: TddState) -> dict[str, Any]:
+        ctx.set_stage("finished", iteration=state.get("iteration", 0))
         decision = JudgeDecision.model_validate(
             state.get("decision") or {"decision": "abort", "reason": "no decision"}
         )
@@ -676,6 +687,7 @@ def initial_state(ctx: RunContext) -> TddState:
         iteration=0,
         consiliums=0,
         instructions="",
+        implementer="",
         attempts=[],
         critiques=[],
         change_summary="",

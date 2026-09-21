@@ -10,3 +10,6 @@ __pycache__/
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# IDE / agent tooling state
+.serena/

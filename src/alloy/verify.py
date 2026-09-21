@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from alloy.models import TestReport, clip
+from alloy.procs import terminate_process_tree
 
 DEFAULT_TIMEOUT_S = 900.0
 
@@ -31,7 +32,15 @@ AUTODETECT: list[tuple[str, str]] = [
     ("Makefile", "make test"),
 ]
 
-_PYTEST = re.compile(r"(?:(\d+) passed)|(?:(\d+) failed)|(?:(\d+) error)")
+_PYTEST = re.compile(r"(?:(\d+) passed)|(?:(\d+) failed)|(?:(\d+) errors?)")
+# pytest's final line: "3 passed, 1 failed in 0.42s" (quiet) or wrapped in
+# "=====" (verbose). Only that line is authoritative -- "1 error during
+# collection" earlier in the output must not be counted a second time.
+_PYTEST_SUMMARY = re.compile(
+    r"^[=\s]*(?P<body>[^\n]*?\b(?:passed|failed|errors?|skipped|no tests ran)\b[^\n]*?)"
+    r"\s+in\s+[\d.]+s\b",
+    re.MULTILINE,
+)
 _JEST = re.compile(r"Tests:\s+(?:(\d+) failed,\s*)?(?:\d+ skipped,\s*)?(\d+) passed")
 _CARGO = re.compile(r"test result: \w+\. (\d+) passed; (\d+) failed")
 
@@ -112,7 +121,8 @@ async def run_tests(
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
-        env={**os.environ, "CI": "1", "PYTHONDONTWRITEBYTECODE": "1"},
+        env=command_env(worktree),
+        start_new_session=True,
     )
     timed_out = False
     try:
@@ -120,8 +130,10 @@ async def run_tests(
     except asyncio.TimeoutError:
         timed_out = True
         raw = b""
-        process.kill()
-        await process.wait()
+        await terminate_process_tree(process)
+    except BaseException:
+        await terminate_process_tree(process)
+        raise
 
     output = raw.decode("utf-8", "replace")
     duration = time.monotonic() - started
@@ -147,6 +159,29 @@ async def run_tests(
     )
 
 
+def command_env(worktree: Path) -> dict[str, str]:
+    """Environment for the test command.
+
+    The worktree's own code must be what gets imported. A Python project
+    installed in editable mode into a shared virtualenv points that venv at
+    the *main* checkout via a `.pth` file, so a plain `python -m pytest`
+    inside a worktree silently tests code the agents never touched. Putting
+    the worktree's `src/` (and its root, for flat layouts) first on
+    PYTHONPATH wins over the `.pth` entry; for non-Python projects the
+    variable is simply ignored.
+    """
+    entries = [str(worktree / "src")] if (worktree / "src").is_dir() else []
+    entries.append(str(worktree))
+    if os.environ.get("PYTHONPATH"):
+        entries.append(os.environ["PYTHONPATH"])
+    return {
+        **os.environ,
+        "CI": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPATH": os.pathsep.join(entries),
+    }
+
+
 def parse_counts(output: str) -> tuple[int | None, int | None]:
     """Extract pass/fail counts from common runners; None when unrecognized."""
     cargo = _CARGO.search(output)
@@ -156,6 +191,10 @@ def parse_counts(output: str) -> tuple[int | None, int | None]:
     jest = _JEST.search(output)
     if jest:
         return int(jest.group(2)), int(jest.group(1) or 0)
+
+    summaries = list(_PYTEST_SUMMARY.finditer(output))
+    if summaries:
+        output = summaries[-1].group("body")  # the last summary line is the verdict
 
     passed = failed = None
     for match in _PYTEST.finditer(output):

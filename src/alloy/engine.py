@@ -7,6 +7,7 @@ whether a run ends normally, pauses for a human, or dies mid-flight.
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from alloy.checkpoints import has_pending_interrupt, open_checkpointer, read_che
 from alloy.config import ConfigError, RecipeConfig, load_recipe
 from alloy.models import Outcome
 from alloy.paths import AlloyPaths
+from alloy.procs import pid_alive, terminate_pid
 from alloy.runners import RunnerRegistry
 from alloy.runtime import RunContext
 from alloy.store import (
@@ -32,9 +34,11 @@ from alloy.store import (
     RUN_WAITING_HUMAN,
     Store,
 )
-from alloy.worktree import WorktreeManager
+from alloy.worktree import WorktreeError, WorktreeManager
 
 RECURSION_LIMIT = 200
+
+log = logging.getLogger("alloy.engine")
 
 
 class EngineError(RuntimeError):
@@ -78,8 +82,11 @@ class Engine:
     async def run(self, bead_id: str, *, recipe_name: str | None = None) -> RunResult:
         """Start a fresh run, or continue one that was interrupted by a crash."""
         bead = self.beads.show(bead_id)
+        latest = self.store.latest_run_for_bead(bead_id)
+        self._refuse_if_live(bead_id, latest)
         existing = self._resumable_run(bead_id)
         if existing is not None:
+            log.info("%s: adopting orphaned run %s", bead_id, existing["run_id"])
             return await self._execute(
                 bead, existing["recipe"], run_id=existing["run_id"],
                 thread_id=existing["thread_id"], resume_payload=None,
@@ -91,13 +98,27 @@ class Engine:
                 f"{bead_id} has no recipe; set one with "
                 f"`bd update {bead_id} --set-metadata {bd.META_RECIPE}=tdd-loop`"
             )
+        # Everything that can be checked without touching the bead is checked
+        # first: a claim followed by a crash used to strand the bead in
+        # `implementing` with no run record for recovery to find.
+        self.validate_recipe(name)
         if bead.status not in (bd.STATUS_READY, bd.STATUS_IMPLEMENTING):
             raise EngineError(
                 f"{bead_id} is '{bead.status}'; only '{bd.STATUS_READY}' beads can start"
             )
-        if bead.status == bd.STATUS_READY and not self.beads.claim(bead_id):
-            raise EngineError(f"{bead_id} was claimed by someone else")
-        return await self._execute(bead, name, run_id=None, resume_payload=None)
+        claimed = False
+        if bead.status == bd.STATUS_READY:
+            if not self.beads.claim(bead_id):
+                raise EngineError(f"{bead_id} was claimed by someone else")
+            claimed = True
+        try:
+            return await self._execute(bead, name, run_id=None, resume_payload=None)
+        except EngineError:
+            # Failed before a run record existed (worktree, config): hand the
+            # bead back so it is offered again instead of looking busy forever.
+            if claimed and self.store.latest_run_for_bead(bead_id) == latest:
+                self.beads.set_status(bead_id, bd.STATUS_READY, if_status=bd.STATUS_IMPLEMENTING)
+            raise
 
     async def resume(self, bead_id: str, instructions: str = "") -> RunResult:
         """Continue a paused or crashed run, optionally answering the human gate."""
@@ -106,6 +127,7 @@ class Engine:
             raise EngineError(f"no run recorded for {bead_id}")
         if record["status"] in (RUN_DONE, RUN_CANCELLED):
             raise EngineError(f"run for {bead_id} already finished ({record['status']})")
+        self._refuse_if_live(bead_id, record)
         bead = self.beads.show(bead_id)
         pending = has_pending_interrupt(self.paths.workflows_db, record["thread_id"])
         return await self._execute(
@@ -116,10 +138,16 @@ class Engine:
             resume_payload={"instructions": instructions} if pending else None,
         )
 
-    def cancel(self, bead_id: str) -> bool:
+    def cancel(self, bead_id: str, *, grace_s: float = 5.0) -> bool:
+        """Stop the run -- the process too, not just the bookkeeping."""
         record = self.store.latest_run_for_bead(bead_id)
         if record is None or record["status"] in (RUN_DONE, RUN_FAILED, RUN_CANCELLED):
             return False
+        pid = record.get("pid")
+        if record["status"] == RUN_RUNNING and pid_alive(pid) and pid != os.getpid():
+            log.info("%s: stopping pid %s", bead_id, pid)
+            if not terminate_pid(int(pid), grace_s=grace_s):
+                raise EngineError(f"could not stop pid {pid} running {bead_id}")
         self.store.finish_run(
             record["run_id"], status=RUN_CANCELLED,
             outcome=Outcome.CANCELLED.value, reason="cancelled by operator",
@@ -128,6 +156,26 @@ class Engine:
         self.beads.note(bead_id, f"alloy: run {record['run_id']} cancelled; "
                                  f"worktree left at {record['worktree']}")
         return True
+
+    def validate_recipe(self, name: str) -> RecipeConfig:
+        """Both halves of a recipe must exist: the YAML and the graph builder."""
+        try:
+            recipes.get(name)
+            return self.load_config(name)
+        except (KeyError, ConfigError) as exc:
+            raise EngineError(str(exc)) from exc
+
+    def _refuse_if_live(self, bead_id: str, record: dict[str, Any] | None) -> None:
+        if (
+            record is not None
+            and record["status"] == RUN_RUNNING
+            and pid_alive(record.get("pid"))
+            and record.get("pid") != os.getpid()
+        ):
+            raise EngineError(
+                f"{bead_id} is already being run by pid {record['pid']} "
+                f"(run {record['run_id']}); `alloy cancel {bead_id}` stops it"
+            )
 
     # -- graph plumbing ---------------------------------------------------
 
@@ -178,7 +226,7 @@ class Engine:
                 ctx = self.build_context(
                     bead, recipe_name, run_id=run_id, checkpointer=checkpointer
                 )
-            except (ConfigError, KeyError) as exc:
+            except (ConfigError, KeyError, WorktreeError) as exc:
                 raise EngineError(str(exc)) from exc
 
             if fresh:
@@ -187,8 +235,12 @@ class Engine:
                     repo=self.repo, worktree=ctx.worktree.path, branch=ctx.worktree.branch,
                     log_dir=ctx.log_dir,
                 )
+                log.info("%s: run %s started (%s) in %s",
+                         bead.id, run_id, recipe_name, ctx.worktree.path)
             else:
+                self.store.mark_resumed(run_id)
                 self.store.update_run(run_id, status=RUN_RUNNING, pid=os.getpid())
+                log.info("%s: run %s resumed (%s)", bead.id, run_id, recipe_name)
 
             self.beads.set_metadata(bead.id, {
                 bd.META_RUN_ID: run_id,
@@ -218,14 +270,20 @@ class Engine:
                 # A cancellation is not an Exception, so an interrupted process
                 # leaves the run marked running -- which is what makes it
                 # recoverable later. Only a genuine error fails the task here.
+                log.exception("%s: run %s crashed", bead.id, run_id)
                 self.store.finish_run(run_id, status=RUN_FAILED,
                                       outcome=Outcome.FAILED.value, reason=str(exc))
                 self.beads.set_status(bead.id, bd.STATUS_FAILED)
                 self.beads.note(bead.id, f"alloy: run {run_id} crashed: {exc}. "
                                          f"Worktree kept at {ctx.worktree.path}")
                 raise
+            except BaseException:
+                log.warning("%s: run %s interrupted; it stays resumable", bead.id, run_id)
+                raise
 
-            return self._settle(ctx, bead, recipe_name, run_id, final)
+            result = self._settle(ctx, bead, recipe_name, run_id, final)
+            log.info("%s: run %s -> %s %s", bead.id, run_id, result.outcome, result.reason)
+            return result
 
     def _settle(
         self, ctx: RunContext, bead: Bead, recipe_name: str, run_id: str, final: dict[str, Any]
@@ -236,6 +294,7 @@ class Engine:
             payload = _interrupt_payload(pending)
             self.store.update_run(run_id, status=RUN_WAITING_HUMAN, stage="waiting-human",
                                   pid=None)
+            self.store.mark_paused(run_id)
             self.beads.set_status(bead.id, bd.STATUS_WAITING_HUMAN)
             self.beads.set_metadata(bead.id, {bd.META_STAGE: "waiting-human"})
             self.beads.note(
@@ -301,7 +360,5 @@ def _interrupt_payload(pending: Any) -> dict[str, Any]:
 
 
 def _pid_alive(pid: int | None) -> bool:
-    from alloy.store import _pid_alive as impl
-
-    return impl(pid)
+    return pid_alive(pid)
 

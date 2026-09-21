@@ -73,10 +73,19 @@ alloy run <bead-id> [--recipe NAME]   # run one bead to done / human-gate / fail
 alloy status [<bead-id>] --json       # what's running, stage, iteration count, tests
 alloy logs <bead-id>                  # every agent call in the run + transcript paths
 alloy resume <bead-id> -m "<message>" # continue a paused/crashed run with guidance
-alloy cancel <bead-id>                # stop tracking; bead returns to ready, worktree kept
+alloy cancel <bead-id>                # stop the run's process; bead returns to ready, worktree kept
 alloy start [--poll SECS] [--recipe N]  # scheduler: poll Beads, run READY work, concurrency 1
-alloy stop                            # signal the scheduler to stop after current task
+alloy stop [--now]                    # stop the scheduler after the current task (--now: cancel it too)
 ```
+
+Ctrl-C or SIGTERM on `alloy run` stops the harness with it and leaves the run
+resumable (`alloy run <bead-id>` again picks it up). The detached scheduler
+logs to `~/.alloy/scheduler.log`.
+
+Roles can name a `fallback` runner in the recipe YAML (see `alloy recipes`):
+when the primary is missing, rate-limited or times out, the same prompt goes
+to the fallback and both attempts appear in `alloy logs`. The built-in
+recipes fall back from Codex to Claude Fable for implementation.
 
 `--json` on any command gives machine-readable output — prefer it over parsing
 the table output.

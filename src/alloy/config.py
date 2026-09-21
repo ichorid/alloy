@@ -24,20 +24,35 @@ class RoleSpec:
     runner: str
     model: str | None = None
     timeout_minutes: float = DEFAULT_ROLE_TIMEOUT_MIN
+    fallback: "RoleSpec | None" = None
+    """Used when the primary runner is unavailable or exits non-zero.
+
+    A fallback is a whole RoleSpec (runner, model, timeout, and possibly its
+    own fallback), so `implement: {runner: astra, fallback: {runner:
+    claude-write, model: fable}}` hands the same prompt to Claude when the
+    Codex CLI is missing, rate-limited, or times out.
+    """
 
     @property
     def timeout(self) -> timedelta:
         return timedelta(minutes=self.timeout_minutes)
+
+    @property
+    def label(self) -> str:
+        return f"{self.runner}:{self.model}" if self.model else self.runner
 
     @classmethod
     def parse(cls, raw: Any, *, default_runner: str = "claude") -> "RoleSpec":
         if isinstance(raw, str):
             return cls(runner=raw)
         raw = raw or {}
+        fallback_raw = raw.get("fallback")
         return cls(
             runner=raw.get("runner", default_runner),
             model=raw.get("model"),
             timeout_minutes=float(raw.get("timeout_minutes", DEFAULT_ROLE_TIMEOUT_MIN)),
+            fallback=cls.parse(fallback_raw, default_runner=default_runner)
+            if fallback_raw else None,
         )
 
 

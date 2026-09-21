@@ -13,6 +13,10 @@ roles:
   implement:
     runner: astra                # aliases to codex; override under `runners:` to swap
     timeout_minutes: 25
+    fallback:                    # when codex is missing, rate-limited or times out
+      runner: claude-write
+      model: fable               # Claude Fable 5.1 (alias resolves to claude-fable-5-1)
+      timeout_minutes: 25
 
   judge:
     runner: claude

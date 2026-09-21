@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import signal
 import subprocess
@@ -21,6 +22,8 @@ from alloy.engine import Engine, EngineError
 from alloy.store import RUN_RUNNING
 
 DEFAULT_POLL_SECONDS = 15.0
+
+log = logging.getLogger("alloy.scheduler")
 
 
 class SchedulerBusy(RuntimeError):
@@ -35,12 +38,16 @@ class Scheduler:
     recipe_filter: str | None = None
     once: bool = False
     _stopping: bool = field(default=False, init=False)
+    _cancel_requested: bool = field(default=False, init=False)
+    _current: "asyncio.Task | None" = field(default=None, init=False)
 
     # -- lifecycle --------------------------------------------------------
 
     async def serve(self) -> None:
         self._write_pidfile()
         self._install_signal_handlers()
+        log.info("scheduler up (pid %d, poll %.0fs, repo %s)",
+                 os.getpid(), self.poll_seconds, self.engine.repo)
         try:
             await self.recover()
             while not self._stopping:
@@ -51,19 +58,25 @@ class Scheduler:
                     await self._sleep(self.poll_seconds)
         finally:
             self._remove_pidfile()
+            log.info("scheduler down")
 
     async def recover(self) -> list[str]:
         """Adopt runs whose process died -- the reboot-survival path."""
         recovered: list[str] = []
         for record in self.engine.store.orphaned_runs():
             bead_id = record["bead_id"]
+            log.info("recovering %s (run %s left by a dead process)", bead_id, record["run_id"])
             try:
-                await self.engine.run(bead_id)
+                await self._run_current(bead_id)
                 recovered.append(bead_id)
-            except EngineError:
-                continue
+            except asyncio.CancelledError:
+                if self._cancel_requested:
+                    return recovered
+                raise
+            except EngineError as exc:
+                log.warning("could not recover %s: %s", bead_id, exc)
             except Exception:
-                continue
+                log.exception("recovery of %s crashed", bead_id)
         return recovered
 
     async def tick(self) -> bool:
@@ -73,11 +86,28 @@ class Scheduler:
         bead = self.next_task()
         if bead is None:
             return False
+        log.info("picked %s (%s, P%d)", bead.id, bead.title, bead.priority)
         try:
-            await self.engine.run(bead.id)
-        except EngineError:
+            await self._run_current(bead.id)
+        except asyncio.CancelledError:
+            if self._cancel_requested:
+                return False  # the operator stopped this run; serve() exits next
+            raise
+        except EngineError as exc:
+            log.warning("%s refused: %s", bead.id, exc)
             return False
+        except Exception:
+            log.exception("%s failed", bead.id)
+            return True
         return True
+
+    async def _run_current(self, bead_id: str):
+        """Run one bead as a task we can cancel from a signal handler."""
+        self._current = asyncio.ensure_future(self.engine.run(bead_id))
+        try:
+            return await self._current
+        finally:
+            self._current = None
 
     # -- selection --------------------------------------------------------
 
@@ -96,7 +126,16 @@ class Scheduler:
 
     # -- process control --------------------------------------------------
 
-    def stop(self) -> None:
+    def stop(self, *, now: bool = False) -> None:
+        """First call: finish the current task, then exit. Second call (or
+        `now`): cancel the current task -- its harness dies with it and the
+        run stays resumable -- and exit."""
+        if (self._stopping or now) and self._current is not None and not self._current.done():
+            log.info("stop requested twice; cancelling the current run")
+            self._cancel_requested = True
+            self._current.cancel()
+        elif not self._stopping:
+            log.info("stop requested; finishing the current run first")
         self._stopping = True
 
     async def _sleep(self, seconds: float) -> None:
@@ -143,27 +182,49 @@ def read_pid(pidfile: Path) -> int | None:
     return pid
 
 
-def signal_stop(pidfile: Path) -> int | None:
+def signal_stop(pidfile: Path, *, now: bool = False) -> int | None:
+    """Ask the scheduler to stop; `now` also cancels the task it is running."""
+    import time
+
     pid = read_pid(pidfile)
     if pid is None:
         return None
     os.kill(pid, signal.SIGTERM)
+    if now:
+        time.sleep(0.5)  # let the first handler run before the second signal
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGTERM)
     return pid
 
 
-def spawn_detached(repo: Path, root: Path | None, poll_seconds: float) -> int:
-    """Start `alloy start --foreground` as a background process."""
+def spawn_detached(
+    repo: Path, root: Path | None, poll_seconds: float, *, log_file: Path | None = None
+) -> int:
+    """Start `alloy start --foreground` as a background process.
+
+    Output goes to `log_file` (appended) so a scheduler that dies overnight
+    leaves a trace, not silence.
+    """
     argv = [
         sys.executable, "-m", "alloy.cli", "start", "--foreground",
         "--repo", str(repo), "--poll", str(poll_seconds),
     ]
     if root:
         argv += ["--root", str(root)]
-    process = subprocess.Popen(
-        argv,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        sink = open(log_file, "ab")
+    else:
+        sink = subprocess.DEVNULL
+    try:
+        process = subprocess.Popen(
+            argv,
+            stdout=sink,
+            stderr=subprocess.STDOUT if log_file is not None else subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    finally:
+        if log_file is not None:
+            sink.close()
     return process.pid
