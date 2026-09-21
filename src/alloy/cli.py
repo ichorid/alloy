@@ -517,8 +517,12 @@ def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
 
     started = _parse(record["started_at"])
     ended = _parse(record["ended_at"]) if record["ended_at"] else None
-    reference = ended or datetime.now(timezone.utc)
-    elapsed = int((reference - started).total_seconds() // 60) if started else 0
+    paused_at = _parse(record.get("paused_at")) if record.get("paused_at") else None
+    reference = ended or paused_at or datetime.now(timezone.utc)
+    paused_s = float(record.get("paused_s") or 0)  # time parked or dead: not work
+    elapsed = (
+        max(0, int(((reference - started).total_seconds() - paused_s) // 60)) if started else 0
+    )
 
     return {
         "bead": record["bead_id"],
