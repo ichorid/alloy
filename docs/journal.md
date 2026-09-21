@@ -312,6 +312,19 @@ monitor beads have now gone through Alloy end to end; every one needed the
 Codex-to-Fable fallback and none needed a human gate or a second iteration
 after the first bead. Total Claude spend for the four beads is roughly $12.
 
+## 38. A session limit on the tests role failed the bead -- fixed
+
+`alloy-c5v.2`'s tests call (Claude Sonnet) ended with "You've hit your
+session limit · resets 1:20am". The graph treated any tests-role failure as
+`abort`, so a 35-minute wait became a `failed` bead with a finished
+checkpoint that `alloy resume` could not restart. Fixed: a failed tests role
+now parks the run at the human gate with `resume_to = "tests"`, and
+`human_gate` routes the resumed run back to the tests stage instead of the
+implementer. For this run the checkpoint was already terminal, so the bead
+was reset to `open` by hand and relaunched after the reset time. The same
+session limit applies to every Claude model on the account, so a Claude
+fallback for this role would not have helped; Codex was out of credits.
+
 ## 23. The tests role can be wrong and only the implementer notices -- open
 
 Claude wrote a test asserting the checkpoint stage after a human gate is

@@ -71,6 +71,8 @@ class TddState(TypedDict, total=False):
     outcome_reason: str
     limit_hit: str | None
     human_note: str
+    resume_to: str | None      # stage that parked the run at the human gate
+    resume_target: str | None  # where human_gate sends the resumed run
 
 
 class CriticInput(TypedDict):
@@ -352,21 +354,33 @@ def build_graph(ctx: RunContext):
             iteration=0,
         )
         if not result.ok:
+            # Usually transient (a session limit, an outage): park the run at
+            # the human gate with the tests stage as the resume target. Failing
+            # the bead outright made a rate limit look like an impossible task.
             return {
                 "stage": "tests",
+                "resume_to": "tests",
                 "decision": JudgeDecision(
-                    decision="abort",
+                    decision="human",
                     reason=f"the tests role failed: {result.error}",
+                    next_instructions="Resume when the harness is available again; "
+                    "the tests stage runs again from scratch.",
                 ).model_dump(),
             }
         return {"stage": "tests", "instructions": ""}
 
     def route_after_tests(state: TddState) -> str:
-        """A harness that cannot write the tests ends the run; there is nothing
-        for the implementer to aim at."""
-        if (state.get("decision") or {}).get("decision") == "abort":
+        """A harness that cannot write the tests has nothing for the implementer
+        to aim at: pause for a human, who decides whether to retry or cancel."""
+        decision = (state.get("decision") or {}).get("decision")
+        if decision == "abort":
             return "finish"
+        if decision == "human":
+            return "human_gate"
         return "baseline"
+
+    def route_after_human(state: TddState) -> str:
+        return state.get("resume_target") or "implement"
 
     async def baseline(state: TddState) -> dict[str, Any]:
         """Confirm the new tests actually fail before anyone implements anything."""
@@ -631,6 +645,10 @@ def build_graph(ctx: RunContext):
             "limit_hit": None,
             "budget_extensions": state.get("budget_extensions", 0) + 1,
             "stage": "resumed",
+            # Where to continue: the stage that parked us (e.g. "tests" after a
+            # failed tests role), else the implementer.
+            "resume_target": state.get("resume_to") or "implement",
+            "resume_to": None,
             "decision": JudgeDecision(
                 decision="retry", reason="resumed by human", next_instructions=instructions
             ).model_dump(),
@@ -663,7 +681,7 @@ def build_graph(ctx: RunContext):
 
     graph.add_edge(START, "context")
     graph.add_edge("context", "tests")
-    graph.add_conditional_edges("tests", route_after_tests, ["baseline", "finish"])
+    graph.add_conditional_edges("tests", route_after_tests, ["baseline", "finish", "human_gate"])
     graph.add_edge("baseline", "implement")
     graph.add_edge("implement", "verify")
     graph.add_edge("verify", "judge")
@@ -673,7 +691,7 @@ def build_graph(ctx: RunContext):
     )
     graph.add_edge("critic", "synthesize")
     graph.add_edge("synthesize", "implement")
-    graph.add_edge("human_gate", "implement")
+    graph.add_conditional_edges("human_gate", route_after_human, ["implement", "tests"])
     graph.add_edge("finish", END)
 
     return graph.compile(checkpointer=ctx.checkpointer)

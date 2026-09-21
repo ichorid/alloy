@@ -212,18 +212,30 @@ async def test_judge_runner_failure_is_survived(project, alloy_home, fake_harnes
     assert "judge runner failed" in final["attempts"][0]["reason"]
 
 
-async def test_failing_tests_role_aborts_before_burning_an_implementation(
+async def test_failing_tests_role_pauses_for_a_human_before_burning_an_implementation(
     project, alloy_home, fake_harnesses
 ):
-    fake_harnesses.configure(script(tests={"exit": 1, "stderr": "claude: crashed"}))
+    """A session limit on the tests harness is not an impossible task: park,
+    don't fail, and re-run the tests stage on resume."""
+    from langgraph.types import Command
+
+    fake_harnesses.configure(script(tests=[{"exit": 1, "stderr": "claude: session limit"},
+                                           write_tests_entry()]))
     harness = make_harness(project, alloy_home)
     try:
-        final = await harness.start()
+        paused = await harness.start()
+        assert "__interrupt__" in paused
+        assert "the tests role failed" in paused["__interrupt__"][0].value["reason"]
+        assert fake_harnesses.calls_for("implement") == []
+
+        final = await harness.resume(Command(resume={"instructions": "limit reset, go"}))
     finally:
         harness.close()
 
-    assert final["outcome"] == "failed"
-    assert fake_harnesses.calls_for("implement") == []
+    assert final["outcome"] == "done"
+    assert [call["role"] for call in fake_harnesses.calls] == [
+        "context", "tests", "tests", "implement", "judge"
+    ]
 
 
 # -- consilium --------------------------------------------------------------
