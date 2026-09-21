@@ -17,7 +17,7 @@ import os
 import time
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -92,6 +92,7 @@ class JevRunner:
         model: str | None = None,
         timeout: timedelta | None = None,
         structured_schema: dict | None = None,
+        on_spawn: Callable[[int], None] | None = None,  # no subprocess: nothing to report
     ) -> AgentResult:
         api_key = self._resolve_api_key()
         if not api_key:

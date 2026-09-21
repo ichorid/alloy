@@ -94,6 +94,15 @@ def test_inflight_calls_table_exists_with_call_id_primary_key_and_run_id_index(s
     assert indexes  # at least the run_id index from the plan doc
 
 
+def test_inflight_calls_has_a_nullable_pid_column(store: Store):
+    """alloy-c5v.2: the harness pid the row was spawned with, so a dead run's
+    orphaned process group can still be found and killed."""
+    with store.connect() as conn:
+        info = {row["name"]: row for row in conn.execute("PRAGMA table_info(inflight_calls)")}
+    assert "pid" in info
+    assert info["pid"]["notnull"] == 0
+
+
 def test_agent_calls_has_a_nullable_structured_json_column(store: Store):
     with store.connect() as conn:
         info = {row["name"]: row for row in conn.execute("PRAGMA table_info(agent_calls)")}
@@ -205,6 +214,25 @@ def test_structured_json_is_null_when_the_call_had_no_structured_output(store: S
     assert row["structured_json"] is None
 
 
+# -- set_call_pid ---------------------------------------------------------
+
+
+def test_set_call_pid_records_the_pid_on_the_inflight_row(store: Store):
+    _make_run(store, "run-1")
+    _insert_inflight(store, "call-1", "run-1")
+
+    store.set_call_pid("call-1", 12345)
+
+    assert store.active_calls("run-1")[0]["pid"] == 12345
+
+
+def test_a_freshly_inserted_inflight_row_has_no_pid_until_set(store: Store):
+    _make_run(store, "run-1")
+    _insert_inflight(store, "call-1", "run-1")
+
+    assert store.active_calls("run-1")[0]["pid"] is None
+
+
 # -- reconcile_inflight -------------------------------------------------
 
 
@@ -226,6 +254,66 @@ def test_reconcile_inflight_is_a_no_op_when_nothing_is_stale(store: Store):
 
     assert store.reconcile_inflight() == []
     assert {c["call_id"] for c in store.active_calls()} == {"call-live"}
+
+
+def test_reconcile_inflight_kills_the_process_group_of_a_dead_runs_recorded_harness_pid(
+    store: Store,
+):
+    """journal 9: when the run itself is dead, its harness's process group
+    is orphaned and nothing else knows to stop it. reconcile_inflight must
+    kill it -- not just delete the bookkeeping row."""
+    import subprocess
+    import sys
+    import time
+
+    from alloy.procs import pid_alive
+
+    _make_run(store, "dead-run", pid=dead_pid())
+    harness = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
+    )
+    try:
+        _insert_inflight(store, "call-dead", "dead-run")
+        store.set_call_pid("call-dead", harness.pid)
+
+        removed = store.reconcile_inflight()
+
+        assert {c["call_id"] for c in removed} == {"call-dead"}
+        deadline = time.monotonic() + 5
+        while pid_alive(harness.pid) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert not pid_alive(harness.pid)
+        assert store.active_calls() == []
+    finally:
+        if pid_alive(harness.pid):
+            harness.kill()
+        harness.wait(timeout=10)
+
+
+def test_reconcile_inflight_does_not_touch_the_harness_pid_of_a_live_run(store: Store):
+    """A recorded harness pid must only be killed once the owning run is
+    confirmed dead -- a live run's in-flight harness is left alone."""
+    import subprocess
+    import sys
+
+    from alloy.procs import pid_alive
+
+    _make_run(store, "live-run")  # create_run defaults pid to this test process, which is alive
+    harness = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
+    )
+    try:
+        _insert_inflight(store, "call-live", "live-run")
+        store.set_call_pid("call-live", harness.pid)
+
+        removed = store.reconcile_inflight()
+
+        assert removed == []
+        assert pid_alive(harness.pid)
+        assert {c["call_id"] for c in store.active_calls()} == {"call-live"}
+    finally:
+        harness.kill()
+        harness.wait(timeout=10)
 
 
 # -- usage aggregation ----------------------------------------------------
@@ -426,3 +514,61 @@ def test_opening_store_against_a_pre_existing_db_without_the_new_schema_does_not
 
     row = store.agent_calls("r1")[0]
     assert json.loads(row["structured_json"]) == {"decision": "done"}
+
+
+def test_opening_store_against_an_inflight_calls_table_without_pid_adds_the_column(
+    tmp_path: Path,
+):
+    """Simulates an `alloy.db` created before alloy-c5v.2: `inflight_calls`
+    exists but predates the `pid` column. Opening it must not raise, and
+    `set_call_pid` must work afterward -- this is what makes the migration
+    additive rather than a fresh-table-only fix."""
+    import sqlite3
+
+    db_path = tmp_path / "old_inflight.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE runs (
+            run_id         TEXT PRIMARY KEY,
+            bead_id        TEXT NOT NULL,
+            thread_id      TEXT NOT NULL,
+            recipe         TEXT NOT NULL,
+            repo           TEXT NOT NULL,
+            worktree       TEXT,
+            branch         TEXT,
+            status         TEXT NOT NULL,
+            stage          TEXT,
+            iteration      INTEGER NOT NULL DEFAULT 0,
+            consiliums     INTEGER NOT NULL DEFAULT 0,
+            agent_calls    INTEGER NOT NULL DEFAULT 0,
+            tests_summary  TEXT,
+            started_at     TEXT NOT NULL,
+            updated_at     TEXT NOT NULL,
+            ended_at       TEXT,
+            outcome        TEXT,
+            outcome_reason TEXT,
+            log_dir        TEXT,
+            pid            INTEGER
+        );
+        CREATE TABLE inflight_calls (
+            call_id      TEXT PRIMARY KEY,
+            run_id       TEXT NOT NULL,
+            bead_id      TEXT NOT NULL,
+            role         TEXT NOT NULL,
+            runner       TEXT NOT NULL,
+            model        TEXT,
+            started_at   TEXT NOT NULL
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(db_path)  # must not raise on an inflight_calls table missing `pid`
+
+    _make_run(store, "r1", repo=tmp_path)
+    _insert_inflight(store, "call-1", "r1")
+    store.set_call_pid("call-1", 4242)
+
+    assert store.active_calls("r1")[0]["pid"] == 4242

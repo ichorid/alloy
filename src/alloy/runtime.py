@@ -7,6 +7,7 @@ named methods.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 import uuid
@@ -93,12 +94,18 @@ class RunContext:
         try:
             try:
                 runner = self.registry.get(spec.runner)
+                extra: dict[str, Any] = {}
+                if _accepts_on_spawn(runner):
+                    # journal 9: the row exists before the harness does; the
+                    # pid lands on it as soon as the spawn succeeds.
+                    extra["on_spawn"] = lambda pid: self.store.set_call_pid(call_id, pid)
                 result = await runner.run(
                     prompt,
                     self.worktree.path,
                     model=spec.model,
                     timeout=spec.timeout,
                     structured_schema=schema,
+                    **extra,
                 )
             except RunnerUnavailable as exc:
                 now = utcnow()
@@ -236,3 +243,12 @@ class RunContext:
 
     def set_consiliums(self, count: int) -> None:
         self.store.update_run(self.run_id, consiliums=count)
+
+
+def _accepts_on_spawn(runner: Any) -> bool:
+    """Runners without a subprocess (HTTP adapters, test stubs) need not know
+    about `on_spawn`; only pass it to those that declare the parameter."""
+    try:
+        return "on_spawn" in inspect.signature(runner.run).parameters
+    except (TypeError, ValueError):
+        return False

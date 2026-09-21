@@ -156,3 +156,27 @@ def terminate_pid(pid: int, *, grace_s: float = DEFAULT_GRACE_S) -> bool:
             return True
         time.sleep(0.1)
     return not pid_alive(pid)
+
+
+def terminate_group(pid: int, *, grace_s: float = DEFAULT_GRACE_S) -> bool:
+    """Synchronous variant of `terminate_process_tree` for a pid we did not
+    spawn: the harness group recorded on an `inflight_calls` row whose
+    `alloy run` died without cleaning up (journal 9). SIGTERM the group,
+    wait `grace_s`, SIGKILL what is left. Returns True if the leader is gone.
+    """
+    if not pid_alive(pid):
+        return True
+    if not signal_group(pid, signal.SIGTERM):
+        return True
+    deadline = time.monotonic() + grace_s
+    while time.monotonic() < deadline:
+        if not pid_alive(pid):
+            return True
+        time.sleep(0.1)
+    signal_group(pid, signal.SIGKILL)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if not pid_alive(pid):
+            return True
+        time.sleep(0.1)
+    return not pid_alive(pid)

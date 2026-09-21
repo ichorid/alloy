@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS inflight_calls (
     role         TEXT NOT NULL,
     runner       TEXT NOT NULL,
     model        TEXT,
-    started_at   TEXT NOT NULL
+    started_at   TEXT NOT NULL,
+    pid          INTEGER
 );
 CREATE INDEX IF NOT EXISTS inflight_calls_run_idx ON inflight_calls(run_id);
 """
@@ -96,6 +97,9 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     },
     "agent_calls": {
         "structured_json": "TEXT",                 # the raw structured output, e.g. the judge's verdict
+    },
+    "inflight_calls": {
+        "pid": "INTEGER",                          # the harness process group, so a dead run's orphan can be killed
     },
 }
 
@@ -251,6 +255,14 @@ class Store:
                 (call_id, run_id, bead_id, role, runner, model, utcnow().isoformat()),
             )
 
+    def set_call_pid(self, call_id: str, pid: int) -> None:
+        """Record the harness pid once it is spawned (journal 9): the row is
+        inserted before the process exists, and this is what lets
+        `reconcile_inflight` and `alloy cancel` reach the process group after
+        the `alloy run` that started it has died."""
+        with self.connect() as conn:
+            conn.execute("UPDATE inflight_calls SET pid = ? WHERE call_id = ?", (pid, call_id))
+
     def discard_call(self, call_id: str) -> None:
         with self.connect() as conn:
             conn.execute("DELETE FROM inflight_calls WHERE call_id = ?", (call_id,))
@@ -265,17 +277,25 @@ class Store:
         return [dict(row) for row in rows]
 
     def reconcile_inflight(self) -> list[dict[str, Any]]:
-        """Remove calls left behind by processes that no longer own a live run."""
+        """Remove calls left behind by processes that no longer own a live run.
+
+        journal 9: a dead `alloy run` leaves its harness process group
+        running with nobody to stop it, so the recorded harness pid is killed
+        before the row goes. A live run's harness is never touched -- only
+        the owner's death makes the pid safe to signal.
+        """
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT inflight_calls.*, runs.pid FROM inflight_calls"
+                "SELECT inflight_calls.*, runs.pid AS run_pid FROM inflight_calls"
                 " JOIN runs ON runs.run_id = inflight_calls.run_id"
             ).fetchall()
             removed = []
             for row in rows:
-                if not _pid_alive(row["pid"]):
+                if not _pid_alive(row["run_pid"]):
                     call = dict(row)
-                    del call["pid"]
+                    del call["run_pid"]
+                    if call.get("pid"):
+                        _terminate_group(int(call["pid"]))
                     conn.execute("DELETE FROM inflight_calls WHERE call_id = ?", (call["call_id"],))
                     removed.append(call)
         return removed
@@ -373,3 +393,9 @@ def _pid_alive(pid: int | None) -> bool:
     from alloy.procs import pid_alive
 
     return pid_alive(pid)
+
+
+def _terminate_group(pid: int) -> bool:
+    from alloy.procs import terminate_group
+
+    return terminate_group(pid)

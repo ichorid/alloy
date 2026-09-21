@@ -120,6 +120,66 @@ async def test_a_timed_out_harness_is_gone_afterwards(fake_harnesses, project, t
     assert not pid_alive(int(pidfile.read_text()))
 
 
+# -- alloy-c5v.2: RunContext.call reports the harness pid to the ledger ------
+
+
+async def test_run_context_call_records_the_harness_pid_on_the_inflight_row(
+    fake_harnesses, project, tmp_path
+):
+    """journal 9: while a harness is running, `inflight_calls.pid` must carry
+    its actual pid -- not just at spawn time, but observably for the whole
+    duration the call is in flight -- so reconcile/cancel can find it later
+    even if `alloy run` itself is killed."""
+    from types import SimpleNamespace
+
+    from alloy.config import RoleSpec
+    from alloy.runners import RunnerRegistry
+    from alloy.runtime import RunContext
+    from alloy.store import Store
+    from support import make_bead
+
+    pidfile = tmp_path / "harness.pid"
+    fake_harnesses.configure({"implement": {"sleep": 30, "pidfile": str(pidfile)}})
+
+    store = Store(tmp_path / "alloy.db")
+    bead = make_bead()
+    run_id = "run-1"
+    store.create_run(
+        run_id=run_id, bead_id=bead.id, thread_id=run_id, recipe="tdd-loop",
+        repo=project, worktree=None, branch=None, log_dir=None,
+    )
+    ctx = RunContext(
+        bead=bead,
+        recipe=None,
+        run_id=run_id,
+        worktree=SimpleNamespace(path=project),
+        worktrees=None,
+        registry=RunnerRegistry(log_dir=tmp_path / "logs"),
+        store=store,
+        checkpointer=None,
+        log_dir=tmp_path,
+        beads=None,
+    )
+
+    task = asyncio.ensure_future(
+        ctx.call("implement", RoleSpec(runner="codex"), "Implement the smallest change.")
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not pidfile.exists() and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+        pid = int(pidfile.read_text())
+        assert pid_alive(pid)
+
+        active = store.active_calls(run_id)
+        assert len(active) == 1
+        assert active[0]["pid"] == pid
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
 async def test_grandchildren_in_their_own_process_group_die_too(
     fake_harnesses, project, tmp_path
 ):
@@ -266,6 +326,51 @@ async def test_cancel_terminates_the_owning_process(engine, beads_project):
         if pid_alive(holder.pid):
             holder.kill()
         holder.wait(timeout=10)
+
+
+# -- alloy-c5v.2: cancel kills orphaned harness process groups ---------------
+
+
+async def test_cancel_kills_a_recorded_harness_pid_even_when_the_runs_own_pid_is_dead(
+    engine, beads_project
+):
+    """journal 9: `alloy run` can die (SIGKILL, OOM) without cleaning up the
+    harness process group it spawned. cancel() must still reach that group
+    via the pid recorded on the inflight_calls row, even though the run's own
+    pid -- the `alloy run` process itself -- is already gone."""
+    import subprocess
+    import sys
+
+    from test_store import dead_pid
+
+    bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop")
+    engine.beads.claim(bead_id)
+    engine.store.create_run(
+        run_id="orphaned", bead_id=bead_id, thread_id="orphaned", recipe="tdd-loop",
+        repo=beads_project, worktree=None, branch=None, log_dir=None,
+    )
+    engine.store.update_run("orphaned", pid=dead_pid())
+
+    harness = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
+    )
+    engine.store.start_call(
+        "call-orphaned", run_id="orphaned", bead_id=bead_id, role="implement",
+        runner="codex", model=None,
+    )
+    engine.store.set_call_pid("call-orphaned", harness.pid)
+    try:
+        assert engine.cancel(bead_id) is True
+
+        deadline = time.monotonic() + 5
+        while pid_alive(harness.pid) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert not pid_alive(harness.pid)
+        assert engine.store.get_run("orphaned")["status"] == "cancelled"
+    finally:
+        if pid_alive(harness.pid):
+            harness.kill()
+        harness.wait(timeout=10)
 
 
 # -- journal 14: paused time does not count against the wall clock ------------
