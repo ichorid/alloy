@@ -22,6 +22,7 @@ from alloy import beads as bd
 from alloy import recipes
 from alloy.config import ConfigError, RecipeConfig, RoleSpec, discover_recipes, load_recipe
 from alloy.engine import Engine, EngineError
+from alloy.monitor import build_snapshot
 from alloy.paths import AlloyPaths
 from alloy.runners import BUILTIN, RunnerRegistry
 from alloy.scheduler import Scheduler, SchedulerBusy, read_pid, signal_stop, spawn_detached
@@ -346,6 +347,25 @@ def status(
             row["tests"] or "-", row["elapsed"],
         )
     console.print(table)
+
+
+@app.command()
+def monitor(
+    repo: Optional[Path] = RepoOption,
+    root: Optional[Path] = RootOption,
+    once: bool = typer.Option(False, "--once", help="Take one snapshot and exit"),
+    json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+) -> None:
+    """Live view of the scheduler, the queue and every active run.
+
+    `--once --json` prints a single snapshot (the frozen shape from
+    docs/plans/execution-monitor.md) and exits; the interactive view is the
+    default without those flags."""
+    engine = _engine(repo, root)
+    if once and json:
+        _emit(build_snapshot(engine), True)
+        return
+    _fail("the interactive monitor is not available yet; use `alloy monitor --once --json`")
 
 
 @app.command()
