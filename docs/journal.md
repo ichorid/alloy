@@ -294,6 +294,15 @@ first has to convert the module into a package. Harmless here, but a reminder
 that anything a later bead depends on must be an acceptance criterion, not a
 design note -- the judge only enforces the former.
 
+## 36. Third bead: the Textual view, 15 minutes -- observed
+
+`alloy-44s` went the same way as 73m: one iteration, 206 tests, Jev p=0.89,
+about $2.40. The implementer converted the flat module into the package the
+plan wanted (entry 35) without being told. Headless smoke test through
+Textual's pilot passed on the first try; the interactive view itself has not
+yet been watched by a human on a real terminal -- that is the one acceptance
+step Alloy cannot perform.
+
 ## 23. The tests role can be wrong and only the implementer notices -- open
 
 Claude wrote a test asserting the checkpoint stage after a human gate is

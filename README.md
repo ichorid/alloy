@@ -65,6 +65,8 @@ what to do next, and loops — up to the limits in the recipe.
 
 ```bash
 alloy status --json         # machine-readable, for humans and manager agents
+alloy monitor               # live view: runs, current agent, tokens, judge verdicts
+alloy monitor --once --json # the same as one snapshot, for scripts
 alloy logs t-a3f            # every agent call, with the path to its transcript
 alloy resume t-a3f -m "use NFKD"
 alloy cancel t-a3f
@@ -158,7 +160,8 @@ src/alloy/
   procs.py       process-tree control: a stopped run takes its harness with it
   usage.py       one shape for every harness's token report
   store.py       runs, agent calls, in-flight calls — the ledger
-  cli.py         init/run/start/stop/status/resume/cancel/logs/recipes
+  monitor/       snapshot.py (one read-only view), render.py, app.py (Textual)
+  cli.py         init/run/start/stop/status/monitor/resume/cancel/logs/recipes
 ```
 
 `docs/journal.md` records every surprise met while Alloy implemented its own

@@ -76,6 +76,7 @@ alloy resume <bead-id> -m "<message>" # continue a paused/crashed run with guida
 alloy cancel <bead-id>                # stop the run's process; bead returns to ready, worktree kept
 alloy start [--poll SECS] [--recipe N]  # scheduler: poll Beads, run READY work, concurrency 1
 alloy stop [--now]                    # stop the scheduler after the current task (--now: cancel it too)
+alloy monitor [--once [--json]]       # live htop-style view of every active run; --once prints one snapshot
 ```
 
 Ctrl-C or SIGTERM on `alloy run` stops the harness with it and leaves the run
