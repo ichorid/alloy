@@ -16,3 +16,6 @@ __pycache__/
 
 # local launcher
 .alloy-run.sh
+
+# not a locked project; agents running `uv` in worktrees leave this behind
+uv.lock
