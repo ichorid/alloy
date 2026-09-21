@@ -1,0 +1,56 @@
+name: tdd-loop-jev
+
+# Same as tdd-loop, except the judge role is Jev (Typesafe AI): a classifier
+# that returns a probability distribution over the judge's fixed decision
+# labels (done/retry/consilium/human/abort) instead of free text. It cannot
+# write `reason`/`next_instructions` -- those come back empty -- so this is a
+# real tradeoff, not a strict upgrade: pick this recipe only where a
+# calibrated confidence on the routing decision matters more than the judge's
+# prose. Requires TYPESAFE_API_KEY, or set `runners: jev: api_key_file:` below.
+# Not exercised by the test suite for the reason stated in tests/conftest.py --
+# no test calls a real model; see tests/test_jev.py for the mocked coverage.
+
+roles:
+  context:
+    runner: cursor-plan
+    timeout_minutes: 10
+
+  tests:
+    runner: claude-write
+    model: sonnet
+    timeout_minutes: 20
+
+  implement:
+    runner: astra
+    timeout_minutes: 25
+
+  judge:
+    runner: jev
+    model: jev-latest
+    timeout_minutes: 10
+
+consilium:
+  critics:
+    - runner: claude
+      model: sonnet
+    - runner: codex-readonly
+    - runner: pi
+  synthesizer:
+    runner: claude
+    model: sonnet
+
+verify:
+  timeout_minutes: 15
+
+limits:
+  max_iterations: 5
+  max_consiliums: 1
+  max_wall_time_minutes: 90
+  max_agent_calls: 20
+
+on_success_status: review-ready
+cleanup_worktree_on_success: false
+
+# runners:
+#   jev:
+#     api_key_file: ~/MY_SRC/jev.key   # never commit the raw key; env var works too

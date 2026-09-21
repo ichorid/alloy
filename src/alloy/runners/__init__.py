@@ -15,6 +15,7 @@ from alloy.runners.claude import ClaudeRunner, ClaudeWriteRunner
 from alloy.runners.codex import CodexReadOnlyRunner, CodexRunner
 from alloy.runners.cursor import CursorPlanRunner, CursorRunner
 from alloy.runners.generic import GenericCLIRunner, PiRunner
+from alloy.runners.jev import JevRunner
 
 BUILTIN: dict[str, Callable[..., CLIRunner]] = {
     "claude": ClaudeRunner,
@@ -25,6 +26,7 @@ BUILTIN: dict[str, Callable[..., CLIRunner]] = {
     "cursor-plan": CursorPlanRunner,
     "pi": PiRunner,
     "generic": GenericCLIRunner,
+    "jev": JevRunner,
 }
 
 # "astra" is the implementation persona the recipes refer to; it rides on Codex
