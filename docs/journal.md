@@ -284,6 +284,16 @@ integration step took another two minutes. The loop is now the shape it was
 designed to be; the remaining cost is the full-suite verify at ~4.5 minutes
 per iteration (entry 22).
 
+## 35. The plan said package, the implementer shipped a module -- observed
+
+Component 3's design puts the monitor in `src/alloy/monitor/` (`snapshot.py`,
+`render.py`, `app.py`); bead 2's implementer created `src/alloy/monitor.py`
+instead, and the judge accepted it because no acceptance criterion named the
+layout. Bead 3's tests then import `alloy.monitor.render`, so its implementer
+first has to convert the module into a package. Harmless here, but a reminder
+that anything a later bead depends on must be an acceptance criterion, not a
+design note -- the judge only enforces the former.
+
 ## 23. The tests role can be wrong and only the implementer notices -- open
 
 Claude wrote a test asserting the checkpoint stage after a human gate is
