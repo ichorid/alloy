@@ -1,4 +1,4 @@
-"""Textual live view for `alloy monitor`: stats line, runs table, refresh, quit.
+"""Textual live view for `alloy monitor`: stats line, runs table, detail pane, refresh, quit.
 
 Strictly read-only: the app only ever calls `snapshot_source()` (off the event
 loop, in a thread worker) and touches its own widgets. See "Component 3" in
@@ -13,7 +13,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Footer, Header, Static
 
-from alloy.monitor.render import COLUMNS, header_line, run_rows
+from alloy.monitor.render import COLUMNS, detail_lines, header_line, run_rows
 
 
 class MonitorApp(App[None]):
@@ -23,6 +23,7 @@ class MonitorApp(App[None]):
     BINDINGS = [
         ("j,down", "cursor_down", "Down"),
         ("k,up", "cursor_up", "Up"),
+        ("enter,l", "toggle_detail", "Detail"),
         ("q", "quit", "Quit"),
     ]
 
@@ -36,6 +37,9 @@ class MonitorApp(App[None]):
         yield Header()
         yield Static("loading…", id="stats")
         yield DataTable(id="runs", cursor_type="row")
+        detail = Static("", id="detail")
+        detail.display = False
+        yield detail
         yield Footer()
 
     def on_mount(self) -> None:
@@ -74,6 +78,7 @@ class MonitorApp(App[None]):
                 target = len(run_ids) - 1
             table.move_cursor(row=target)
         self.query_one("#stats", Static).update(header_line(snapshot))
+        self._refresh_detail()
 
     def _show_failure(self, exc_type: str) -> None:
         text = header_line(self._snapshot) if self._snapshot is not None else ""
@@ -88,8 +93,43 @@ class MonitorApp(App[None]):
         except IndexError:
             return None
 
+    def _selected_run(self) -> dict[str, Any] | None:
+        run_id = self._selected_run_id(self.query_one("#runs", DataTable))
+        if run_id is None or self._snapshot is None:
+            return None
+        return next((run for run in self._snapshot.get("runs") or [] if run["run_id"] == run_id), None)
+
+    def _refresh_detail(self) -> None:
+        """Re-render the detail pane for the run under the cursor; hide it when there is none."""
+        detail = self.query_one("#detail", Static)
+        if not detail.display:
+            return
+        run = self._selected_run()
+        if run is None:
+            detail.display = False
+            return
+        root = (self._snapshot or {}).get("root")
+        log_dir = None if root is None else f"{root}/logs/{run['run_id']}"
+        detail.update("\n".join(detail_lines(run, log_dir)))
+
     def action_cursor_down(self) -> None:
         self.query_one("#runs", DataTable).action_cursor_down()
+        self._refresh_detail()
 
     def action_cursor_up(self) -> None:
         self.query_one("#runs", DataTable).action_cursor_up()
+        self._refresh_detail()
+
+    def on_data_table_row_selected(self, _event: DataTable.RowSelected) -> None:
+        """The focused table consumes `enter` as row selection; treat that as the toggle."""
+        self.action_toggle_detail()
+
+    def action_toggle_detail(self) -> None:
+        detail = self.query_one("#detail", Static)
+        if detail.display:
+            detail.display = False
+            return
+        if self._selected_run() is None:
+            return
+        detail.display = True
+        self._refresh_detail()
