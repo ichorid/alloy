@@ -336,6 +336,17 @@ history got that sentence as the change summary. Cheap mitigation: ask for
 the summary inside a fenced marker (e.g. `<summary>…</summary>`) and extract
 it from the whole transcript rather than trusting the last message.
 
+## 40. Fifth bead and the epic is done -- observed
+
+`alloy-c5v.2` (harness pid on `inflight_calls`) ran on the default
+`tdd-loop` recipe: after the session-limit restart, context 70 s, tests 64 s
+(it adopted its own earlier partial edits), Fable 344 s, verify, and the
+Claude Sonnet judge said `done` in 39 s with a two-paragraph reason that
+named the risks it had checked -- the first bead in this series judged by
+prose rather than a distribution. 230 tests. All five children of the
+monitor epic have now been implemented by Alloy and merged; the interactive
+view has not yet been seen by a human on a real terminal.
+
 ## 23. The tests role can be wrong and only the implementer notices -- open
 
 Claude wrote a test asserting the checkpoint stage after a human gate is

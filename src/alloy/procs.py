@@ -166,14 +166,17 @@ def terminate_group(pid: int, *, grace_s: float = DEFAULT_GRACE_S) -> bool:
     """
     if not pid_alive(pid):
         return True
-    if not signal_group(pid, signal.SIGTERM):
-        return True
+    # Same reach as the async variant: the session and every descendant, not
+    # just the group -- codex's helpers leave the group (journal 28).
+    signal_tree(pid, signal.SIGTERM)
     deadline = time.monotonic() + grace_s
     while time.monotonic() < deadline:
         if not pid_alive(pid):
-            return True
+            break
         time.sleep(0.1)
-    signal_group(pid, signal.SIGKILL)
+    survivors = {p for p in tree_pids(pid) if pid_alive(p)}
+    if survivors:
+        signal_tree(pid, signal.SIGKILL)
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline:
         if not pid_alive(pid):
