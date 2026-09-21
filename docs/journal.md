@@ -275,6 +275,15 @@ the general fix is a diff that skips ignored *and* obviously generated files
 (lockfiles, `.serena/`, `__pycache__`), or a much larger diff budget for the
 judge with head/tail clipping per file.
 
+## 34. Second bead: 17 minutes, one iteration -- observed
+
+`alloy-73m` (snapshot assembly) went context 52 s, tests 451 s, codex 3 s
+(out of credits, clear message this time), Fable 275 s, verify, Jev `done`
+p=0.92 -- 17 minutes wall, about $3.40 in Claude spend. The operator
+integration step took another two minutes. The loop is now the shape it was
+designed to be; the remaining cost is the full-suite verify at ~4.5 minutes
+per iteration (entry 22).
+
 ## 23. The tests role can be wrong and only the implementer notices -- open
 
 Claude wrote a test asserting the checkpoint stage after a human gate is
