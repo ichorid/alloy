@@ -23,7 +23,7 @@ from alloy.checkpoints import has_pending_interrupt, open_checkpointer, read_che
 from alloy.config import ConfigError, RecipeConfig, load_recipe
 from alloy.models import Outcome
 from alloy.paths import AlloyPaths
-from alloy.procs import pid_alive, terminate_pid
+from alloy.procs import pid_alive, terminate_group, terminate_pid
 from alloy.runners import RunnerRegistry
 from alloy.runtime import RunContext
 from alloy.store import (
@@ -152,6 +152,14 @@ class Engine:
             log.info("%s: stopping pid %s", bead_id, pid)
             if not terminate_pid(int(pid), grace_s=grace_s):
                 raise EngineError(f"could not stop pid {pid} running {bead_id}")
+        # journal 9: a run that died without cleanup (SIGKILL, OOM) leaves its
+        # harness process group running; the inflight row remembers its pid.
+        for call in self.store.active_calls(record["run_id"]):
+            harness_pid = call.get("pid")
+            if harness_pid and pid_alive(harness_pid):
+                log.info("%s: stopping orphaned harness pid %s", bead_id, harness_pid)
+                terminate_group(int(harness_pid), grace_s=grace_s)
+            self.store.discard_call(call["call_id"])
         self.store.finish_run(
             record["run_id"], status=RUN_CANCELLED,
             outcome=Outcome.CANCELLED.value, reason="cancelled by operator",

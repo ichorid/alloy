@@ -15,7 +15,7 @@ import shutil
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from alloy.models import AgentResult, RunnerUnavailable, clip, prompt_hash, utcnow
 from alloy.procs import terminate_process_tree
@@ -37,6 +37,7 @@ class AgentRunner(Protocol):
         model: str | None = None,
         timeout: timedelta | None = None,
         structured_schema: dict | None = None,
+        on_spawn: Callable[[int], None] | None = None,
     ) -> AgentResult: ...
 
 
@@ -169,7 +170,11 @@ class CLIRunner:
         model: str | None = None,
         timeout: timedelta | None = None,
         structured_schema: dict | None = None,
+        on_spawn: Callable[[int], None] | None = None,
     ) -> AgentResult:
+        """`on_spawn(pid)` fires once the harness exists (journal 9): the
+        caller records the pid so the process group can still be killed if
+        `alloy run` itself dies before the call ends."""
         binary_path = self.resolve_binary()
         if binary_path is None:
             raise RunnerUnavailable(f"{self.name}: '{self.binary}' not found on PATH")
@@ -204,6 +209,8 @@ class CLIRunner:
             raise RunnerUnavailable(f"{self.name}: cannot execute {binary_path}: {exc}") from exc
 
         try:
+            if on_spawn is not None:
+                on_spawn(process.pid)
             raw_out, raw_err = await asyncio.wait_for(process.communicate(), timeout=limit_s)
         except asyncio.TimeoutError:
             timed_out = True
