@@ -32,7 +32,9 @@ for it).
   `result.structured` in `Store.finish_call`.
 - Add `alloy/usage.py` with `normalize(raw: dict) -> dict` per the plan
   doc's exact field list and precedence order, plus `Store.token_totals(run_id)`
-  and `Store.token_totals_by_role(run_id)` built on it.
+  and `Store.token_totals_by_role(run_id)` built on it. `cost_usd` in those
+  totals is the sum of reported costs, or `None` when no record reported one
+  -- never `0.0` for "unreported" (see Component 1 item 4).
 - Add an optional `repo: Path | None` filter to `Store.active_runs()` and
   `Store.all_runs()`, and add `Store.run_status_totals(repo: Path) ->
   dict[str, int]` (unbounded group-by-status count).
@@ -71,7 +73,8 @@ for it).
 - `Store.token_totals`/`token_totals_by_role`, given a run with several
   `agent_calls` rows across at least two roles including at least one with
   only a totals-only usage shape, return correct sums with unreported
-  fields treated as `0` in the sum.
+  fields treated as `0` in the sum. `cost_usd` is `None` when no row
+  reported a cost and the sum of the reported costs otherwise.
 - `Store.active_runs(repo=...)` and `Store.all_runs(repo=...)` only return
   rows for the given repo; `Store.run_status_totals(repo)` returns exact
   counts across the whole table, not limited to any default row cap.
@@ -117,8 +120,9 @@ query: see "Component 2 -- snapshot assembly" in
   via `Engine.graph_snapshot_for_run(run_id)` (never `graph_snapshot(bead_id)`),
   the `budget_extensions`-adjusted effective limits, `consiliums` from
   checkpoint state (not `runs.consiliums`), `Store.active_calls(run_id)`,
-  `Store.token_totals(run_id)`, the raw-vs-effective judge pair from the
-  most recent judge-role `agent_calls` row, and requested-vs-effective
+  `Store.token_totals(run_id)` and `Store.token_totals_by_role(run_id)`
+  (as `tokens` and `tokens_by_role`), the raw-vs-effective judge pair from
+  the most recent judge-role `agent_calls` row, and requested-vs-effective
   runner/model for `current_calls` and the latest completed call.
 - Add the `monitor` Typer command in `src/alloy/cli.py`: `--once` plus
   `--json` together print one `build_snapshot(engine)` result as JSON and
@@ -142,7 +146,8 @@ query: see "Component 2 -- snapshot assembly" in
 - A run with no in-flight call has `"current_calls": []`; a run that has not
   reached the judge stage has `"judge": null`; a run with no usage data has
   every `tokens` field present and zero (or `null` for `cost_usd`
-  specifically), not omitted.
+  specifically), not omitted. `tokens_by_role` is `{}` for a run
+  with no calls and has one entry per role otherwise.
 - A bead with two recorded runs shows each run's own judge/iteration state
   in its own entry -- not both entries showing the latest run's state.
 - Running against a freshly-initialized `~/.alloy` with no prior runs at all
@@ -161,66 +166,129 @@ feature
 
 alloy, monitor
 
-## Alloy monitor: interactive live view
+## Alloy monitor: Textual live view (runs table, refresh, quit)
 
-Add the default (no `--once`) `alloy monitor` interactive dashboard:
-`rich`-rendered, refreshed on a timer, read-only keyboard navigation.
-Depends on the snapshot-assembly bead (its `build_snapshot` and CLI scaffold
+Add the default (no `--once`) `alloy monitor` dashboard as a Textual app:
+stats line, runs table, worker-driven refresh, `j`/`k`/`q`, plus the plain
+`alloy monitor --once` rendering. No detail pane yet (next bead). Depends on
+the snapshot-assembly bead (its `build_snapshot` and CLI scaffold must
+already be merged to `main`).
+
+### Description
+
+Full rationale, widget structure, worker/refresh rules and the pilot-based
+testing approach: see "Component 3 -- interactive `alloy monitor` view
+(Textual)" in `docs/plans/execution-monitor.md` (committed at the root of
+this repository -- read it before writing any code). `textual>=1.0` is
+already a declared dependency; do not add any other UI library and do not
+touch `termios`/`tty`.
+
+### Design
+
+- Add `src/alloy/monitor/render.py` with pure functions `run_rows(snapshot)
+  -> list[tuple[str, ...]]` (one tuple per `runs[]` entry: bead, recipe,
+  status, stage, `i/max`, `c/max`, tests, elapsed, now, tokens, judge -- the
+  exact column rules are in the plan doc) and `header_line(snapshot) -> str`.
+- Add `src/alloy/monitor/app.py` with `MonitorApp(textual.app.App)`:
+  `snapshot_source: Callable[[], dict]` and `interval: float` constructor
+  arguments; `compose()` yields `Header`, a `Static#stats`, a
+  `DataTable#runs` with `cursor_type="row"`, and `Footer`; `on_mount()`
+  does one refresh and `set_interval(interval, refresh_snapshot)`;
+  `refresh_snapshot` is a `@work(thread=True, exclusive=True)` worker that
+  calls `snapshot_source()` off the event loop and applies the result via
+  `call_from_thread`; a raising worker leaves the last good snapshot on
+  screen and puts "refresh failed: <type>" in the stats line.
+- `apply_snapshot(snapshot)` rebuilds the table with rows keyed by `run_id`
+  and keeps the cursor on the same `run_id` when it still exists, otherwise
+  clamps to the last row (or no cursor when there are no runs).
+- `BINDINGS`: `j`/`down` cursor down, `k`/`up` cursor up, `q` quit. Actions
+  only touch widget state.
+- Extend the `monitor` Typer command: no flags → `MonitorApp(...).run()`;
+  `--once` without `--json` → print `header_line` and a Rich table built from
+  `run_rows` to stdout and exit 0; `--interval` (float, default 1.0).
+
+### Acceptance Criteria
+
+- `run_rows` and `header_line` are unit-tested against synthetic snapshot
+  dicts shaped exactly like the plan doc's frozen JSON, including: zero
+  runs, a run with two `current_calls`, a run with `judge: null`, and a run
+  whose raw and effective judge decisions differ.
+- Pilot tests (`async with MonitorApp(...).run_test() as pilot`, no real
+  terminal) assert: the table shows one row per run after the first refresh;
+  `j`/`k` move the cursor and clamp at both ends; `q` exits with return
+  code 0; a snapshot with zero runs renders without raising; a snapshot in
+  which the previously selected run is gone leaves the cursor on a valid
+  row; a `snapshot_source` that raises leaves the previous rows visible and
+  does not crash the app.
+- `alloy monitor --once` (no `--json`) exits 0 and prints the header line and
+  one table row per active run; with no runs it prints the header line and
+  an empty table without raising.
+- The refresh worker runs off the event loop: a test with a
+  `snapshot_source` that blocks for 0.5 s must still process `q` within that
+  window (use the pilot; do not sleep-and-hope).
+- `python -m pytest -q` passes for the whole repo.
+
+### Priority
+
+2
+
+### Type
+
+feature
+
+### Labels
+
+alloy, monitor
+
+## Alloy monitor: detail pane and judge panel
+
+Add the selected-run detail pane to the Textual dashboard: `enter`/`l`
+toggles it, it shows in-flight calls, the judge's raw vs effective verdict,
+per-role token totals and the run's paths. Also adds the read-only-bindings
+test. Depends on the Textual live view bead (its `MonitorApp` and `render.py`
 must already be merged to `main`).
 
 ### Description
 
-Full rationale, panel layout, and the terminal/input/threading requirements:
-see "Component 3 -- interactive `alloy monitor` view" in
+Full rationale and the exact content rules for the detail pane: see
+"Component 3 -- interactive `alloy monitor` view (Textual)" in
 `docs/plans/execution-monitor.md` (committed at the root of this repository
--- read it before writing any code; the terminal-lifecycle and
-polling-vs-input-threading requirements there are not optional details).
+-- read it, in particular the "Panels" paragraph and the raw-vs-effective
+judge rules in Component 1 item 3, before writing any code).
 
 ### Design
 
-- Extend the `monitor` command (added in the previous bead) so that, absent
-  `--once`, it runs the interactive loop: `rich.live.Live` +
-  `rich.layout.Layout`, refreshed every `--interval` seconds (default 1.0),
-  each refresh calling `build_snapshot(engine)` off the input-handling
-  thread (e.g. via `asyncio.to_thread`) so a slow Beads/SQLite call never
-  delays quitting.
-- Put stdin into cbreak mode (`termios`/`tty`, POSIX only) for the session's
-  duration, restored in a `finally:` covering normal exit, `Ctrl-C`, and any
-  exception. Read keys off a background thread/reader into a queue the
-  render loop drains; never a blocking read in the redraw loop itself.
-- Panels: header (scheduler status, ready count, lifetime totals), an
-  active-runs table (one row per `runs[]` entry from the snapshot: bead,
-  recipe, status, stage, `iteration/max_iterations`,
-  `consiliums/max_consiliums`, `tests_summary`, `elapsed_minutes`, a summary
-  of `current_calls` and `tokens`), and a detail pane for the selected row
-  (full `current_calls`, `judge` raw-vs-effective, worktree/branch).
-- Controls: up/down or `j`/`k` to move selection, `enter`/`l` to toggle the
-  detail pane, `q` to quit. The keymap's dispatch table must contain no
-  handler that calls a mutating method on `Store`, `BeadsClient`, or the
-  checkpointer -- verify this by construction and assert it in a test that
-  inspects the dispatch table directly.
-- Handle gracefully, without raising: a resize, the selected row's run
-  disappearing between two snapshots (finished or errored out), zero active
-  runs, and a `~/.alloy` with no prior runs.
+- Add `detail_lines(run: dict) -> list[str]` to
+  `src/alloy/monitor/render.py`: every `current_calls` entry as
+  `role: requested_runner[:model] -> effective_runner[:model] (42s)`; the
+  judge as `judge said <raw decision> (confidence 0.61) / Alloy did
+  <effective decision> -- <reason>` when they differ, one line when they
+  match, and `judge: no parseable verdict` when `raw` is null while
+  `effective` is not; `tokens_by_role` as one `role: total (in/out)` line
+  per role; worktree, branch and log dir.
+- Add a `RunDetail(Static)` widget (id `detail`, `display = False` initially)
+  to `MonitorApp.compose()`, rendered from `detail_lines` for the run under
+  the cursor; `apply_snapshot` refreshes it when visible.
+- Add bindings `enter`/`l` → `toggle_detail`. The pane hides itself when the
+  selected run disappears and there is no row to select.
+- Add a test that inspects `MonitorApp.BINDINGS`: each action must be in the
+  allowlist `{cursor_down, cursor_up, toggle_detail, quit}`, and the source
+  of `alloy/monitor/app.py` and `alloy/monitor/render.py` must contain none
+  of `finish_run`, `update_run`, `create_run`, `set_status`, `set_metadata`,
+  `claim`, `cancel(`, `note(`.
 
 ### Acceptance Criteria
 
-- Rendering logic (row-building, panel-building) is unit-tested directly
-  against synthetic snapshot dicts shaped like Component 2's frozen JSON
-  (call the function, assert on the resulting `rich` renderable's plain-text
-  output or on intermediate row data before it reaches `rich`) -- not only
-  through a manual run of the interactive command.
-- A test asserts the keymap's dispatch table contains only read-only
-  handlers (by inspection of the table, not by running the program and
-  hoping nothing mutates).
-- A test drives the controller with injected input events, an injected
-  clock, and injected snapshots (no real terminal, no real timing-sensitive
-  sleeps) and asserts: selection moves and clamps at the ends of a runs
-  list, the detail pane toggles, `q` stops the loop, and a snapshot with
-  zero runs or a disappeared selected row does not raise.
-- Terminal mode is restored (a test can assert the cbreak-mode
-  enter/restore calls both happened) even when the loop exits via a raised
-  exception, not only on a clean quit.
+- `detail_lines` is unit-tested against synthetic run dicts covering: two
+  in-flight calls with requested != effective runner; matching raw/effective
+  judge; differing raw/effective judge; `raw` null with `effective` set
+  (must yield "no parseable verdict"); `judge: null`; empty
+  `tokens_by_role`.
+- Pilot tests assert: `enter` shows the detail pane for the selected run and
+  `enter` again hides it; `l` behaves like `enter`; moving the cursor with
+  the pane open updates its content; a snapshot in which the selected run
+  disappeared hides the pane instead of raising.
+- The bindings/read-only test described in Design exists and passes.
 - `python -m pytest -q` passes for the whole repo.
 
 ### Priority

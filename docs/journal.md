@@ -188,6 +188,15 @@ applied via the prompt (Alloy verifies); the structural fix is a faster
 suite or a `verify.command` that runs only the relevant tests during
 iterations.
 
+## 24. Adopting a worktree used HEAD as the diff base -- fixed
+
+`WorktreeManager.ensure()` returned `base_commit = HEAD` when it adopted an
+existing worktree on resume. Harmless while agents never commit, but the
+moment the operator merges `main` forward into the bead branch (needed here,
+so the worktree gets the pytest `pythonpath` fix and the new prompts) HEAD
+moves and the judge's diff would have shown only the uncommitted remainder.
+Fixed: the base is the merge-base of the branch and the repository's HEAD.
+
 ## 23. The tests role can be wrong and only the implementer notices -- open
 
 Claude wrote a test asserting the checkpoint stage after a human gate is

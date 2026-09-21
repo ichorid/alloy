@@ -61,7 +61,7 @@ class WorktreeManager:
 
         if path.exists() and (path / ".git").exists():
             self._assert_owned(path, branch)
-            return Worktree(bead_id, path, branch, self._head(path))
+            return Worktree(bead_id, path, branch, self._base_of(path, base))
 
         if path.exists() and any(path.iterdir()):
             raise WorktreeError(f"{path} exists but is not an Alloy worktree")
@@ -116,6 +116,22 @@ class WorktreeManager:
     def _head(self, path: Path) -> str:
         proc = _git(["rev-parse", "HEAD"], path, check=False)
         return proc.stdout.strip()
+
+    def _base_of(self, path: Path, base: str) -> str:
+        """Where the task's changes start when adopting an existing worktree.
+
+        Not the worktree's HEAD: if the operator merged `main` forward into
+        the branch, or an agent committed, HEAD has moved and a diff against
+        it would hide work the judge must see. The merge-base with the
+        repository's `base` (HEAD by default) is the last commit both sides
+        share, so the diff is exactly what this task added.
+        """
+        repo_base = _git(["rev-parse", base], self.repo, check=False).stdout.strip()
+        head = self._head(path)
+        if not repo_base or not head:
+            return head
+        proc = _git(["merge-base", head, repo_base], path, check=False)
+        return proc.stdout.strip() or head
 
     def _branch_exists(self, branch: str) -> bool:
         proc = _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
