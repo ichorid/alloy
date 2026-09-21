@@ -20,7 +20,7 @@ from rich.table import Table
 
 from alloy import beads as bd
 from alloy import recipes
-from alloy.config import ConfigError, RecipeConfig, discover_recipes, load_recipe
+from alloy.config import ConfigError, RecipeConfig, RoleSpec, discover_recipes, load_recipe
 from alloy.engine import Engine, EngineError
 from alloy.paths import AlloyPaths
 from alloy.runners import BUILTIN, RunnerRegistry
@@ -385,7 +385,6 @@ def recipes_command(
     paths = AlloyPaths.resolve(root)
     repo_path = (repo or Path.cwd()).resolve()
     found = discover_recipes(paths.root, repo_path)
-    registry = RunnerRegistry()
 
     entries: list[dict[str, Any]] = []
     for name, path in sorted(found.items()):
@@ -397,11 +396,18 @@ def recipes_command(
             entry["error"] = str(exc)
             entries.append(entry)
             continue
-        entry["roles"] = {
-            role: {"runner": spec.runner, "model": spec.model,
-                   "available": registry.available(spec.runner)}
-            for role, spec in config.roles.items()
-        }
+        # The recipe's own `runners:` block (api keys, binaries) decides what
+        # is available -- a bare registry would call Jev "missing" forever.
+        registry = RunnerRegistry(config.runners)
+
+        def describe(spec: "RoleSpec") -> dict[str, Any]:
+            info: dict[str, Any] = {"runner": spec.runner, "model": spec.model,
+                                    "available": registry.available(spec.runner)}
+            if spec.fallback is not None:
+                info["fallback"] = describe(spec.fallback)
+            return info
+
+        entry["roles"] = {role: describe(spec) for role, spec in config.roles.items()}
         entry["critics"] = [
             {"runner": spec.runner, "available": registry.available(spec.runner)}
             for spec in config.consilium.critics
@@ -420,9 +426,7 @@ def recipes_command(
         if not entry["graph"]:
             console.print("  [yellow]no graph registered for this name[/yellow]")
         for role, info in entry.get("roles", {}).items():
-            mark = "" if info["available"] else " [yellow](runner missing)[/yellow]"
-            model = f":{info['model']}" if info["model"] else ""
-            console.print(f"  {role:<10} {info['runner']}{model}{mark}")
+            console.print(f"  {role:<10} {_role_label(info)}")
         critics = ", ".join(
             f"{c['runner']}{'' if c['available'] else '(missing)'}" for c in entry["critics"]
         )
@@ -431,6 +435,15 @@ def recipes_command(
 
 
 # --------------------------------------------------------------------------
+
+
+def _role_label(info: dict[str, Any]) -> str:
+    mark = "" if info["available"] else " [yellow](runner missing)[/yellow]"
+    model = f":{info['model']}" if info.get("model") else ""
+    label = f"{info['runner']}{model}{mark}"
+    if info.get("fallback"):
+        label += f"  [dim]-> fallback[/dim] {_role_label(info['fallback'])}"
+    return label
 
 
 _STAGE_ROLES = ("context", "tests", "implement", "judge")

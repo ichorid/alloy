@@ -197,6 +197,28 @@ so the worktree gets the pytest `pythonpath` fix and the new prompts) HEAD
 moves and the judge's diff would have shown only the uncommitted remainder.
 Fixed: the base is the merge-base of the branch and the repository's HEAD.
 
+## 25. `alloy recipes` called Jev "missing" while it worked -- fixed
+
+The command built a bare `RunnerRegistry()` to answer "is this runner
+available?", ignoring the recipe's own `runners:` block -- the one place the
+Jev key file is configured. Fixed: availability is evaluated with the
+recipe's overrides, and the output now shows each role's fallback chain.
+
+## 26. Time spent dead counted as wall time -- fixed
+
+The `alloy-626` run was killed at minute ~41 and adopted at minute ~78; with
+a 90-minute limit the resumed run would have hit `max_wall_time` almost
+immediately. Fixed: adopting an orphaned run banks the interval since the
+dead owner's last write as paused time.
+
+## 27. Adopting a run that never checkpointed crashed it -- fixed
+
+A run killed during its very first node (`context`) has a `runs` row but no
+LangGraph checkpoint. Recovery handed the graph `None` to "continue", and
+LangGraph raised `EmptyInputError`, which the engine then recorded as a
+crash -- the bead went `failed` for having been unlucky twice. Fixed: with no
+checkpoint, the adopted run starts from the recipe's initial state.
+
 ## 23. The tests role can be wrong and only the implementer notices -- open
 
 Claude wrote a test asserting the checkpoint stage after a human gate is

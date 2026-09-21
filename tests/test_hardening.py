@@ -300,6 +300,30 @@ async def test_a_resumed_run_does_not_immediately_hit_max_wall_time(
     assert final.get("limit_hit") is None
 
 
+async def test_time_a_run_spent_dead_is_not_wall_time(engine, beads_project, fake_harnesses):
+    """An orphaned run adopted an hour after its process died has not been
+    working for that hour."""
+    from datetime import datetime, timezone
+
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    engine.beads.claim(bead_id)
+    engine.store.create_run(
+        run_id="dead", bead_id=bead_id, thread_id="dead", recipe="tdd-loop",
+        repo=beads_project, worktree=None, branch=None, log_dir=None,
+    )
+    hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    engine.store.update_run("dead", pid=999999, started_at=hour_ago)
+    engine.store.update_run("dead", stage="implement")
+    with engine.store.connect() as conn:  # updated_at is the owner's last write
+        conn.execute("UPDATE runs SET updated_at = ? WHERE run_id = 'dead'", (hour_ago,))
+
+    result = await engine.run(bead_id)
+
+    assert result.run_id == "dead"
+    assert engine.store.get_run("dead")["paused_s"] == pytest.approx(3600, abs=60)
+
+
 # -- journal 16: the persisted stage reflects the end -------------------------
 
 

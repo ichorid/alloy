@@ -87,6 +87,10 @@ class Engine:
         existing = self._resumable_run(bead_id)
         if existing is not None:
             log.info("%s: adopting orphaned run %s", bead_id, existing["run_id"])
+            # Nothing ran between the owner's last write and now; that dead
+            # time must not eat the wall-time budget (see Store.mark_resumed).
+            if not existing.get("paused_at"):
+                self.store.update_run(existing["run_id"], paused_at=existing["updated_at"])
             return await self._execute(
                 bead, existing["recipe"], run_id=existing["run_id"],
                 thread_id=existing["thread_id"], resume_payload=None,
@@ -259,7 +263,9 @@ class Engine:
 
             if resume_payload is not None:
                 payload: Any = Command(resume=resume_payload)
-            elif fresh:
+            elif fresh or read_checkpoint(self.paths.workflows_db, thread_id) is None:
+                # A run that died before its first checkpoint has nothing to
+                # continue from; LangGraph would refuse an empty input.
                 payload = recipe.initial_state(ctx)
             else:
                 payload = None  # continue from the last checkpoint
