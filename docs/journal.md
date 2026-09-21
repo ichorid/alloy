@@ -303,6 +303,15 @@ Textual's pilot passed on the first try; the interactive view itself has not
 yet been watched by a human on a real terminal -- that is the one acceptance
 step Alloy cannot perform.
 
+## 37. Fourth bead in 9 minutes; the loop is now routine -- observed
+
+`alloy-c5v.1` (detail pane and judge panel): context 45 s, tests 157 s,
+codex 3 s (out of credits), Fable 107 s, verify, Jev p=0.89, 222 tests. The
+tests role appended 71 lines to an existing test file, additive only. Four
+monitor beads have now gone through Alloy end to end; every one needed the
+Codex-to-Fable fallback and none needed a human gate or a second iteration
+after the first bead. Total Claude spend for the four beads is roughly $12.
+
 ## 23. The tests role can be wrong and only the implementer notices -- open
 
 Claude wrote a test asserting the checkpoint stage after a human gate is
