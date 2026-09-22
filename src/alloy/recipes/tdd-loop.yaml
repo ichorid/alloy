@@ -74,6 +74,16 @@ roles:
       model: fable               # Claude Fable 5.1 (alias resolves to claude-fable-5-1)
       timeout_minutes: 25
 
+  verifier:
+    # Proposes one verification check at a time (targeted test, suite, lint, build,
+    # any project script); Alloy runs it as-is and shows the result back.
+    runner: cursor-plan          # read-only
+    timeout_minutes: 10
+    fallback:
+      runner: claude
+      model: sonnet
+      timeout_minutes: 10
+
   judge:
     runner: claude
     model: sonnet

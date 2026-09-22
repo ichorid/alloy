@@ -6,16 +6,19 @@ them -- especially where Alloy overrules the agent.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from dataclasses import replace
 
-from alloy.config import Limits
+from alloy.config import Limits, VerificationSpec
 from conftest import (
     context_entry,
     critic_entry,
     implement_entry,
     judge_entry,
     synthesize_entry,
+    verifier_run_entry,
+    verifier_stop_entry,
     write_tests_entry,
 )
 from support import load_config, make_harness
@@ -50,7 +53,7 @@ async def test_done_decision_finishes_after_one_iteration(
     assert final["outcome"] == "done"
     assert final["iteration"] == 1
     assert [call["role"] for call in fake_harnesses.calls] == [
-        "context", "estimate", "tests", "implement", "judge"
+        "context", "estimate", "tests", "implement", "verifier", "judge"
     ]
 
 
@@ -71,7 +74,7 @@ async def test_stages_run_in_order_and_tests_precede_implementation(
 async def test_baseline_records_that_the_new_tests_fail_first(
     project, alloy_home, fake_harnesses
 ):
-    fake_harnesses.configure(script())
+    fake_harnesses.configure(verification_script())
     harness = make_harness(project, alloy_home)
     try:
         final = await harness.start()
@@ -79,7 +82,7 @@ async def test_baseline_records_that_the_new_tests_fail_first(
         harness.close()
 
     assert final["baseline"][0]["exit_code"] != 0  # tests were failing before implementation
-    assert final["last_tests"]["exit_code"] == 0  # and passing after
+    assert final["last_check"]["exit_code"] == 0  # and passing after
 
 
 # -- targeted baseline (prove_red) ------------------------------------------
@@ -276,7 +279,7 @@ async def test_done_is_refused_while_tests_are_failing(
 ):
     """The judge does not get to declare victory over a red suite."""
     fake_harnesses.configure(
-        script(
+        verification_script(
             implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
             judge=[judge_entry("done", "looks right to me"), judge_entry("done")],
         )
@@ -351,7 +354,7 @@ async def test_failing_tests_role_pauses_for_a_human_before_burning_an_implement
 
     assert final["outcome"] == "done"
     assert [call["role"] for call in fake_harnesses.calls] == [
-        "context", "estimate", "tests", "tests", "tests", "implement", "judge"
+        "context", "estimate", "tests", "tests", "tests", "implement", "verifier", "judge"
     ]
     # Cursor and its fallback fail before the gate; resume retries Cursor.
     assert [call["runner"] for call in fake_harnesses.calls_for("tests")] == [
@@ -667,7 +670,12 @@ async def test_a_judge_that_always_says_done_on_a_red_suite_still_hits_the_limit
     config = replace(load_config(), limits=Limits(max_iterations=3, max_consiliums=0,
                                                   max_agent_calls=100))
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("done")])
+        verification_script(
+            implement=[implement_entry(succeed=False)],
+            judge=[judge_entry("done")],
+            # Always asks for the suite; every red result goes straight to repair.
+            verifier=verifier_run_entry(FULL_SUITE, kind="regression"),
+        )
     )
     harness = make_harness(project, alloy_home, config=config)
     try:
@@ -678,3 +686,231 @@ async def test_a_judge_that_always_says_done_on_a_red_suite_still_hits_the_limit
     assert final["iteration"] == 3
     assert "max_iterations" in final["limit_hit"]
     assert "__interrupt__" in final
+
+
+# -- verification_loop (alloy-21u.4) ----------------------------------------
+
+
+TARGETED_SLUGIFY = f"{sys.executable} -m pytest -q tests/test_slugify.py"
+FULL_SUITE = f"{sys.executable} -m pytest -q"
+
+
+def verification_script(**overrides):
+    """Happy-path verifier scripting for the dynamic verification loop."""
+    base = script(
+        verifier=[
+            verifier_run_entry(FULL_SUITE, kind="regression"),
+            verifier_stop_entry("regression suite green"),
+        ],
+    )
+    base.update(overrides)
+    return base
+
+
+async def test_red_required_check_routes_to_implement_without_judge(
+    project, alloy_home, fake_harnesses
+):
+    """A required check that fails skips the judge and routes straight to repair."""
+    fake_harnesses.configure(
+        verification_script(
+            implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
+            verifier=[
+                verifier_run_entry(TARGETED_SLUGIFY, kind="targeted"),
+                verifier_stop_entry("targeted check green after repair"),
+            ],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        await harness.start()
+    finally:
+        harness.close()
+
+    roles = [call["role"] for call in fake_harnesses.calls]
+    first_impl = roles.index("implement")
+    second_impl = roles.index("implement", first_impl + 1)
+    assert roles[first_impl + 1 : second_impl] == ["verifier"]
+    assert "judge" not in roles[first_impl + 1 : second_impl]
+
+    second_prompt = fake_harnesses.calls_for("implement")[1]["prompt"]
+    assert "Failed check" in second_prompt
+    assert "exit 1" in second_prompt
+    assert "Current diff" in second_prompt
+
+
+async def test_verifier_builds_on_green_targeted_before_regression_and_judge(
+    project, alloy_home, fake_harnesses
+):
+    """After a green targeted check the verifier sees it, runs regression, then stops."""
+    fake_harnesses.configure(
+        verification_script(
+            verifier=[
+                verifier_run_entry(TARGETED_SLUGIFY, kind="targeted"),
+                verifier_run_entry(FULL_SUITE, kind="regression"),
+                verifier_stop_entry("targeted and regression both green"),
+            ],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    verifier_calls = fake_harnesses.calls_for("verifier")
+    assert len(verifier_calls) >= 3
+    assert TARGETED_SLUGIFY in verifier_calls[1]["prompt"]
+    assert "-> exit 0" in verifier_calls[1]["prompt"] or "passed" in verifier_calls[1]["prompt"].lower()
+
+    roles = [call["role"] for call in fake_harnesses.calls]
+    last_verifier = max(i for i, role in enumerate(roles) if role == "verifier")
+    judge_idx = roles.index("judge")
+    assert judge_idx > last_verifier
+    assert "implement" not in roles[last_verifier + 1 : judge_idx]
+
+    kinds = [check["kind"] for check in final["checks"]]
+    assert "targeted" in kinds
+    assert kinds.index("targeted") < kinds.index("regression")
+
+
+async def test_verifier_check_kinds_recorded_in_order_across_iterations(
+    project, alloy_home, fake_harnesses
+):
+    """Each iteration's verifier-chosen check kind is stored on the run."""
+    fake_harnesses.configure(
+        verification_script(
+            implement=[implement_entry(succeed=True), implement_entry(succeed=True)],
+            verifier=[
+                verifier_run_entry(TARGETED_SLUGIFY, kind="targeted"),
+                verifier_stop_entry("iteration 1 evidence"),
+                verifier_run_entry('sh -c "exit 0"', kind="lint", purpose="lint pass"),
+                verifier_stop_entry("iteration 2 evidence"),
+            ],
+            judge=[
+                judge_entry("retry", "one more polish pass"),
+                judge_entry("done"),
+            ],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    kinds = [check["kind"] for check in final["checks"]]
+    assert kinds.index("targeted") < kinds.index("lint")
+
+
+async def test_max_checks_per_iteration_forces_verifier_stop(
+    project, alloy_home, fake_harnesses
+):
+    """Hard per-iteration check budget stops the verifier and records the exhaustion."""
+    config = replace(
+        load_config(),
+        verification=replace(load_config().verification, max_checks_per_iteration=2),
+    )
+    fake_harnesses.configure(
+        verification_script(
+            verifier=[verifier_run_entry('sh -c "exit 0"', kind="custom")] * 10,
+        )
+    )
+    harness = make_harness(project, alloy_home, config=config)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert fake_harnesses.calls_for("judge")
+    verifier_checks = [
+        check for check in final["checks"] if check["kind"] == "custom"
+    ]
+    assert len(verifier_checks) == 2
+    assert final["verifier_stop"] is not None
+    assert any(
+        "verifier check budget exhausted" in risk
+        for risk in final["verifier_stop"]["remaining_risks"]
+    )
+
+
+async def test_max_total_checks_parks_at_human_gate(
+    project, alloy_home, fake_harnesses
+):
+    """A run-wide check cap parks at the human gate like max_iterations."""
+    config = replace(
+        load_config(),
+        verification=replace(
+            load_config().verification,
+            max_total_checks=3,
+            max_checks_per_iteration=10,
+        ),
+    )
+    fake_harnesses.configure(
+        verification_script(
+            verifier=[verifier_run_entry('sh -c "exit 0"', kind="custom")] * 20,
+        )
+    )
+    harness = make_harness(project, alloy_home, config=config)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final.get("limit_hit") == "max_total_checks reached"
+    assert "__interrupt__" in final
+    log_dir = alloy_home / "logs" / harness.run_id
+    assert len(list(log_dir.glob("check-*.log"))) <= 3
+
+
+async def test_verifier_runs_arbitrary_project_script(
+    project, alloy_home, fake_harnesses
+):
+    """The verifier can name any shell command; Alloy runs it without autodetect changes."""
+    scripts = project / "scripts"
+    scripts.mkdir()
+    check_sh = scripts / "check.sh"
+    check_sh.write_text("#!/bin/sh\necho ok\nexit 0\n", encoding="utf-8")
+    check_sh.chmod(0o755)
+    for args in (["add", "-A"], ["commit", "-qm", "add check script"]):
+        subprocess.run(["git", *args], cwd=project, check=True, capture_output=True)
+
+    fake_harnesses.configure(
+        verification_script(
+            verifier=[
+                verifier_run_entry("sh scripts/check.sh", kind="custom"),
+                verifier_stop_entry("project script green"),
+            ],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["checks"][-1]["command"] == "sh scripts/check.sh"
+    assert final["checks"][-1]["exit_code"] == 0
+
+
+async def test_unrunnable_verifier_command_surfaces_in_next_prompt(
+    project, alloy_home, fake_harnesses
+):
+    """An unrunnable verifier command is reported back on the next verifier turn."""
+    fake_harnesses.configure(
+        verification_script(
+            verifier=[
+                verifier_run_entry("definitely-not-a-program"),
+                verifier_stop_entry("probe complete"),
+            ],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        await harness.start()
+    finally:
+        harness.close()
+
+    verifier_calls = fake_harnesses.calls_for("verifier")
+    assert len(verifier_calls) >= 2
+    assert "could not run" in verifier_calls[1]["prompt"]
+    assert "definitely-not-a-program" in verifier_calls[1]["prompt"]

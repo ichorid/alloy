@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from alloy import beads as bd
@@ -14,6 +16,8 @@ from conftest import (
     implement_entry,
     judge_entry,
     synthesize_entry,
+    verifier_run_entry,
+    verifier_stop_entry,
     write_tests_entry,
 )
 
@@ -89,7 +93,7 @@ async def test_a_run_is_recorded_with_every_agent_call(
     calls = engine.store.agent_calls(result.run_id)
 
     assert [call["role"] for call in calls] == [
-        "context", "estimate", "tests", "implement", "judge"
+        "context", "estimate", "tests", "implement", "verifier", "judge"
     ]
     for call in calls:
         assert call["prompt_hash"]
@@ -97,7 +101,7 @@ async def test_a_run_is_recorded_with_every_agent_call(
         assert call["duration_s"] >= 0
     record = engine.store.get_run(result.run_id)
     assert record["status"] == "done"
-    assert record["agent_calls"] == 5
+    assert record["agent_calls"] == 6
 
 
 async def test_failure_marks_the_bead_failed_and_keeps_the_worktree(
@@ -193,7 +197,10 @@ async def test_two_beads_get_independent_worktrees(engine, beads_project, fake_h
 
 
 async def test_status_output_is_machine_readable(engine, beads_project, fake_harnesses):
-    fake_harnesses.configure(script())
+    fake_harnesses.configure(script(verifier=[
+        verifier_run_entry(f"{sys.executable} -m pytest -q", kind="regression"),
+        verifier_stop_entry("suite green"),
+    ]))
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
     result = await engine.run(bead_id)
 
@@ -206,7 +213,7 @@ async def test_status_output_is_machine_readable(engine, beads_project, fake_har
     assert row["status"] == "done"
     assert row["iteration"] == 1
     assert row["max_iterations"] == 5
-    assert row["tests"] == "1 passed, 0 failed"
+    assert row["tests"] == "1 checks, last: 1 passed, 0 failed"
     # A finished run has no current agent; the column must not keep naming
     # whichever call happened to be last.
     assert row["stage"] == "finished"
@@ -236,7 +243,7 @@ async def test_rerunning_a_cancelled_bead_starts_from_a_clean_graph(
     assert result.run_id != abandoned.run_id
     assert result.outcome == "done"
     assert [call["role"] for call in fake_harnesses.calls] == [
-        "context", "estimate", "tests", "implement", "judge"
+        "context", "estimate", "tests", "implement", "verifier", "judge"
     ]
     assert engine.store.get_run(result.run_id)["iteration"] == 1
 

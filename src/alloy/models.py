@@ -235,6 +235,8 @@ class CheckResult(BaseModel):
     purpose: str = ""
     kind: str = "custom"
     required: bool = True
+    iteration: int = 0
+    """The implement iteration this check verified; 0 for the baseline."""
     exit_code: int
     duration_s: float = 0.0
     timed_out: bool = False
@@ -266,6 +268,55 @@ class CheckResult(BaseModel):
 
 
 TestReport = CheckResult  # legacy alias; removed by alloy-21u.7
+
+
+VERIFIER_ACTIONS: tuple[str, ...] = ("run", "stop")
+
+
+class VerifierAction(BaseModel):
+    """The verifier role's answer: one more check to run, or stop.
+
+    Alloy executes `command` as-is in the worktree root; a `run` without a
+    command is invalid and is treated as a verifier failure by the recipe."""
+
+    action: Literal["run", "stop"]
+    command: str = ""
+    purpose: str = ""
+    kind: str = "custom"
+    required: bool = True
+    reason: str = ""
+    remaining_risks: list[str] = Field(default_factory=list)
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _known_kind(cls, value: Any) -> str:
+        return value if value in CHECK_KINDS else "custom"
+
+    def to_request(self) -> CheckRequest:
+        return CheckRequest(
+            command=self.command.strip(), purpose=self.purpose, kind=self.kind,
+            required=self.required,
+        )
+
+    @classmethod
+    def schema_for_agents(cls) -> dict[str, Any]:
+        # `action` first: Jev classifies on the first enum-valued property.
+        return {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": list(VERIFIER_ACTIONS)},
+                "command": {"type": "string"},
+                "purpose": {"type": "string"},
+                "kind": {"type": "string", "enum": list(CHECK_KINDS)},
+                "required": {"type": "boolean"},
+                "reason": {"type": "string"},
+                "remaining_risks": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": [
+                "action", "command", "purpose", "kind", "required", "reason", "remaining_risks",
+            ],
+            "additionalProperties": False,
+        }
 
 
 class TestsOutput(BaseModel):
@@ -365,14 +416,14 @@ class Attempt(BaseModel):
     iteration: int
     implementer: str
     change_summary: str = ""
-    tests: str = ""
+    checks: str = ""
     decision: str = ""
     reason: str = ""
 
     def render(self) -> str:
         return (
             f"#{self.iteration} via {self.implementer}: {clip(self.change_summary, 300)}\n"
-            f"   tests: {self.tests}\n"
+            f"   checks: {self.checks}\n"
             f"   judge: {self.decision} -- {clip(self.reason, 200)}"
         )
 

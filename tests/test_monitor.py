@@ -214,13 +214,14 @@ def test_run_with_an_in_flight_call_reports_requested_vs_effective(project, allo
 async def test_judge_mismatch_when_the_guard_overrides_a_done_decision(
     project, alloy_home, fake_harnesses
 ):
-    """Judge always says 'done' while tests keep failing: the guard overrides
-    every time (first to 'retry', then to 'human' once the iteration limit is
-    breached) -- raw and effective must disagree in the final state, and
-    `matches_effective` must say so."""
+    """Judge always says 'retry' on a green suite: once the iteration limit is
+    breached the guard overrides it to 'human' -- raw and effective must
+    disagree in the final state, and `matches_effective` must say so. (A red
+    required check never reaches the judge any more; it goes straight to
+    repair, so the override can only come from a limit.)"""
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)],
-               judge=[judge_entry("done", "looks complete")])
+        script(implement=[implement_entry(succeed=True)],
+               judge=[judge_entry("retry", "one more pass")])
     )
     harness = make_harness(project, alloy_home)
     try:
@@ -233,8 +234,8 @@ async def test_judge_mismatch_when_the_guard_overrides_a_done_decision(
     run = snapshot["runs"][0]
 
     assert run["judge"] is not None
-    assert run["judge"]["raw"]["decision"] == "done"
-    assert run["judge"]["effective"]["decision"] != "done"
+    assert run["judge"]["raw"]["decision"] == "retry"
+    assert run["judge"]["effective"]["decision"] != "retry"
     assert run["judge"]["matches_effective"] is False
 
 
