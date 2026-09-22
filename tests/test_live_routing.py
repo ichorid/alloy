@@ -218,3 +218,222 @@ async def test_live_routing_leaves_non_tiered_roles_on_recipe_specs(
 
     judge_row = _first_role_row(harness, "judge")
     assert judge_row["runner"] == config.role("judge").runner
+
+
+# -- judge-retry escalation (alloy-0uc.12) ----------------------------------
+
+
+def retry_escalation_script(**overrides):
+    """Three implement rounds with judge retry, retry, then done."""
+    base = workflow_script(
+        implement=[
+            implement_entry(succeed=True),
+            implement_entry(succeed=True),
+            implement_entry(succeed=True),
+        ],
+        judge=[
+            judge_entry("retry", "needs another pass"),
+            judge_entry("retry", "still not satisfied"),
+            judge_entry("done"),
+        ],
+    )
+    base.update(overrides)
+    return base
+
+
+def _ok_implement_rows(harness, *, iteration: int | None = None) -> list[dict]:
+    rows = [r for r in _implement_ledger_rows(harness) if r["ok"]]
+    if iteration is not None:
+        rows = [r for r in rows if r["iteration"] == iteration]
+    return rows
+
+
+def test_runs_table_has_escalations_counter_column(alloy_home):
+    store = Store(alloy_home / "alloy.db")
+    with store.connect() as conn:
+        info = {row["name"]: row for row in conn.execute("PRAGMA table_info(runs)")}
+    assert "escalations" in info
+    assert info["escalations"]["type"].upper() == "INTEGER"
+    assert info["escalations"]["dflt_value"] == "0"
+
+
+async def test_live_escalates_simple_to_medium_after_two_consecutive_judge_retries(
+    project, alloy_home, fake_harnesses
+):
+    fake_harnesses.configure(retry_escalation_script())
+    harness = make_harness(
+        project,
+        alloy_home,
+        config=live_config(),
+        bead=bead_with_complexity("simple"),
+    )
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    assert final["iteration"] == 3
+
+    for iteration in (1, 2, 3):
+        rows = _implement_ledger_rows(harness, iteration=iteration)
+        assert len(rows) == 1
+        assert rows[0]["runner"] == "cursor"
+        assert rows[0]["model"] == "composer-2.5"
+
+    assert final["complexity"] == "medium"
+    assert len(final["escalations"]) == 1
+    entry = final["escalations"][0]
+    assert entry["from"] == "simple"
+    assert entry["to"] == "medium"
+    assert entry["iteration"] == 2
+
+    run = harness.store.get_run(harness.run_id)
+    assert run is not None
+    assert run["escalations"] == 1
+    assert run["dispatch_tier"] == "medium"
+
+
+async def test_live_escalation_changes_codex_fallback_when_cursor_missing(
+    project, alloy_home, fake_harnesses
+):
+    fake_harnesses.remove("cursor-agent")
+    fake_harnesses.configure(retry_escalation_script())
+    harness = make_harness(
+        project,
+        alloy_home,
+        config=live_config(),
+        bead=bead_with_complexity("simple"),
+    )
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+
+    row1 = _ok_implement_rows(harness, iteration=1)[0]
+    assert row1["runner"] == "codex"
+    assert row1["model"] == "gpt-5.6-luna"
+
+    row2 = _ok_implement_rows(harness, iteration=2)[0]
+    assert row2["runner"] == "codex"
+    assert row2["model"] == "gpt-5.6-luna"
+
+    row3 = _ok_implement_rows(harness, iteration=3)[0]
+    assert row3["runner"] == "codex"
+    assert row3["model"] == "gpt-5.6-terra"
+
+
+async def test_live_escalates_medium_to_complex_after_two_consecutive_judge_retries(
+    project, alloy_home, fake_harnesses
+):
+    fake_harnesses.configure(retry_escalation_script())
+    harness = make_harness(
+        project,
+        alloy_home,
+        config=live_config(),
+        bead=bead_with_complexity("medium"),
+    )
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    row3 = _implement_ledger_rows(harness, iteration=3)[0]
+    assert row3["runner"] == "cursor"
+    assert row3["model"] == "kimi-k3-high"
+    assert final["complexity"] == "complex"
+
+
+async def test_shadow_routing_never_escalates_on_judge_retries(
+    project, alloy_home, fake_harnesses
+):
+    fake_harnesses.configure(retry_escalation_script())
+    harness = make_harness(
+        project,
+        alloy_home,
+        config=load_config(),
+        bead=bead_with_complexity("simple"),
+    )
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    for iteration in (1, 2, 3):
+        rows = _implement_ledger_rows(harness, iteration=iteration)
+        assert len(rows) == 1
+        assert harness.recipe_config.role("implement").runner == "astra"
+        assert rows[0]["runner"] == "codex"  # astra's resolved runner is recorded
+
+    assert final["escalations"] == []
+    run = harness.store.get_run(harness.run_id)
+    assert run is not None
+    assert run["escalations"] == 0
+
+
+async def test_live_complex_tier_does_not_escalate_further_on_judge_retries(
+    project, alloy_home, fake_harnesses
+):
+    fake_harnesses.configure(retry_escalation_script())
+    harness = make_harness(
+        project,
+        alloy_home,
+        config=live_config(),
+        bead=bead_with_complexity("complex"),
+    )
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    assert final["complexity"] == "complex"
+    assert final["escalations"] == []
+
+    run = harness.store.get_run(harness.run_id)
+    assert run is not None
+    assert run["escalations"] == 0
+
+
+async def test_consilium_between_retries_resets_escalation_counter(
+    project, alloy_home, fake_harnesses
+):
+    fake_harnesses.configure(
+        retry_escalation_script(
+            implement=[
+                implement_entry(succeed=True),
+                implement_entry(succeed=True),
+                implement_entry(succeed=True),
+                implement_entry(succeed=True),
+            ],
+            judge=[
+                judge_entry("retry", "first retry"),
+                judge_entry("consilium", "stuck"),
+                judge_entry("retry", "after consilium"),
+                judge_entry("done"),
+            ],
+        )
+    )
+    harness = make_harness(
+        project,
+        alloy_home,
+        config=live_config(),
+        bead=bead_with_complexity("simple"),
+    )
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    assert final["complexity"] == "simple"
+    assert final["escalations"] == []
+
+    run = harness.store.get_run(harness.run_id)
+    assert run is not None
+    assert run["escalations"] == 0
+    assert run["dispatch_tier"] == "simple"

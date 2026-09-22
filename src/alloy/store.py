@@ -97,6 +97,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "paused_s": "REAL NOT NULL DEFAULT 0",     # total time spent paused
         "parent_run_id": "TEXT",                   # set on a remediation child run (alloy-0uc.8)
         "dispatch_tier": "TEXT",                   # tier used by live routing (alloy-0uc.3); None in shadow
+        "escalations": "INTEGER DEFAULT 0",
     },
     "agent_calls": {
         "structured_json": "TEXT",                 # the raw structured output, e.g. the judge's verdict

@@ -303,12 +303,18 @@ class RunContext:
         self.store.update_run(self.run_id, dispatch_tier=tier)
 
     def set_complexity(self, level: str, source: str, reason: str) -> None:
-        self.store.update_run(self.run_id, complexity=level)
+        fields: dict[str, Any] = {"complexity": level}
+        note = f"Complexity: {level} ({source}). {reason}"
+        if source == "escalation":
+            record = self.store.get_run(self.run_id) or {}
+            fields["escalations"] = (record.get("escalations") or 0) + 1
+            note = f"alloy: escalated {record.get('complexity')} -> {level} {reason}"
+        self.store.update_run(self.run_id, **fields)
         if self.beads is not None:
             try:
                 if source == "estimate":
                     self.beads.set_metadata(self.bead.id, {META_COMPLEXITY_ESTIMATED: level})
-                self.beads.note(self.bead.id, f"Complexity: {level} ({source}). {reason}")
+                self.beads.note(self.bead.id, note)
             except Exception:
                 log.warning("could not record complexity on bead %s", self.bead.id, exc_info=True)
 
