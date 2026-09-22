@@ -98,8 +98,19 @@ class FakeHarnesses:
         self.config_path.write_text(json.dumps(config), encoding="utf-8")
 
     def remove(self, name: str) -> None:
-        """Simulate a harness that is not installed."""
+        """Simulate a harness that is not installed.
+
+        The fake bindir is prepended to the real PATH, so unlinking the fake
+        alone would expose a host-installed copy (and really run it). Drop
+        every PATH entry that provides `name` too; the fixture's monkeypatch
+        restores PATH at teardown.
+        """
         (self.bindir / name).unlink(missing_ok=True)
+        keep = [
+            entry for entry in os.environ["PATH"].split(os.pathsep)
+            if entry == str(self.bindir) or shutil.which(name, path=entry) is None
+        ]
+        os.environ["PATH"] = os.pathsep.join(keep)
 
     @property
     def calls(self) -> list[dict]:

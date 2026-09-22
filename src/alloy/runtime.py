@@ -14,7 +14,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Mapping
 
 from alloy.beads import BeadsClient, Bead, META_COMPLEXITY_ESTIMATED, META_STAGE
 from alloy.config import RecipeConfig, RoleSpec
@@ -252,6 +252,19 @@ class RunContext:
 
     def set_tests_summary(self, summary: str) -> None:
         self.store.update_run(self.run_id, tests_summary=summary)
+
+    def role_spec(self, name: str, state: Mapping[str, Any]) -> RoleSpec:
+        """The RoleSpec to dispatch `name` with for this run.
+
+        Tiered roles under `routing: live` resolve to the tier chain for the
+        run's complexity; everything else (and shadow mode) is the role's own
+        spec, so built-in recipes behave exactly as before until an operator
+        flips routing.
+        """
+        return self.recipe.resolve_role(name, state.get("complexity"))
+
+    def set_dispatch_tier(self, tier: str | None) -> None:
+        self.store.update_run(self.run_id, dispatch_tier=tier)
 
     def set_complexity(self, level: str, source: str, reason: str) -> None:
         self.store.update_run(self.run_id, complexity=level)
