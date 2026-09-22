@@ -11,6 +11,8 @@ import json as jsonlib
 import logging
 import signal
 import sys
+import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Coroutine, Optional, TypeVar
 
@@ -26,7 +28,7 @@ from alloy.monitor import build_snapshot
 from alloy.monitor.app import MonitorApp
 from alloy.monitor.render import COLUMNS, header_line, run_rows
 from alloy.paths import AlloyPaths
-from alloy.runners import BUILTIN, RunnerRegistry
+from alloy.runners import BUILTIN, RunnerRegistry, RunnerUnavailable
 from alloy.scheduler import Scheduler, SchedulerBusy, read_pid, signal_stop, spawn_detached
 from alloy.store import Store
 
@@ -417,13 +419,21 @@ def recipes_command(
     repo: Optional[Path] = RepoOption,
     root: Optional[Path] = RootOption,
     json: bool = typer.Option(False, "--json"),
+    probe: bool = typer.Option(False, "--probe", help="Smoke-test each distinct tier entry"),
+    recipe: Optional[str] = typer.Option(None, "--recipe", help="Limit to one recipe"),
 ) -> None:
     """List recipes, their configured roles, and whether those harnesses exist."""
     paths = AlloyPaths.resolve(root)
     repo_path = (repo or Path.cwd()).resolve()
     found = discover_recipes(paths.root, repo_path)
+    if recipe is not None:
+        if recipe not in found:
+            _fail(f"unknown recipe: {recipe}")
+        found = {recipe: found[recipe]}
 
     entries: list[dict[str, Any]] = []
+    probes: list[dict[str, Any]] = []
+    probed: set[tuple[str, str | None, str | None]] = set()
     for name, path in sorted(found.items()):
         entry: dict[str, Any] = {"name": name, "config": str(path),
                                  "graph": name in recipes.REGISTRY}
@@ -435,16 +445,34 @@ def recipes_command(
             continue
         # The recipe's own `runners:` block (api keys, binaries) decides what
         # is available -- a bare registry would call Jev "missing" forever.
-        registry = RunnerRegistry(config.runners)
+        registry = RunnerRegistry(config.runners, log_dir=paths.logs / "probes" / name)
 
         def describe(spec: "RoleSpec") -> dict[str, Any]:
             info: dict[str, Any] = {"runner": spec.runner, "model": spec.model,
+                                    "effort": spec.effort,
                                     "available": registry.available(spec.runner)}
             if spec.fallback is not None:
                 info["fallback"] = describe(spec.fallback)
             return info
 
         entry["roles"] = {role: describe(spec) for role, spec in config.roles.items()}
+        tiers: dict[str, list[dict[str, Any]]] = {}
+        for tier, head in config.complexity.tiers.items():
+            chain = []
+            spec = head
+            while spec is not None:
+                chain.append({"runner": spec.runner, "model": spec.model,
+                              "effort": spec.effort,
+                              "available": registry.available(spec.runner)})
+                spec = spec.fallback
+            tiers[tier] = chain
+        entry["complexity"] = {
+            "routing": config.complexity.routing,
+            "escalate_after_retries": config.complexity.escalate_after_retries,
+            "tiers": tiers,
+        }
+        if probe:
+            probes.extend(_run_async(_probe_tiers(registry, tiers, repo_path, probed)))
         entry["critics"] = [
             {"runner": spec.runner, "available": registry.available(spec.runner)}
             for spec in config.consilium.critics
@@ -453,7 +481,12 @@ def recipes_command(
         entries.append(entry)
 
     if json:
-        _emit({"recipes": entries}, True)
+        payload = {"recipes": entries}
+        if probe:
+            payload["probe"] = probes
+        _emit(payload, True)
+        if probe and (any(not row["ok"] for row in probes) or any("error" in e for e in entries)):
+            raise typer.Exit(1)
         return
     for entry in entries:
         console.print(f"[bold]{entry['name']}[/bold]  ({entry['config']})")
@@ -464,20 +497,63 @@ def recipes_command(
             console.print("  [yellow]no graph registered for this name[/yellow]")
         for role, info in entry.get("roles", {}).items():
             console.print(f"  {role:<10} {_role_label(info)}")
+        complexity = entry["complexity"]
+        console.print(f"  complexity routing={complexity['routing']} "
+                      f"escalate_after_retries={complexity['escalate_after_retries']}")
+        for tier, chain in complexity["tiers"].items():
+            console.print(f"    {tier:<8} " + " [dim]->[/dim] ".join(_role_label(info) for info in chain))
         critics = ", ".join(
             f"{c['runner']}{'' if c['available'] else '(missing)'}" for c in entry["critics"]
         )
         console.print(f"  critics    {critics or '(none)'}")
         console.print(f"  limits     {entry['limits']}")
+    if probe:
+        table = Table(title="Tier probes")
+        for column in ("Tier", "Runner", "Model", "Effort", "Result", "Error", "Seconds"):
+            table.add_column(column)
+        for row in probes:
+            table.add_row(row["tier"], row["runner"], row["model"] or "-", row["effort"] or "-",
+                          "ok" if row["ok"] else "error", row["error"] or "-", f"{row['duration_s']:.1f}")
+        console.print(table)
+        if any(not row["ok"] for row in probes) or any("error" in e for e in entries):
+            raise typer.Exit(1)
 
 
 # --------------------------------------------------------------------------
 
 
+async def _probe_tiers(
+    registry: RunnerRegistry,
+    tiers: dict[str, list[dict[str, Any]]],
+    repo: Path,
+    seen: set[tuple[str, str | None, str | None]],
+) -> list[dict[str, Any]]:
+    rows = []
+    for tier, chain in tiers.items():
+        for entry in chain:
+            key = (entry["runner"], entry["model"], entry["effort"])
+            if key in seen:
+                continue
+            seen.add(key)
+            row = {"tier": tier, "runner": key[0], "model": key[1], "effort": key[2]}
+            started = time.monotonic()
+            try:
+                result = await registry.get(key[0]).run(
+                    "Reply with the single word OK.", cwd=repo, model=key[1], effort=key[2],
+                    timeout=timedelta(minutes=2),
+                )
+                row.update(ok=result.ok, error=result.error, duration_s=result.duration_s)
+            except RunnerUnavailable as exc:
+                row.update(ok=False, error=str(exc), duration_s=time.monotonic() - started)
+            rows.append(row)
+    return rows
+
+
 def _role_label(info: dict[str, Any]) -> str:
     mark = "" if info["available"] else " [yellow](runner missing)[/yellow]"
     model = f":{info['model']}" if info.get("model") else ""
-    label = f"{info['runner']}{model}{mark}"
+    effort = f"@{info['effort']}" if info.get("effort") else ""
+    label = f"{info['runner']}{model}{effort}{mark}"
     if info.get("fallback"):
         label += f"  [dim]-> fallback[/dim] {_role_label(info['fallback'])}"
     return label
@@ -553,6 +629,8 @@ def _current_agent(
 def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
     from datetime import datetime, timezone
 
+    snapshot = engine.graph_snapshot_for_run(record["run_id"])
+    state = (snapshot or {}).get("values") or {}
     try:
         config = engine.load_config(record["recipe"])
         max_iterations = config.limits.max_iterations
@@ -586,6 +664,9 @@ def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
         "agent_role": agent["role"],
         "runner": agent["runner"],
         "model": agent["model"],
+        "complexity": record.get("complexity"),
+        "complexity_source": state.get("complexity_source"),
+        "dispatch_tier": record.get("dispatch_tier"),
         "worktree": record["worktree"],
         "branch": record["branch"],
         "log_dir": record["log_dir"],
@@ -595,6 +676,7 @@ def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
 
 
 _EMPTY_RUN_FIELDS: dict[str, Any] = {
+    "complexity": None, "complexity_source": None, "dispatch_tier": None,
     "run_id": None, "status": None, "stage": None, "iteration": 0,
     "max_iterations": None, "consiliums": 0, "agent_calls": 0, "tests": None,
     "elapsed": "-", "elapsed_minutes": 0, "agent_role": None, "runner": None,
