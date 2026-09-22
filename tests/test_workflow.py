@@ -234,7 +234,11 @@ async def test_failing_tests_role_pauses_for_a_human_before_burning_an_implement
 
     assert final["outcome"] == "done"
     assert [call["role"] for call in fake_harnesses.calls] == [
-        "context", "tests", "tests", "implement", "judge"
+        "context", "tests", "tests", "tests", "implement", "judge"
+    ]
+    # Cursor and its fallback fail before the gate; resume retries Cursor.
+    assert [call["runner"] for call in fake_harnesses.calls_for("tests")] == [
+        "cursor-agent", "claude", "cursor-agent"
     ]
 
 

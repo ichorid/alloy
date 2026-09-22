@@ -7,12 +7,14 @@ There is deliberately no DSL here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from alloy.models import COMPLEXITY_LEVELS
 
 BUILTIN_RECIPE_DIR = Path(__file__).parent / "recipes"
 
@@ -32,6 +34,7 @@ class RoleSpec:
     claude-write, model: fable}}` hands the same prompt to Claude when the
     Codex CLI is missing, rate-limited, or times out.
     """
+    tiered: bool = False
 
     @property
     def timeout(self) -> timedelta:
@@ -53,7 +56,39 @@ class RoleSpec:
             timeout_minutes=float(raw.get("timeout_minutes", DEFAULT_ROLE_TIMEOUT_MIN)),
             fallback=cls.parse(fallback_raw, default_runner=default_runner)
             if fallback_raw else None,
+            tiered=bool(raw.get("tiered", False)),
         )
+
+
+@dataclass(frozen=True)
+class ComplexitySpec:
+    routing: str = "shadow"
+    escalate_after_retries: int = 2
+    tiers: dict[str, RoleSpec] = field(default_factory=dict)
+
+    @classmethod
+    def parse(cls, raw: dict[str, Any] | None) -> "ComplexitySpec":
+        raw = raw or {}
+        routing = raw.get("routing", "shadow")
+        if routing not in ("shadow", "live"):
+            raise ConfigError(f"invalid complexity routing: {routing!r}")
+        try:
+            retries = int(raw.get("escalate_after_retries", 2))
+        except (TypeError, ValueError) as exc:
+            raise ConfigError("complexity escalate_after_retries must be an integer") from exc
+        tiers = {}
+        for level, entries in (raw.get("tiers") or {}).items():
+            if level not in COMPLEXITY_LEVELS:
+                raise ConfigError(f"unknown complexity tier: {level!r}")
+            if not isinstance(entries, list) or not entries:
+                raise ConfigError(f"complexity tier {level!r} must be a non-empty list")
+            chain = None
+            for entry in reversed(entries):
+                if not isinstance(entry, dict):
+                    raise ConfigError(f"complexity tier {level!r} entries must be mappings")
+                chain = replace(RoleSpec.parse(entry), fallback=chain)
+            tiers[level] = chain
+        return cls(routing=routing, escalate_after_retries=retries, tiers=tiers)
 
 
 @dataclass(frozen=True)
@@ -116,6 +151,7 @@ class RecipeConfig:
     on_success_status: str = "review-ready"
     cleanup_worktree_on_success: bool = False
     source_path: Path | None = None
+    complexity: ComplexitySpec = field(default_factory=ComplexitySpec)
 
     def role(self, name: str) -> RoleSpec:
         try:
@@ -123,12 +159,30 @@ class RecipeConfig:
         except KeyError as exc:
             raise ConfigError(f"recipe '{self.name}' has no role '{name}'") from exc
 
+    def resolve_role(self, name: str, complexity: str | None) -> RoleSpec:
+        spec = self.role(name)
+        if not spec.tiered or self.complexity.routing != "live":
+            return spec
+        if complexity not in COMPLEXITY_LEVELS:
+            raise ConfigError(
+                f"tiered role '{name}' requires a known complexity level, got {complexity!r}"
+            )
+        try:
+            return self.complexity.tiers[complexity]
+        except KeyError as exc:
+            raise ConfigError(f"recipe '{self.name}' has no complexity tier '{complexity}'") from exc
+
     @classmethod
     def parse(cls, raw: dict[str, Any], *, source: Path | None = None) -> "RecipeConfig":
         roles_raw = raw.get("roles") or {}
+        roles = {key: RoleSpec.parse(value) for key, value in roles_raw.items()}
+        complexity = ComplexitySpec.parse(raw.get("complexity"))
+        if any(spec.tiered for spec in roles.values()) and not complexity.tiers:
+            raise ConfigError("tiered roles require complexity tiers")
         return cls(
             name=raw.get("name") or (source.stem if source else "unnamed"),
-            roles={key: RoleSpec.parse(value) for key, value in roles_raw.items()},
+            roles=roles,
+            complexity=complexity,
             consilium=ConsiliumSpec.parse(raw.get("consilium")),
             limits=Limits.parse(raw.get("limits")),
             verify=VerifySpec.parse(raw.get("verify")),
