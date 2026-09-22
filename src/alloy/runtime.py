@@ -135,6 +135,12 @@ class RunContext:
 
     # -- remediation ------------------------------------------------------
 
+    @property
+    def is_child(self) -> bool:
+        """True when this run is itself a remediation child (depth one)."""
+        record = self.store.get_run(self.run_id)
+        return bool(record and record.get("parent_run_id"))
+
     async def remediate(self, bug_bead_id: str) -> Any:
         """Run a bug bead as a child of this run and merge its fix in here."""
         if self.remediator is None:

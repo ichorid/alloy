@@ -157,6 +157,22 @@ work-in-progress commit followed by a merge of `alloy/<bug-id>`, with notes on
 both beads naming the run; a remediation that could not land leaves the parent
 branch clean at its WIP commit and the bug bead `failed` with the reason.
 
+Remediation is bounded twice, never by a counter. Before a child's fix merges,
+the `scope` role (Jev) reads the child's diff against the bug bead and the
+project context and returns a scope verdict; only `merge` lands the fix, while
+`too-broad`, `off-target` or a merge conflict fails the child and parks the
+parent at the human gate with the reason. The parent's own budget is the
+deterministic backstop: agent calls and wall time spent in children count
+toward the parent's `max_agent_calls` and `max_wall_time_minutes`, so a bead
+can only remediate as much as its own limits allow. Remediation is one level
+deep -- a blocking bug found inside a child is filed unclaimed at P1 and the
+child parks, which parks the parent in turn. When reviewing a parent branch
+that carries a merged child branch, read the parent's WIP commit, the merge of
+`alloy/<bug-id>`, and the parent's later commits as one unit: the parent's own
+verify and judge ran again after the merge, so a fix that broke the parent
+would have been caught there, and the run's `remediations` list (bead id,
+child run id, outcome, reason) says which fixes landed and which did not.
+
 ## Agent skills
 
 Decomposition and day-to-day Alloy operation are spelled out in project skills
