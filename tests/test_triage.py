@@ -158,10 +158,10 @@ async def test_non_blocking_bug_is_filed_and_run_completes(
     assert roles.index("judge") > roles.index("triage")
 
 
-# -- blocking: file at P1 claimed, route to remediate stub -> human gate ----------
+# -- blocking: file at P1 claimed, route to remediate; no remediator -> human gate --
 
 
-async def test_blocking_bug_routes_to_remediate_stub_then_human_gate(
+async def test_blocking_bug_routes_to_remediate_and_parks_without_remediator(
     project, alloy_home, fake_harnesses
 ):
     beads = RecordingBeadsClient(bug_ids=["bug-blocking"])
@@ -190,8 +190,9 @@ async def test_blocking_bug_routes_to_remediate_stub_then_human_gate(
     assert filed["claim"] is True
     assert "no longer reproduces" in filed["acceptance"]
 
-    assert paused.get("blocking_bug", {}).get("bead_id") == "bug-blocking"
-    assert harness.store.get_run(harness.run_id)["stage"] == "remediate"
+    assert harness.store.get_run(harness.run_id)["stage"] == "remediate:bug-blocking"
+    remediations = paused.get("remediations") or []
+    assert [(r["bead_id"], r["outcome"]) for r in remediations] == [("bug-blocking", "failed")]
     reason = paused["__interrupt__"][0].value["reason"]
     assert "bug-blocking" in reason
 

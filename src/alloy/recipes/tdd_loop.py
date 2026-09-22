@@ -36,6 +36,7 @@ from alloy.models import (
     Critique,
     JudgeDecision,
     Outcome,
+    utcnow,
     ProjectSnapshot,
     ScopeVerdict,
     TestReport,
@@ -825,7 +826,7 @@ def build_graph(ctx: RunContext):
             priority=3 if severity == "non-blocking" else 1,
             labels=labels,
             metadata=metadata,
-            claim=severity == "blocking",
+            claim=severity == "blocking" and not ctx.is_child,
         )
         if severity == "needs-human":
             ctx.beads.add_dependency(ctx.bead.id, bug_id)
@@ -904,6 +905,16 @@ def build_graph(ctx: RunContext):
                 )
                 continue
             if severity == "blocking":
+                if ctx.is_child:
+                    # Depth one: a child does not spawn its own child; the
+                    # parent parks through this run's outcome.
+                    return {**update, "blocking_bug": {**entry, "reason": verdict.reason}, **_park(
+                        f"blocking bug '{report.title}' ({bug_id}) found inside remediation "
+                        f"child {ctx.run_id}: {verdict.reason}. Remediation is one level "
+                        "deep, so the bug is filed unclaimed and this run stops.",
+                        f"Fix {bug_id} (or merge its fix into this branch), then resume; "
+                        "the implementer continues from there.",
+                    )}
                 return {
                     **update,
                     "triage_route": "remediate",
@@ -925,21 +936,54 @@ def build_graph(ctx: RunContext):
     def route_after_triage(state: TddState) -> str:
         return state.get("triage_route") or "verify"
 
-    def remediate(state: TddState) -> dict[str, Any]:
-        """Stub: the autonomous fix lands in its own bead. Until then, park."""
-        ctx.set_stage("remediate", iteration=state.get("iteration", 0))
+    async def remediate(state: TddState) -> dict[str, Any]:
+        """Run the blocking bug as a child of this run and merge its fix in here.
+
+        The parent waits at `remediate:<bug-id>` while the child runs. A merged
+        fix sends the parent back to `implement` with an instruction not to
+        undo it; anything else (child parked, failed, aborted, guard or scope
+        gate refused, merge conflict) parks the parent at the human gate."""
         bug = state.get("blocking_bug") or {}
+        bug_id = str(bug.get("bead_id") or "")
+        ctx.set_stage(f"remediate:{bug_id}", iteration=state.get("iteration", 0))
+        started_at = utcnow().isoformat()
+        try:
+            result = await ctx.remediate(bug_id)
+            outcome = str(getattr(result, "outcome", "") or Outcome.FAILED.value)
+            reason = str(getattr(result, "reason", "") or "")
+            run_id = getattr(result, "run_id", None)
+        except Exception as exc:
+            outcome, reason, run_id = Outcome.FAILED.value, str(exc), None
+        entry = {
+            "bead_id": bug_id, "run_id": run_id, "outcome": outcome, "reason": reason,
+            "started_at": started_at, "ended_at": utcnow().isoformat(),
+        }
+        update: dict[str, Any] = {
+            "stage": "remediate", "remediations": [entry], "blocking_bug": None,
+        }
+        if outcome == Outcome.DONE.value:
+            notes = [state["instructions"]] if state.get("instructions") else []
+            notes.append(
+                f"Bug '{bug.get('title')}' was fixed and merged into this worktree by "
+                f"{bug_id}; do not undo it; continue with the task."
+            )
+            return {**update, "instructions": "\n".join(notes)}
         return {
-            "stage": "remediate",
+            **update,
             "resume_to": "implement",
             "decision": JudgeDecision(
                 decision="human",
-                reason=f"blocking bug {bug.get('bead_id')} '{bug.get('title')}' is filed and "
-                "claimed, but autonomous remediation is not built yet.",
-                next_instructions=f"Fix {bug.get('bead_id')} (or merge its fix into this "
-                "branch), then resume; the implementer continues from there.",
+                reason=f"remediation of blocking bug {bug_id} '{bug.get('title')}' "
+                f"ended {outcome}: {reason or 'no reason given'}",
+                next_instructions=f"Fix {bug_id} (or merge its fix into this branch), "
+                "then resume; the implementer continues from there.",
             ).model_dump(),
         }
+
+    def route_after_remediate(state: TddState) -> str:
+        remediations = state.get("remediations") or []
+        last = remediations[-1] if remediations else {}
+        return "implement" if last.get("outcome") == Outcome.DONE.value else "human_gate"
 
     async def verify(state: TddState) -> dict[str, Any]:
         ctx.set_stage("verify", iteration=state.get("iteration", 0))
@@ -1203,7 +1247,7 @@ def build_graph(ctx: RunContext):
     graph.add_conditional_edges(
         "triage", route_after_triage, ["remediate", "human_gate", "implement", "verify"]
     )
-    graph.add_edge("remediate", "human_gate")
+    graph.add_conditional_edges("remediate", route_after_remediate, ["implement", "human_gate"])
     graph.add_edge("verify", "judge")
     graph.add_edge("judge", "guard")
     graph.add_conditional_edges(
