@@ -43,12 +43,13 @@ class CursorRunner(CLIRunner):
             if isinstance(candidate, dict) and candidate.get("type") == "result":
                 envelope = candidate
         if envelope is None:
-            return stdout.strip(), None, {}, None
+            return stdout.strip(), None, {}, None, False
         text = str(envelope.get("result") or "")
         usage = dict(envelope.get("usage") or {})
-        if envelope.get("is_error"):
+        failed = bool(envelope.get("is_error"))
+        if failed:
             text = text or "cursor reported an error"
-        return text, None, usage, envelope.get("session_id")
+        return text, None, usage, envelope.get("session_id"), failed
 
 
 class CursorPlanRunner(CursorRunner):

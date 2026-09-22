@@ -48,6 +48,83 @@ async def test_cursor_adapter_reads_result_envelope(fake_harnesses, project, tmp
     assert result.text == "a python package"
 
 
+async def test_cursor_is_error_envelope_with_exit_zero_is_a_failed_call(
+    fake_harnesses, project, tmp_path
+):
+    fake_harnesses.configure(
+        {"context": {"exit": 0, "is_error": True, "text": "rate limited"}}
+    )
+    registry = RunnerRegistry(log_dir=tmp_path / "logs")
+    result = await registry.get("cursor").run("You are gathering context.", project)
+    assert not result.ok
+    assert result.exit_code == 0
+    assert "rate limited" in (result.error or "")
+
+
+async def test_cursor_success_envelope_with_exit_zero_stays_ok(
+    fake_harnesses, project, tmp_path
+):
+    fake_harnesses.configure(
+        {"context": {"exit": 0, "is_error": False, "text": "all good"}}
+    )
+    registry = RunnerRegistry(log_dir=tmp_path / "logs")
+    result = await registry.get("cursor").run("You are gathering context.", project)
+    assert result.ok
+    assert result.text == "all good"
+
+
+async def test_codex_error_event_without_agent_message_and_exit_zero_fails(
+    fake_harnesses, project, tmp_path
+):
+    fake_harnesses.configure(
+        {
+            "implement": {
+                "exit": 0,
+                "codex_error": "Your workspace is out of credits.",
+                "codex_error_only": True,
+            }
+        }
+    )
+    registry = RunnerRegistry(log_dir=tmp_path / "logs")
+    result = await registry.get("codex").run("Implement the smallest change.", project)
+    assert not result.ok
+    assert result.exit_code == 0
+    assert "out of credits" in (result.error or "")
+
+
+async def test_codex_agent_message_after_error_event_with_exit_zero_succeeds(
+    fake_harnesses, project, tmp_path
+):
+    fake_harnesses.configure(
+        {
+            "implement": {
+                "exit": 0,
+                "codex_error": "transient glitch",
+                "text": "recovered answer",
+            }
+        }
+    )
+    registry = RunnerRegistry(log_dir=tmp_path / "logs")
+    result = await registry.get("codex").run("Implement the smallest change.", project)
+    assert result.ok
+    assert result.text == "recovered answer"
+
+
+async def test_claude_is_error_envelope_with_exit_zero_is_a_failed_call(
+    fake_harnesses, project, tmp_path
+):
+    fake_harnesses.configure(
+        {"judge": {"exit": 0, "is_error": True, "text": "boom"}}
+    )
+    registry = RunnerRegistry(log_dir=tmp_path / "logs")
+    result = await registry.get("claude").run(
+        "You are judging whether this is complete.", project
+    )
+    assert not result.ok
+    assert result.exit_code == 0
+    assert "boom" in (result.error or "")
+
+
 async def test_structured_output_recovered_from_unstructured_harness(
     fake_harnesses, project, tmp_path
 ):
