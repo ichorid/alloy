@@ -247,17 +247,34 @@ def python_bin() -> str:
     return sys.executable
 
 
-@pytest.fixture
-def beads_project(project: Path) -> Path:
-    """The project with a real Beads database initialized in it."""
+@pytest.fixture(scope="session")
+def beads_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A `.beads` directory initialised once per session (per xdist worker).
+
+    `bd init` plus `ensure_statuses()` costs ~2s; the resulting embedded Dolt
+    store contains no absolute paths, so it can be copied into any fresh git
+    repo in milliseconds. Returns the template's `.beads` directory.
+    """
     if shutil.which("bd") is None:
         pytest.skip("bd (Beads) is not installed")
-    subprocess.run(["bd", "init", "--prefix", "t"], cwd=str(project),
+    repo = tmp_path_factory.mktemp("beads-template") / "project"
+    repo.mkdir()
+    _git(["init", "-q", "-b", "main"], repo)
+    _git(["config", "user.email", "alloy@test"], repo)
+    _git(["config", "user.name", "Alloy Test"], repo)
+    _git(["commit", "-q", "--allow-empty", "-m", "initial"], repo)
+    subprocess.run(["bd", "init", "--prefix", "t"], cwd=str(repo),
                    check=True, capture_output=True, text=True)
     from alloy.beads import BeadsClient
 
-    client = BeadsClient(repo=project)
-    client.ensure_statuses()
+    BeadsClient(repo=repo).ensure_statuses()
+    return repo / ".beads"
+
+
+@pytest.fixture
+def beads_project(project: Path, beads_template: Path) -> Path:
+    """The project with a real Beads database initialized in it."""
+    shutil.copytree(beads_template, project / ".beads", symlinks=True)
     return project
 
 
