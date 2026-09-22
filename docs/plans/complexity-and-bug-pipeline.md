@@ -17,9 +17,9 @@ complexity:
   routing: shadow              # shadow: estimate and record only; live: dispatch by tier
   escalate_after_retries: 2    # live only: consecutive judge retries before bumping one tier
   tiers:
-    simple:  [{runner: cursor, model: composer-2.5}, {runner: codex, model: gpt-5.6-luna}, {runner: claude-write, model: haiku}]
-    medium:  [{runner: claude-write, model: sonnet}, {runner: cursor, model: composer-2.5}]
-    complex: [{runner: astra}, {runner: claude-write, model: fable}, {runner: cursor, model: kimi-k3-high}, {runner: claude-write, model: opus}]
+    simple:  [{runner: cursor, model: composer-2.5}, {runner: codex, model: gpt-5.6-luna}, {runner: claude-write, model: haiku, effort: low}]
+    medium:  [{runner: cursor, model: composer-2.5}, {runner: codex, model: gpt-5.6-terra, effort: high}, {runner: claude-write, model: sonnet, effort: high}]
+    complex: [{runner: cursor, model: kimi-k3-high}, {runner: claude-write, model: opus}, {runner: astra}]
 roles:
   implement: {runner: astra, fallback: {runner: claude-write, model: fable}, tiered: true}
   tests:     {runner: cursor, model: composer-2.5, fallback: {runner: claude-write, model: sonnet}}
@@ -42,10 +42,19 @@ Decisions:
 - Only `implement` is tiered. `tests` is pinned to cursor composer-2.5 (with
   a Sonnet fallback) because the tests are the spec the judge enforces.
   `context` stays on read-only cursor-plan, `judge` stays fixed.
-- The complex tier's third entry is a non-Claude runner: the Claude session
-  limit is per account (journal 38), so Fable then Opus buys nothing when the
-  limit hits. Codex has been out of credits on every recorded run, so the
-  tier chains are diversified across vendors.
+- **Mapping revised 2026-09-22 (operator).** Cheap tiers lead with cursor
+  composer-2.5, the standard (non-fast) model, and fall through to codex
+  then Claude: simple ends on haiku at low effort, medium on codex terra
+  then sonnet, both at high effort. The complex tier leads with cursor
+  kimi-k3-high, then Claude opus, then astra (codex default model at the
+  operator's configured effort). Fable is out of the tiers. Every chain
+  crosses vendors, because the Claude session limit is per account (journal
+  38) and Codex has been out of credits on every recorded run.
+- A tier entry may carry `effort: low|medium|high|xhigh|max`. It becomes
+  `--effort` for the claude runners and `-c model_reasoning_effort=...` for
+  codex. Cursor has no effort knob; its effort is part of the model id
+  (`kimi-k3-low`, `-high`, `-max`), so `effort` on a cursor entry is a
+  recipe error, not a silent no-op.
 - Operator override `alloy_complexity=<tier>` skips the estimator. The
   estimate itself is recorded under `alloy_complexity_estimated` and on the
   run row, so a rerun after failure re-estimates instead of freezing a guess.
@@ -53,8 +62,9 @@ Decisions:
   failed call or the simple tier's head silently ships garbage with no
   fallback. Same for a codex `error` event with no agent message.
 - `alloy recipes --probe` sends one trivial prompt through every tier entry
-  so unverified model ids (`gpt-5.6-luna`, `kimi-k3-high`, the `opus` and
-  `haiku` aliases) are checked before a real run depends on them.
+  so unverified model ids (`gpt-5.6-luna`, `gpt-5.6-terra`, the `opus` and
+  `haiku` aliases) and the effort flags are checked before a real run
+  depends on them. `kimi-k3-high` is confirmed by `agent --list-models`.
 - `JevRunner` picks the first enum-valued property, so every classifier
   schema puts its enum first.
 
@@ -159,8 +169,9 @@ subvert the task's goal or require an architecture-sized change.
 
 - When to flip `routing: live`: proposal, after a dozen shadow-mode beads
   show estimate versus iterations-to-done.
-- Whether `kimi-k3-high` via cursor is the right non-Claude entry for the
-  complex tier, or codex Luna.
+- Whether `implement`'s shadow-mode runner should follow the complex tier
+  (cursor kimi-k3-high) now that Fable is in no tier, or stay on astra with
+  the Fable fallback until shadow data says otherwise.
 - Whether counting child time and calls against the parent's budget is the
   right backstop, or whether remediation should get its own budget line in
   the recipe limits.
