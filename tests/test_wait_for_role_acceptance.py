@@ -10,12 +10,20 @@ time under six seconds (real bd CLI during recover dominates the floor).
 from __future__ import annotations
 
 import importlib
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+# Wall-time checks spawn a serial subprocess; skip under xdist workers so the
+# default parallel suite stays green while alloy_test_cmd runs these with -n 0.
+if os.environ.get("PYTEST_XDIST_WORKER"):
+    pytestmark = pytest.mark.skip(
+        reason="timing acceptance runs only in a serial pytest invocation (-n 0)",
+    )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TESTS_DIR = REPO_ROOT / "tests"
