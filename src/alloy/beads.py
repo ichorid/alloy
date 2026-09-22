@@ -40,6 +40,12 @@ META_STAGE = "alloy_stage"
 META_TEST_CMD = "alloy_test_cmd"
 META_COMPLEXITY = "alloy_complexity"
 META_COMPLEXITY_ESTIMATED = "alloy_complexity_estimated"
+META_DISCOVERED_IN_RUN = "alloy_discovered_in_run"
+
+# Labels on beads Alloy files itself. `human` is Beads' own convention, so
+# `bd human list` surfaces needs-human bugs without any Alloy-specific query.
+LABEL_BUG = "alloy-bug"
+LABEL_HUMAN = "human"
 
 CAS_CONFLICT_EXIT = 13
 
@@ -216,6 +222,54 @@ class BeadsClient:
 
     def close(self, bead_id: str) -> None:
         self._run(["close", bead_id], check=False)
+
+    def create_bug(
+        self,
+        *,
+        title: str,
+        description: str,
+        acceptance: str,
+        discovered_from: str,
+        priority: int | str,
+        labels: list[str],
+        metadata: dict[str, Any],
+        claim: bool = False,
+    ) -> str:
+        """File a bug bead discovered while running `discovered_from`.
+
+        The new bead is linked `discovered-from` the parent (which does not
+        block it). Callers pass the parent's recipe/test-command metadata plus
+        META_DISCOVERED_IN_RUN; `claim=True` moves it straight to implementing
+        so a polling scheduler cannot grab it before the parent's child run.
+        """
+        if str(priority).strip().upper() in ("0", "P0"):
+            raise ValueError("bug beads never get priority 0: an agent-filed bead "
+                             "must not outrank every human-prioritised bead")
+        body = f"{description}\n\nReported by Alloy while running bead {discovered_from}."
+        args = [
+            "create", title,
+            "--type", "bug",
+            "--silent",
+            "--priority", str(priority),
+            "--description", body,
+            "--acceptance", acceptance,
+            "--deps", f"discovered-from:{discovered_from}",
+            "--metadata", json.dumps(metadata),
+        ]
+        if labels:
+            args += ["--labels", ",".join(labels)]
+        proc = self._run(args)
+        lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+        if not lines:
+            raise BeadsError(f"bd create --silent returned no id: {proc.stderr.strip()}")
+        new_id = lines[-1]
+        if claim and not self.claim(new_id):
+            raise BeadsError(f"could not claim freshly created bug bead {new_id}")
+        return new_id
+
+    def add_dependency(self, bead_id: str, depends_on_id: str) -> None:
+        """Make `bead_id` blocked by `depends_on_id` (bd's default `blocks` edge)."""
+        self._run(["dep", "add", bead_id, depends_on_id])
 
 
 def _first_json_value(stdout: str) -> Any:
