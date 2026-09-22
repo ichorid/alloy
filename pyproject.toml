@@ -20,7 +20,7 @@ dependencies = [
 alloy = "alloy.cli:app"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "pytest-xdist>=3.6"]
 
 [build-system]
 requires = ["hatchling"]
@@ -32,6 +32,8 @@ packages = ["src/alloy"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Run in parallel by default (pytest-xdist). Use `pytest -n 0` for a serial run.
+addopts = ["-n", "auto"]
 # The checkout being tested must be the one imported. The venv's editable
 # install points at the main checkout, so inside an Alloy worktree a bare
 # `import alloy` would test main's code; this puts ./src ahead of it.
