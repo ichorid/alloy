@@ -32,6 +32,9 @@ class CodexRunner(CLIRunner):
         messages: list[str] = []
         usage: dict[str, Any] = {}
         session_id: str | None = None
+        # An `error` event with no agent_message after it is a failed call
+        # even on exit 0 (e.g. "out of credits").
+        failed = False
         for line in stdout.splitlines():
             line = line.strip()
             if not line.startswith("{"):
@@ -49,10 +52,12 @@ class CodexRunner(CLIRunner):
                 item = event.get("item") or {}
                 if item.get("type") == "agent_message" and item.get("text"):
                     messages.append(str(item["text"]))
+                    failed = False
             elif kind == "error":
                 messages.append(str(event.get("message", "")))
+                failed = True
         text = messages[-1] if messages else stdout.strip()
-        return text, None, usage, session_id
+        return text, None, usage, session_id, failed
 
 
 class CodexReadOnlyRunner(CodexRunner):

@@ -247,6 +247,42 @@ async def test_fallback_runner_takes_over_when_the_primary_fails(
     ]
 
 
+async def test_fallback_fires_when_primary_reports_is_error_on_exit_zero(
+    project, alloy_home, fake_harnesses
+):
+    config = load_config()
+    roles = dict(config.roles)
+    roles["tests"] = replace(
+        roles["tests"],
+        runner="cursor",
+        fallback=RoleSpec(runner="claude-write", model="fable"),
+    )
+    config = replace(config, roles=roles)
+    fake_harnesses.configure(
+        script(
+            **{
+                "tests@cursor-agent": [
+                    {"exit": 0, "is_error": True, "text": "rate limited"},
+                ],
+                "tests@claude": [write_tests_entry()],
+            }
+        )
+    )
+    harness = make_harness(project, alloy_home, config=config)
+    final = await harness.start()
+
+    assert final["outcome"] == "done"
+    assert [c["runner"] for c in fake_harnesses.calls_for("tests")] == [
+        "cursor-agent",
+        "claude",
+    ]
+    calls = harness.store.agent_calls(harness.run_id)
+    assert [(c["role"], c["runner"], c["ok"]) for c in calls if c["role"] == "tests"] == [
+        ("tests", "cursor", 0),
+        ("tests", "claude-write", 1),
+    ]
+
+
 async def test_no_fallback_means_the_failure_stands(project, alloy_home, fake_harnesses):
     config = load_config()
     roles = dict(config.roles)

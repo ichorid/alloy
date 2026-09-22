@@ -156,8 +156,14 @@ class CLIRunner:
             return prompt + schema_instructions(structured_schema)
         return prompt
 
-    def parse(self, stdout: str, stderr: str, exit_code: int) -> tuple[str, dict | None, dict, str | None]:
-        """Return ``(text, structured, usage, session_id)``."""
+    def parse(self, stdout: str, stderr: str, exit_code: int) -> tuple:
+        """Return ``(text, structured, usage, session_id)`` or, with a fifth
+        element, ``(text, structured, usage, session_id, failed)``.
+
+        ``failed`` lets an adapter report that the harness signalled an error
+        inside its output envelope even though the process exited 0 (a cursor
+        rate limit, a codex ``error`` event with no answer after it). The call
+        is then recorded as not ok so the role's fallback fires."""
         return stdout.strip(), extract_json_object(stdout), {}, None
 
     # -- execution --------------------------------------------------------
@@ -239,8 +245,10 @@ class CLIRunner:
                 error=f"timed out after {limit_s:.0f}s",
             )
 
-        text, structured, usage, session_id = self.parse(stdout, stderr, exit_code)
-        ok = exit_code == 0
+        text, structured, usage, session_id, failed = self._normalise_parsed(
+            self.parse(stdout, stderr, exit_code)
+        )
+        ok = exit_code == 0 and not failed
         if ok and structured_schema and structured is None:
             structured = extract_json_object(text)
         return AgentResult(
@@ -259,6 +267,15 @@ class CLIRunner:
             error=None if ok else _failure_message(text, stderr, exit_code),
             session_id=session_id,
         )
+
+    @staticmethod
+    def _normalise_parsed(parsed: tuple) -> tuple[str, dict | None, dict, str | None, bool]:
+        """Accept the historical 4-tuple from :meth:`parse` as well as the
+        5-tuple with ``failed``."""
+        if len(parsed) == 4:
+            return (*parsed, False)
+        text, structured, usage, session_id, failed = parsed
+        return text, structured, usage, session_id, bool(failed)
 
     def _write_log(
         self,

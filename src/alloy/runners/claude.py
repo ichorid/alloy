@@ -33,9 +33,9 @@ class ClaudeRunner(CLIRunner):
         try:
             envelope = json.loads(stdout)
         except (json.JSONDecodeError, ValueError):
-            return stdout.strip(), None, {}, None
+            return stdout.strip(), None, {}, None, False
         if not isinstance(envelope, dict):
-            return stdout.strip(), None, {}, None
+            return stdout.strip(), None, {}, None, False
 
         text = envelope.get("result") or ""
         structured = envelope.get("structured_output")
@@ -46,9 +46,10 @@ class ClaudeRunner(CLIRunner):
             usage["total_cost_usd"] = envelope["total_cost_usd"]
         if "num_turns" in envelope:
             usage["num_turns"] = envelope["num_turns"]
-        if envelope.get("is_error"):
+        failed = bool(envelope.get("is_error"))
+        if failed:
             text = text or json.dumps(envelope.get("error", envelope))[:2000]
-        return str(text), structured, usage, envelope.get("session_id")
+        return str(text), structured, usage, envelope.get("session_id"), failed
 
 
 class ClaudeWriteRunner(ClaudeRunner):

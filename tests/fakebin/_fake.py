@@ -92,9 +92,14 @@ def main() -> int:
     if entry.get("stderr"):
         sys.stderr.write(entry["stderr"])
 
+    if "is_error" in entry:
+        envelope_is_error = bool(entry["is_error"])
+    else:
+        envelope_is_error = exit_code != 0
+
     if runner.startswith("claude"):
         envelope = {
-            "type": "result", "subtype": "success", "is_error": exit_code != 0,
+            "type": "result", "subtype": "success", "is_error": envelope_is_error,
             "result": text, "session_id": "fake-session", "num_turns": 1,
             "total_cost_usd": 0.01,
             "usage": {"input_tokens": 100, "output_tokens": 20},
@@ -104,11 +109,17 @@ def main() -> int:
         print(json.dumps(envelope))
     elif runner.startswith("codex"):
         print(json.dumps({"type": "thread.started", "thread_id": "fake-thread"}))
-        body = text if structured is None else json.dumps(structured)
-        print(json.dumps({
-            "type": "item.completed",
-            "item": {"id": "item_0", "type": "agent_message", "text": body},
-        }))
+        if entry.get("codex_error") is not None:
+            print(json.dumps({
+                "type": "error",
+                "message": str(entry["codex_error"]),
+            }))
+        if not entry.get("codex_error_only"):
+            body = text if structured is None else json.dumps(structured)
+            print(json.dumps({
+                "type": "item.completed",
+                "item": {"id": "item_0", "type": "agent_message", "text": body},
+            }))
         print(json.dumps({
             "type": "turn.completed",
             "usage": {"input_tokens": 100, "output_tokens": 20},
@@ -116,7 +127,7 @@ def main() -> int:
     elif runner.startswith("cursor"):
         body = text if structured is None else json.dumps(structured)
         print(json.dumps({
-            "type": "result", "subtype": "success", "is_error": exit_code != 0,
+            "type": "result", "subtype": "success", "is_error": envelope_is_error,
             "duration_ms": 10, "result": body, "session_id": "fake-session",
             "usage": {"inputTokens": 100, "outputTokens": 20},
         }))
