@@ -42,6 +42,7 @@ from alloy.models import (
     TestReport,
     clip,
     extract_bug_reports,
+    next_level,
 )
 from alloy.runtime import RunContext
 from alloy.verify import resolve_command
@@ -69,6 +70,8 @@ class TddState(TypedDict, total=False):
     context: dict[str, Any]
     complexity: str
     complexity_source: str
+    retries_on_tier: int
+    escalations: Annotated[list[dict[str, Any]], operator.add]
     test_command: str | None
     baseline: dict[str, Any] | None
 
@@ -1076,25 +1079,40 @@ def build_graph(ctx: RunContext):
 
         if decision.decision == "consilium" and \
                 state.get("consiliums", 0) >= ctx.recipe.limits.max_consiliums * ctx.budget(state):
-            return {
-                "stage": "guard",
-                "instructions": decision.next_instructions
+            decision = JudgeDecision(
+                decision="retry",
+                reason="consilium budget exhausted; downgraded to retry",
+                next_instructions=decision.next_instructions
                 or "Consilium budget is spent; fix the most likely cause directly.",
-                "decision": JudgeDecision(
-                    decision="retry",
-                    reason="consilium budget exhausted; downgraded to retry",
-                    next_instructions=decision.next_instructions,
-                ).model_dump(),
-            }
+            )
 
         if decision.decision == "consilium":
-            return {"stage": "guard", "decision": decision.model_dump()}
+            return {"stage": "guard", "decision": decision.model_dump(), "retries_on_tier": 0}
 
-        return {
+        retries = state.get("retries_on_tier", 0) + 1
+        update: dict[str, Any] = {
             "stage": "guard",
             "instructions": decision.next_instructions,
             "decision": decision.model_dump(),
+            "retries_on_tier": retries,
         }
+        if ctx.recipe.complexity.routing == "live" and \
+                retries >= ctx.recipe.complexity.escalate_after_retries:
+            previous = state["complexity"]
+            level = next_level(previous)
+            if level != previous:
+                iteration = state.get("iteration", 0)
+                reason = f"after {retries} retries (iteration {iteration})"
+                ctx.set_complexity(level, "escalation", reason)
+                update.update(
+                    complexity=level,
+                    complexity_source="escalation",
+                    retries_on_tier=0,
+                    escalations=[{
+                        "from": previous, "to": level, "iteration": iteration, "reason": reason,
+                    }],
+                )
+        return update
 
     def route(state: TddState) -> str | list[Send]:
         decision = (state.get("decision") or {}).get("decision", "retry")
@@ -1198,6 +1216,7 @@ def build_graph(ctx: RunContext):
         return {
             "instructions": instructions or "Continue; the human provided no extra guidance.",
             "human_note": instructions or "",
+            "retries_on_tier": 0,
             "limit_hit": None,
             "budget_extensions": state.get("budget_extensions", 0) + 1,
             "stage": "resumed",
@@ -1268,6 +1287,8 @@ def initial_state(ctx: RunContext) -> TddState:
         title=ctx.bead.title,
         iteration=0,
         consiliums=0,
+        retries_on_tier=0,
+        escalations=[],
         instructions="",
         implementer="",
         attempts=[],
