@@ -72,6 +72,26 @@ _Add your build and test commands here_
 
 _Add a brief overview of your project architecture_
 
+The recipe's `complexity:` block defines `routing: shadow` (estimate without
+changing runners) or `routing: live` (select a tier for roles with `tiered: true`),
+ordered `tiers:` chains for `simple`, `medium`, and `complex`, optional per-entry
+`effort:` (`claude --effort` or Codex `model_reasoning_effort`), and
+`escalate_after_retries:` for moving up a tier after repeated retries in live mode.
+`alloy_complexity` supplies the operator override; `alloy_complexity_estimated`
+records Alloy's estimate or escalation. `alloy recipes` shows routing, escalation,
+tier chains, effort, and runner availability. Use `--probe` to smoke-test each
+distinct runner/model/effort entry with a two-minute timeout before relying on
+model aliases or effort flags; any failed probe gives a non-zero exit, and
+transcripts go under Alloy's logs without run-ledger entries.
+`alloy status <bead-id> --json` includes `complexity`, `complexity_source`, and
+`dispatch_tier` (null in shadow mode).
+
+```bash
+bd update <id> --set-metadata alloy_complexity=complex
+alloy recipes --probe                     # probe all recipes' distinct tier entries
+alloy recipes --probe --recipe tdd-loop --json
+```
+
 ## Conventions & Patterns
 
 _Add your project-specific conventions here_
