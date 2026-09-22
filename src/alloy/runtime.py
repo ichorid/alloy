@@ -18,11 +18,18 @@ from typing import Any, Awaitable, Callable, Mapping
 
 from alloy.beads import BeadsClient, Bead, META_COMPLEXITY_ESTIMATED, META_STAGE
 from alloy.config import RecipeConfig, RoleSpec
-from alloy.models import AgentResult, ProjectSnapshot, RunnerUnavailable, TestReport, utcnow
+from alloy.models import (
+    AgentResult,
+    CheckRequest,
+    CheckResult,
+    ProjectSnapshot,
+    RunnerUnavailable,
+    utcnow,
+)
 from alloy.paths import project_brief
 from alloy.runners import RunnerRegistry
 from alloy.store import Store
-from alloy.verify import run_tests
+from alloy.verify import run_check
 from alloy.worktree import Worktree, WorktreeManager
 
 log = logging.getLogger("alloy.runtime")
@@ -178,12 +185,19 @@ class RunContext:
 
     # -- deterministic work -----------------------------------------------
 
-    async def verify(self, command: str) -> TestReport:
-        return await run_tests(
-            command,
+    async def run_check(self, request: CheckRequest) -> CheckResult:
+        index = len(list(self.log_dir.glob("check-*.log"))) if self.log_dir.is_dir() else 0
+        return await run_check(
+            request,
             self.worktree.path,
-            timeout_s=self.recipe.verify.timeout_minutes * 60,
+            timeout_s=self.recipe.verification.max_command_timeout_minutes * 60,
             log_dir=self.log_dir,
+            index=index,
+        )
+
+    async def verify(self, command: str) -> CheckResult:
+        return await self.run_check(
+            CheckRequest(command=command, purpose="regression suite", kind="regression")
         )
 
     def diff(self, *, stat_only: bool = False) -> str:

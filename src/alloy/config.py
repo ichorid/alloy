@@ -7,6 +7,7 @@ There is deliberately no DSL here.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
@@ -15,6 +16,8 @@ from typing import Any
 import yaml
 
 from alloy.models import COMPLEXITY_LEVELS
+
+log = logging.getLogger(__name__)
 
 BUILTIN_RECIPE_DIR = Path(__file__).parent / "recipes"
 
@@ -163,12 +166,45 @@ class VerifySpec:
 
 
 @dataclass(frozen=True)
+class VerificationSpec:
+    """Hard limits on the checks Alloy will run; never what the checks are."""
+
+    max_checks_per_iteration: int = 5
+    max_total_checks: int = 20
+    max_command_timeout_minutes: float = 15.0
+    max_baseline_repairs: int = 2
+    min_acceptance_confidence: float = 0.6
+
+    @classmethod
+    def parse(
+        cls, raw: dict[str, Any] | None, *, legacy: VerifySpec | None = None
+    ) -> "VerificationSpec":
+        raw = raw or {}
+        defaults = cls()
+        timeout = raw.get("max_command_timeout_minutes")
+        if timeout is None:
+            timeout = legacy.timeout_minutes if legacy else defaults.max_command_timeout_minutes
+        return cls(
+            max_checks_per_iteration=int(
+                raw.get("max_checks_per_iteration", defaults.max_checks_per_iteration)
+            ),
+            max_total_checks=int(raw.get("max_total_checks", defaults.max_total_checks)),
+            max_command_timeout_minutes=float(timeout),
+            max_baseline_repairs=int(raw.get("max_baseline_repairs", defaults.max_baseline_repairs)),
+            min_acceptance_confidence=float(
+                raw.get("min_acceptance_confidence", defaults.min_acceptance_confidence)
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class RecipeConfig:
     name: str
     roles: dict[str, RoleSpec]
     consilium: ConsiliumSpec
     limits: Limits
     verify: VerifySpec
+    verification: VerificationSpec = field(default_factory=VerificationSpec)
     runners: dict[str, dict[str, Any]] = field(default_factory=dict)
     on_success_status: str = "review-ready"
     cleanup_worktree_on_success: bool = False
@@ -201,13 +237,17 @@ class RecipeConfig:
         complexity = ComplexitySpec.parse(raw.get("complexity"))
         if any(spec.tiered for spec in roles.values()) and not complexity.tiers:
             raise ConfigError("tiered roles require complexity tiers")
+        verify = VerifySpec.parse(raw.get("verify"))
+        if verify.command:
+            log.warning("verify.command is deprecated and ignored")
         return cls(
             name=raw.get("name") or (source.stem if source else "unnamed"),
             roles=roles,
             complexity=complexity,
             consilium=ConsiliumSpec.parse(raw.get("consilium")),
             limits=Limits.parse(raw.get("limits")),
-            verify=VerifySpec.parse(raw.get("verify")),
+            verify=verify,
+            verification=VerificationSpec.parse(raw.get("verification"), legacy=verify),
             runners=dict(raw.get("runners") or {}),
             on_success_status=raw.get("on_success_status", "review-ready"),
             cleanup_worktree_on_success=bool(raw.get("cleanup_worktree_on_success", False)),

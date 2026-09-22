@@ -10,6 +10,63 @@ from alloy.verify import detect_command, parse_counts, resolve_command, run_test
 PYTEST = f"{sys.executable} -m pytest -q"
 
 
+# ---------------------------------------------------------------------------
+# run_check / CheckRequest (alloy-21u.1)
+# ---------------------------------------------------------------------------
+
+
+async def test_run_check_reports_nonzero_exit_code(project, tmp_path):
+    from alloy.models import CheckRequest
+    from alloy.verify import run_check
+
+    log_dir = tmp_path / "logs"
+    result = await run_check(
+        CheckRequest(command="sh -c 'exit 3'", kind="lint"),
+        project,
+        timeout_s=30.0,
+        log_dir=log_dir,
+    )
+
+    assert result.exit_code == 3
+    assert not result.ok
+    assert result.runnable
+    assert result.log_path is not None
+    log_name = Path(result.log_path).name
+    assert log_name.startswith("check-")
+    assert Path(result.log_path).read_text(encoding="utf-8").splitlines()[0] == "$ sh -c 'exit 3'"
+
+
+async def test_run_check_command_not_found_is_not_runnable(project, tmp_path):
+    from alloy.models import CheckRequest
+    from alloy.verify import run_check
+
+    result = await run_check(
+        CheckRequest(command="definitely-not-installed-xyz-abc"),
+        project,
+        timeout_s=30.0,
+        log_dir=tmp_path / "logs",
+    )
+
+    assert result.exit_code == 127
+    assert not result.runnable
+    assert result.headline() == "command not found"
+
+
+async def test_run_check_times_out_instead_of_blocking(project, tmp_path):
+    from alloy.models import CheckRequest
+    from alloy.verify import run_check
+
+    result = await run_check(
+        CheckRequest(command=f"{sys.executable} -c 'import time; time.sleep(30)'"),
+        project,
+        timeout_s=1.0,
+        log_dir=tmp_path / "logs",
+    )
+
+    assert result.timed_out
+    assert not result.runnable
+
+
 async def test_failing_suite_is_reported_with_its_exit_code(project, tmp_path):
     (project / "tests" / "test_x.py").write_text("def test_x():\n    assert False\n")
     report = await run_tests(PYTEST, project, log_dir=tmp_path / "logs")
