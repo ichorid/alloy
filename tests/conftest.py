@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 FAKE_SOURCE = Path(__file__).parent / "fakebin" / "_fake.py"
-FAKE_RUNNERS = ("claude", "codex", "cursor-agent", "pi")
+FAKE_RUNNERS = ("claude", "codex", "cursor-agent", "jev", "pi")
 
 PASSING_TEST = '''
 from mypkg import slugify
@@ -199,6 +199,20 @@ def critic_entry(root_cause: str = "slugify returns None") -> dict:
 
 def synthesize_entry(text: str = "Return the slug string from slugify.") -> dict:
     return {"text": text}
+
+
+def triage_entry(
+    severity: str,
+    reason: str = "",
+    confidence: float = 0.9,
+) -> dict:
+    return {
+        "structured": {
+            "severity": severity,
+            "reason": reason or f"classified as {severity}",
+            "confidence": confidence,
+        }
+    }
 
 
 @pytest.fixture

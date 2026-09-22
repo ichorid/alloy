@@ -123,6 +123,40 @@ alloy start
 - If `alloy recipes` reports a runner as missing, fix that before running —
   don't route around it by hand.
 
+## Bugs an agent finds
+
+Agents running inside a recipe may hit a defect in existing code that is not
+their task. They do not fix it: they append a `<bug>` block (title, where,
+evidence, `blocks_task: yes|no`) to their output, and stop only if it blocks
+them. Before verification, Alloy hands each untriaged report to the `triage`
+role (Jev, falling back to Claude), which reads the task brief, acceptance
+criteria, test results, the bugs already filed and the remediations already
+performed in this run, plus the project brief in `.alloy/project.md` when one
+exists, and returns one of five labels:
+
+| Label | What Alloy does |
+|-------|-----------------|
+| `not-a-bug` | Nothing filed; the implementer is told the report is part of its task. |
+| `duplicate` | Matches a bug already filed in this run; nothing filed. |
+| `non-blocking` | Filed at P3 with label `alloy-bug`; the run continues and must not fix it. |
+| `blocking` | Filed at P1, `alloy-bug`, pre-claimed, with a generated acceptance criterion; the run routes to `remediate`, which fixes it in its own bead and merges the fix into the parent's branch before the task continues. |
+| `needs-human` | Filed at P1 with labels `alloy-bug` and `human`; the running bead is made blocked-by it and the run parks at the human gate. |
+
+Every filed bug bead carries a `discovered-from` dependency on the bead whose
+run found it (it does not block that bead) and `alloy_discovered_in_run`
+metadata. `bd list --label alloy-bug` shows everything Alloy has filed;
+`bd human list` is the review path for `needs-human` bugs -- resolve or
+dismiss the bug, then `alloy resume <bead-id>`. `needs-human` is the carve-out
+for architecture and product decisions (schema or public API changes,
+dependency swaps, behaviour the acceptance criteria contradict), not the
+default; there is no cap on how many blocking bugs one run may remediate, the
+triage role weighs the remediations so far and the progress made.
+
+A merged remediation shows up on the parent's branch as the parent's own
+work-in-progress commit followed by a merge of `alloy/<bug-id>`, with notes on
+both beads naming the run; a remediation that could not land leaves the parent
+branch clean at its WIP commit and the bug bead `failed` with the reason.
+
 ## Agent skills
 
 Decomposition and day-to-day Alloy operation are spelled out in project skills
