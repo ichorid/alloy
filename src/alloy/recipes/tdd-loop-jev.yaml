@@ -106,6 +106,13 @@ consilium:
 verify:
   timeout_minutes: 15
 
+verification:
+  max_checks_per_iteration: 5        # checks Alloy will run per implement/verify round
+  max_total_checks: 20               # hard cap on checks across the whole run
+  max_command_timeout_minutes: 15    # any single check is killed after this long
+  max_baseline_repairs: 2            # attempts to repair a pre-existing red baseline
+  min_acceptance_confidence: 0.6     # below this, acceptance escalates instead of passing
+
 limits:
   max_iterations: 5
   max_consiliums: 1

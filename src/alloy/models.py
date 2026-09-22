@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 MAX_EMBEDDED_TEXT = 4000
 """Hard cap on any agent text copied into graph state."""
@@ -211,28 +211,61 @@ class ContextPacket(BaseModel):
         }
 
 
-class TestReport(BaseModel):
-    """Result of running the deterministic verification command."""
+CHECK_KINDS: tuple[str, ...] = ("regression", "targeted", "lint", "typecheck", "build", "custom")
+
+
+class CheckRequest(BaseModel):
+    """What to run and why. Alloy executes it; it never interprets it."""
 
     command: str
+    purpose: str = ""
+    kind: str = "custom"
+    required: bool = True
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _known_kind(cls, value: Any) -> str:
+        return value if value in CHECK_KINDS else "custom"
+
+
+class CheckResult(BaseModel):
+    """What happened when a check ran: the exit code is the fact."""
+
+    command: str
+    purpose: str = ""
+    kind: str = "custom"
+    required: bool = True
     exit_code: int
+    duration_s: float = 0.0
+    timed_out: bool = False
+    output_tail: str = Field(default="", validation_alias=AliasChoices("output_tail", "tail"))
+    log_path: str | None = None
     passed: int | None = None
     failed: int | None = None
-    duration_s: float = 0.0
-    tail: str = ""
-    log_path: str | None = None
-    timed_out: bool = False
+
+    @property
+    def tail(self) -> str:  # legacy name, removed with the TestReport alias
+        return self.output_tail
 
     @property
     def ok(self) -> bool:
         return self.exit_code == 0 and not self.timed_out
 
+    @property
+    def runnable(self) -> bool:
+        return not self.timed_out and self.exit_code != 127
+
     def headline(self) -> str:
         if self.timed_out:
             return f"timed out after {self.duration_s:.0f}s"
+        if self.exit_code == 127:
+            return "command not found"
         if self.passed is None and self.failed is None:
-            return "exit 0" if self.exit_code == 0 else f"exit {self.exit_code}"
+            return f"exit {self.exit_code}"
         return f"{self.passed or 0} passed, {self.failed or 0} failed"
+
+
+TestReport = CheckResult  # legacy alias; removed by alloy-21u.7
 
 
 Decision = Literal["done", "retry", "consilium", "human", "abort"]

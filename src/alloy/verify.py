@@ -16,7 +16,7 @@ import sys
 import time
 from pathlib import Path
 
-from alloy.models import TestReport, clip
+from alloy.models import CheckRequest, CheckResult, clip
 from alloy.procs import terminate_process_tree
 
 DEFAULT_TIMEOUT_S = 900.0
@@ -107,16 +107,18 @@ def resolve_command(
     return candidates[0]
 
 
-async def run_tests(
-    command: str,
+async def run_check(
+    request: CheckRequest,
     worktree: Path,
     *,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     log_dir: Path | None = None,
-) -> TestReport:
+    index: int = 0,
+) -> CheckResult:
+    """Run one shell command, capture what happened, persist the evidence."""
     started = time.monotonic()
     process = await asyncio.create_subprocess_shell(
-        command,
+        request.command,
         cwd=str(worktree),
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
@@ -143,19 +145,42 @@ async def run_tests(
     log_path: str | None = None
     if log_dir is not None:
         log_dir.mkdir(parents=True, exist_ok=True)
-        path = log_dir / f"tests-{int(time.time() * 1000)}.log"
-        path.write_text(f"$ {command}\nexit={exit_code}\n\n{output}", encoding="utf-8")
+        path = log_dir / f"check-{index}-{request.kind}-{int(time.time() * 1000)}.log"
+        header = (
+            f"$ {request.command}\npurpose={request.purpose}\nkind={request.kind}\n"
+            f"exit={exit_code}\n\n"
+        )
+        path.write_text(header + output, encoding="utf-8")
         log_path = str(path)
 
-    return TestReport(
-        command=command,
+    return CheckResult(
+        command=request.command,
+        purpose=request.purpose,
+        kind=request.kind,
+        required=request.required,
         exit_code=exit_code,
+        duration_s=duration,
+        timed_out=timed_out,
+        output_tail=clip(output, 3000),
+        log_path=log_path,
         passed=passed,
         failed=failed,
-        duration_s=duration,
-        tail=clip(output, 3000),
-        log_path=log_path,
-        timed_out=timed_out,
+    )
+
+
+async def run_tests(
+    command: str,
+    worktree: Path,
+    *,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    log_dir: Path | None = None,
+) -> CheckResult:
+    """Legacy entry point: the whole-suite regression check."""
+    return await run_check(
+        CheckRequest(command=command, purpose="regression suite", kind="regression"),
+        worktree,
+        timeout_s=timeout_s,
+        log_dir=log_dir,
     )
 
 

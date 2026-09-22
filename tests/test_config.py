@@ -12,6 +12,7 @@ silently doing something else.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 
 import pytest
@@ -347,3 +348,38 @@ def test_complexity_tier_rejects_effort_on_cursor_plan_runner():
     )
     with pytest.raises(ConfigError):
         RecipeConfig.parse(raw)
+
+
+# ---------------------------------------------------------------------------
+# VerificationSpec / verification: block (alloy-21u.1)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_verification_block_overrides_single_field():
+    config = RecipeConfig.parse(_base_raw_recipe(verification={"max_total_checks": 7}))
+    verification = config.verification
+    assert verification.max_total_checks == 7
+    assert verification.max_checks_per_iteration == 5
+    assert verification.max_command_timeout_minutes == 15.0
+    assert verification.max_baseline_repairs == 2
+    assert verification.min_acceptance_confidence == 0.6
+
+
+def test_parse_legacy_verify_timeout_maps_to_verification():
+    config = RecipeConfig.parse(_base_raw_recipe(verify={"timeout_minutes": 3}))
+    assert config.verification.max_command_timeout_minutes == 3.0
+
+
+def test_parse_legacy_verify_command_emits_deprecated_warning(caplog):
+    raw = _base_raw_recipe(verify={"command": "make test"})
+    with caplog.at_level(logging.WARNING, logger="alloy.config"):
+        RecipeConfig.parse(raw)
+    assert any("deprecated" in record.message.lower() for record in caplog.records)
+
+
+@pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
+def test_builtin_recipe_verification_defaults(recipe_name):
+    from alloy.config import VerificationSpec
+
+    config = load_recipe(recipe_name)
+    assert config.verification == VerificationSpec()
