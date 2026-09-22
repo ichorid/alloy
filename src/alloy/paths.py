@@ -69,3 +69,34 @@ class AlloyPaths:
         for directory in (self.root, self.logs, self.worktrees, self.recipes):
             directory.mkdir(parents=True, exist_ok=True)
         return self
+
+
+PROJECT_BRIEF_FILE = Path(".alloy") / "project.md"
+README_FILE = Path("README.md")
+PROJECT_BRIEF_LINES = 60
+NO_PROJECT_BRIEF = "(no project brief)"
+
+
+def project_brief_source(repo: Path | str) -> str | None:
+    """Which file the project brief comes from: the operator's, else the README."""
+    repo = Path(repo)
+    if (repo / PROJECT_BRIEF_FILE).is_file():
+        return PROJECT_BRIEF_FILE.as_posix()
+    if (repo / README_FILE).is_file():
+        return README_FILE.as_posix()
+    return None
+
+
+def project_brief(repo: Path | str, *, lines: int = PROJECT_BRIEF_LINES) -> str:
+    """The operator's `.alloy/project.md` in full, else the head of README.md."""
+    repo = Path(repo)
+    source = project_brief_source(repo)
+    if source is None:
+        return NO_PROJECT_BRIEF
+    try:
+        text = (repo / source).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return NO_PROJECT_BRIEF
+    if source == PROJECT_BRIEF_FILE.as_posix():
+        return text
+    return "".join(text.splitlines(keepends=True)[:lines])

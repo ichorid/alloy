@@ -151,6 +151,43 @@ class BugTriage(BaseModel):
         }
 
 
+SCOPE_VERDICTS: tuple[str, ...] = ("merge", "too-broad", "subverts-task")
+ScopeLabel = Literal["merge", "too-broad", "subverts-task"]
+
+
+class ScopeVerdict(BaseModel):
+    """The scope role's answer: may a remediation child's diff merge into its parent?"""
+
+    verdict: ScopeLabel
+    reason: str = ""
+    confidence: float = 0.0
+
+    @classmethod
+    def schema_for_agents(cls) -> dict[str, Any]:
+        # `verdict` first: Jev classifies on the first enum-valued property.
+        return {
+            "type": "object",
+            "properties": {
+                "verdict": {"type": "string", "enum": list(SCOPE_VERDICTS)},
+                "reason": {"type": "string"},
+                "confidence": {"type": "number"},
+            },
+            "required": ["verdict", "reason", "confidence"],
+            "additionalProperties": False,
+        }
+
+
+class ProjectSnapshot(BaseModel):
+    """The bead-graph half of the project context packet, already rendered
+    one line per bead. Every section is empty when `bd` could not answer."""
+
+    brief_source: str = ""
+    open_beads: list[str] = Field(default_factory=list)
+    epic: str = ""
+    filed_bugs: list[str] = Field(default_factory=list)
+    stats: dict[str, Any] = Field(default_factory=dict)
+
+
 class RunnerUnavailable(RuntimeError):
     """The harness CLI is not installed or not authenticated."""
 

@@ -215,6 +215,20 @@ def triage_entry(
     }
 
 
+def scope_entry(
+    verdict: str,
+    reason: str = "",
+    confidence: float = 0.9,
+) -> dict:
+    return {
+        "structured": {
+            "verdict": verdict,
+            "reason": reason or f"scope classified as {verdict}",
+            "confidence": confidence,
+        }
+    }
+
+
 @pytest.fixture
 def happy_path_script() -> dict:
     """Context, tests, one implementation, judge says done."""

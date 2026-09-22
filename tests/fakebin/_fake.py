@@ -18,6 +18,7 @@ ROLE_MARKERS = [
     ("estimate", "You are estimating how hard this task is"),
     ("tests", "Write failing tests"),
     ("triage", "You are triaging a bug report"),
+    ("scope", "You are deciding whether a bug fix is safe to merge"),
     ("implement", "Implement the smallest change"),
     ("judge", "You are judging whether"),
     ("critic", "You are one of several independent critics"),

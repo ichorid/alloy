@@ -10,7 +10,7 @@ from typing import Any
 import yaml
 
 from alloy.checkpoints import open_checkpointer
-from alloy.config import RecipeConfig
+from alloy.config import RecipeConfig, RoleSpec
 from alloy.beads import Bead
 from alloy.recipes import tdd_loop
 from alloy.runners import RunnerRegistry
@@ -19,6 +19,22 @@ from alloy.store import Store
 from alloy.worktree import WorktreeManager
 
 BASE_RECIPE = Path(__file__).parents[1] / "src" / "alloy" / "recipes" / "tdd-loop.yaml"
+
+
+def scope_config(**overrides: Any) -> RecipeConfig:
+    """Recipe config with a scope role (jev primary, claude fallback)."""
+    config = load_config()
+    roles = dict(config.roles)
+    fallback = overrides.pop(
+        "fallback", RoleSpec(runner="claude", model="sonnet", timeout_minutes=5),
+    )
+    roles["scope"] = RoleSpec(
+        runner=overrides.pop("runner", "jev"),
+        model=overrides.pop("model", "jev-latest"),
+        timeout_minutes=5,
+        fallback=fallback,
+    )
+    return replace(config, roles=roles, **overrides)
 
 
 def load_config(**overrides: Any) -> RecipeConfig:

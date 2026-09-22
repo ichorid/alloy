@@ -150,6 +150,17 @@ def test_builtin_recipe_tests_role_is_pinned_not_tiered(recipe_name):
 
 
 @pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
+def test_builtin_recipe_scope_role_uses_jev_with_claude_fallback(recipe_name):
+    config = load_recipe(recipe_name)
+    scope = config.roles["scope"]
+    assert scope.runner == "jev"
+    assert scope.model == "jev-latest"
+    assert scope.fallback is not None
+    assert scope.fallback.runner == "claude"
+    assert scope.fallback.model == "sonnet"
+
+
+@pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
 def test_builtin_recipe_context_and_judge_unchanged(recipe_name):
     config = load_recipe(recipe_name)
     context = config.roles["context"]

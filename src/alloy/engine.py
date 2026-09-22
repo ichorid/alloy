@@ -340,9 +340,16 @@ class Engine:
             log_dir=log_dir,
             beads=self.beads,
         )
-        ctx.remediator = lambda bug_id: self.run_child(
-            bug_id, parent=ctx, merge_gate=self.merge_gate
-        )
+        merge_gate = self.merge_gate
+        if merge_gate is None:
+            # Default gate: the recipe's scope role judges the fix against the
+            # project context packet; anything but `merge` keeps it out.
+            from alloy.recipes.tdd_loop import scope_merge_gate
+
+            async def merge_gate(bug: Bead, diff: str) -> tuple[bool, str]:
+                return await scope_merge_gate(ctx, bug, diff)
+
+        ctx.remediator = lambda bug_id: self.run_child(bug_id, parent=ctx, merge_gate=merge_gate)
         return ctx
 
     # -- internals --------------------------------------------------------
