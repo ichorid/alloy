@@ -74,6 +74,13 @@ def test_counts_are_parsed_from_the_common_runners():
     assert parse_counts("nothing recognizable") == (None, None)
 
 
+def test_xdist_style_pytest_output_is_parsed_from_the_final_summary():
+    output = "bringing up nodes...\n........\n279 passed in 98.50s"
+    passed, failed = parse_counts(output)
+    assert passed == 279
+    assert (failed or 0) == 0
+
+
 def test_a_bare_python_is_repointed_at_an_interpreter_that_exists(monkeypatch):
     """Agents suggest `python -m pytest` on machines that only have python3."""
     import shutil

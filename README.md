@@ -170,8 +170,12 @@ execution monitor, with what was done about each.
 ## Tests
 
 ```bash
-pytest
+pytest          # runs in parallel via pytest-xdist (-n auto)
+pytest -n 0     # serial, for debugging (or: pytest -p no:xdist)
 ```
+
+The suite runs in parallel by default; `-n 0` (or `-p no:xdist`) forces a
+single worker with plain, ordered output when you need to debug a test.
 
 The suite mocks the harness CLIs — stand-in binaries that emit each vendor's real
 JSON envelope — so nothing spends tokens. Everything else runs for real: git
