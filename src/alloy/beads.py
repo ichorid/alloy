@@ -16,6 +16,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from alloy.models import COMPLEXITY_LEVELS, Complexity
+
 BD_BINARY = "bd"
 
 # Lifecycle Alloy drives the bead through. `open` is Beads' own "ready".
@@ -36,6 +38,8 @@ META_WORKTREE = "alloy_worktree"
 META_BRANCH = "alloy_branch"
 META_STAGE = "alloy_stage"
 META_TEST_CMD = "alloy_test_cmd"
+META_COMPLEXITY = "alloy_complexity"
+META_COMPLEXITY_ESTIMATED = "alloy_complexity_estimated"
 
 CAS_CONFLICT_EXIT = 13
 
@@ -69,6 +73,11 @@ class Bead(BaseModel):
     def test_command(self) -> str | None:
         value = self.metadata.get(META_TEST_CMD)
         return str(value) if value else None
+
+    @property
+    def complexity_override(self) -> Complexity | None:
+        value = self.metadata.get(META_COMPLEXITY)
+        return value if value in COMPLEXITY_LEVELS else None
 
     def task_brief(self) -> str:
         """The human-authored part of the task, as agents should see it."""

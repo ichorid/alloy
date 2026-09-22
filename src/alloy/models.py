@@ -21,6 +21,25 @@ COMPLEXITY_LEVELS = ("simple", "medium", "complex")
 Complexity = Literal["simple", "medium", "complex"]
 
 
+class ComplexityEstimate(BaseModel):
+    complexity: Complexity
+    reason: str = ""
+    confidence: float = 0.0
+
+    @classmethod
+    def schema_for_agents(cls) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "complexity": {"type": "string", "enum": list(COMPLEXITY_LEVELS)},
+                "reason": {"type": "string"},
+                "confidence": {"type": "number"},
+            },
+            "required": ["complexity", "reason", "confidence"],
+            "additionalProperties": False,
+        }
+
+
 def next_level(level: Complexity) -> str:
     index = COMPLEXITY_LEVELS.index(level)
     return COMPLEXITY_LEVELS[min(index + 1, len(COMPLEXITY_LEVELS) - 1)]

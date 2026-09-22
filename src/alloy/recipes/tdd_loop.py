@@ -1,6 +1,6 @@
 """The `tdd-loop` recipe.
 
-    context -> write failing tests -> implement -> verify -> judge -> guard
+    context -> estimate -> write failing tests -> implement -> verify -> judge -> guard
                                          ^                             |
                                          |                    done / retry /
                                          |                  consilium / human / abort
@@ -21,8 +21,10 @@ from typing import Annotated, Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send, interrupt
 
+from alloy.config import RoleSpec
 from alloy.models import (
     Attempt,
+    ComplexityEstimate,
     ContextPacket,
     Critique,
     JudgeDecision,
@@ -51,6 +53,8 @@ class TddState(TypedDict, total=False):
     title: str
 
     context: dict[str, Any]
+    complexity: str
+    complexity_source: str
     test_command: str | None
     baseline: dict[str, Any] | None
 
@@ -120,6 +124,25 @@ Produce a context packet:
 - test_command: the exact shell command this repo uses to run its test suite
 - conventions: naming, structure and style rules an outsider would get wrong
 - risks: things that could make this change break something else
+"""
+
+
+def estimate_prompt(brief: str, acceptance: str, context: dict[str, Any]) -> str:
+    return f"""You are estimating how hard this task is
+You are read-only: do not modify any file. Choose one complexity level:
+- simple: one file, obvious change, tests are the spec
+- medium: a few files or one new concept
+- complex: cross-cutting, concurrency, new subsystem, ambiguous acceptance
+
+{brief}
+
+## Acceptance criteria
+{acceptance or "(none stated)"}
+
+## Repository context
+{_render_context(context)}
+
+Return complexity, reason and confidence in the required structured output.
 """
 
 
@@ -318,6 +341,32 @@ def _evidence_packet(state: TddState, ctx: RunContext, diff: str) -> str:
 # --------------------------------------------------------------------------
 
 
+async def classify(
+    ctx: RunContext,
+    role: str,
+    spec: RoleSpec,
+    prompt: str,
+    *,
+    model_cls,
+    default,
+    iteration: int = 0,
+):
+    """Validate a classifier's answer, returning the supplied default on failure.
+
+    The default's reason records the failure; its identity signals defaulting.
+    """
+    try:
+        result = await ctx.call(
+            role, spec, prompt, schema=model_cls.schema_for_agents(), iteration=iteration
+        )
+        if not result.ok:
+            raise ValueError(result.error or result.summary)
+        return model_cls.model_validate(result.structured)
+    except Exception as exc:
+        default.reason = f"estimator failed: {exc}"
+        return default
+
+
 def build_graph(ctx: RunContext):
     """Compile the tdd-loop graph bound to one task's runtime."""
 
@@ -341,6 +390,30 @@ def build_graph(ctx: RunContext):
             ),
             "stage": "context",
         }
+
+    async def estimate(state: TddState) -> dict[str, Any]:
+        ctx.set_stage("estimate")
+        level = ctx.bead.complexity_override
+        if level is not None:
+            source = "override"
+            reason = "operator override from alloy_complexity"
+        else:
+            default = ComplexityEstimate(complexity="medium")
+            answer = await classify(
+                ctx,
+                "estimate",
+                ctx.recipe.role("estimate"),
+                estimate_prompt(
+                    ctx.bead.task_brief(), ctx.bead.acceptance_criteria, state.get("context", {})
+                ),
+                model_cls=ComplexityEstimate,
+                default=default,
+            )
+            level = answer.complexity
+            source = "default" if answer is default else "estimate"
+            reason = f"{answer.reason} (confidence {answer.confidence:.2f})"
+        ctx.set_complexity(level, source, reason)
+        return {"complexity": level, "complexity_source": source, "stage": "estimate"}
 
     async def write_tests(state: TddState) -> dict[str, Any]:
         ctx.set_stage("tests")
@@ -668,6 +741,7 @@ def build_graph(ctx: RunContext):
 
     graph = StateGraph(TddState)
     graph.add_node("context", gather_context)
+    graph.add_node("estimate", estimate)
     graph.add_node("tests", write_tests)
     graph.add_node("baseline", baseline)
     graph.add_node("implement", implement)
@@ -680,7 +754,8 @@ def build_graph(ctx: RunContext):
     graph.add_node("finish", finish)
 
     graph.add_edge(START, "context")
-    graph.add_edge("context", "tests")
+    graph.add_edge("context", "estimate")
+    graph.add_edge("estimate", "tests")
     graph.add_conditional_edges("tests", route_after_tests, ["baseline", "finish", "human_gate"])
     graph.add_edge("baseline", "implement")
     graph.add_edge("implement", "verify")

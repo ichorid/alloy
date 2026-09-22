@@ -23,6 +23,15 @@ roles:
     runner: cursor-plan          # read-only: gathers understanding, changes nothing
     timeout_minutes: 10
 
+  estimate:
+    runner: jev
+    model: jev-latest
+    timeout_minutes: 5
+    fallback:
+      runner: claude
+      model: sonnet
+      timeout_minutes: 5
+
   tests:
     # Pinned because tests are the spec the judge enforces; composer-2.5 is non-fast.
     runner: cursor

@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from alloy.models import RunnerUnavailable
+from alloy.models import ComplexityEstimate, RunnerUnavailable
 from alloy.runners.jev import JevRunner
 
 SCHEMA = {
@@ -110,3 +110,44 @@ def test_jev_available_from_key_file(tmp_path):
     key_file.write_text("apikey_abc123\n")
     runner = JevRunner(api_key_file=str(key_file))
     assert runner.available()
+
+
+async def test_jev_classifies_complexity_estimate_schema(tmp_path):
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "model": "jev-1.13.0",
+                "answers": {
+                    "complexity": {
+                        "type": "choice",
+                        "choice": "medium",
+                        "confidence": 0.71,
+                        "probabilities": {
+                            "simple": 0.12,
+                            "medium": 0.71,
+                            "complex": 0.17,
+                        },
+                    }
+                },
+                "usage": {"input_tokens": 80, "output_tokens": 3},
+            },
+        )
+
+    schema = ComplexityEstimate.schema_for_agents()
+    runner = _runner(handler, log_dir=tmp_path / "logs")
+    result = await runner.run(
+        "You are estimating how hard this task is",
+        Path("."),
+        structured_schema=schema,
+    )
+
+    assert result.ok
+    assert result.structured["complexity"] == "medium"
+    assert result.structured["confidence"] == 0.71
+    questions = captured["payload"]["questions"]
+    assert list(questions.keys()) == ["complexity"]
+    assert set(questions["complexity"]["criteria"]) == {"simple", "medium", "complex"}

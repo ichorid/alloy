@@ -84,6 +84,17 @@ def test_builtin_recipe_medium_tier_chain(recipe_name):
 
 
 @pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
+def test_builtin_recipe_estimate_role_uses_jev_with_claude_fallback(recipe_name):
+    config = load_recipe(recipe_name)
+    estimate = config.roles["estimate"]
+    assert estimate.runner == "jev"
+    assert estimate.model == "jev-latest"
+    assert estimate.fallback is not None
+    assert estimate.fallback.runner == "claude"
+    assert estimate.fallback.model == "sonnet"
+
+
+@pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
 def test_builtin_recipe_complex_tier_chain(recipe_name):
     config = load_recipe(recipe_name)
     complex_ = config.complexity.tiers["complex"]

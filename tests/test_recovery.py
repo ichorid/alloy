@@ -55,7 +55,9 @@ async def test_an_interrupted_run_resumes_without_repeating_finished_stages(
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(harness.start(), timeout=8)
 
-    assert [call["role"] for call in fake_harnesses.calls] == ["context", "tests", "implement"]
+    assert [call["role"] for call in fake_harnesses.calls] == [
+        "context", "estimate", "tests", "implement"
+    ]
 
     snapshot = read_checkpoint(alloy_home / "workflows.db", harness.thread_id)
     assert snapshot is not None
