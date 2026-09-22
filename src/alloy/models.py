@@ -8,6 +8,7 @@ state stays cheap to checkpoint and cheap to hand to the next agent.
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
@@ -86,6 +87,40 @@ class AgentResult(BaseModel):
         if self.ok:
             return clip(self.text, 600)
         return f"[{self.runner} failed exit={self.exit_code}] {self.error or clip(self.text, 400)}"
+
+
+class BugReport(BaseModel):
+    title: str
+    where: str = ""
+    evidence: str = ""
+    blocks_task: bool | None = None
+    reporter: str = ""
+    iteration: int = 0
+
+
+def extract_bug_reports(text: str) -> list[BugReport]:
+    """Read optional bug blocks without rejecting incomplete role output."""
+    reports = []
+    titles = set()
+    for block in re.findall(r"<bug>(.*?)</bug>", text, re.DOTALL):
+        fields = {}
+        for line in block.splitlines():
+            key, separator, value = line.partition(":")
+            if separator:
+                fields[key.strip().lower()] = value.strip()
+        title = fields.get("title", "")
+        if not title or title in titles:
+            continue
+        titles.add(title)
+        reports.append(BugReport(
+            title=title,
+            where=fields.get("where", ""),
+            evidence=fields.get("evidence", ""),
+            blocks_task={"yes": True, "true": True, "no": False, "false": False}.get(
+                fields.get("blocks_task", "").lower()
+            ),
+        ))
+    return reports
 
 
 class RunnerUnavailable(RuntimeError):
