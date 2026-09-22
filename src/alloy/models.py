@@ -123,6 +123,34 @@ def extract_bug_reports(text: str) -> list[BugReport]:
     return reports
 
 
+BUG_SEVERITIES: tuple[str, ...] = (
+    "not-a-bug", "duplicate", "non-blocking", "blocking", "needs-human",
+)
+BugSeverity = Literal["not-a-bug", "duplicate", "non-blocking", "blocking", "needs-human"]
+
+
+class BugTriage(BaseModel):
+    """The triage role's verdict on one `<bug>` report."""
+
+    severity: BugSeverity
+    reason: str = ""
+    confidence: float = 0.0
+
+    @classmethod
+    def schema_for_agents(cls) -> dict[str, Any]:
+        # `severity` first: Jev classifies on the first enum-valued property.
+        return {
+            "type": "object",
+            "properties": {
+                "severity": {"type": "string", "enum": list(BUG_SEVERITIES)},
+                "reason": {"type": "string"},
+                "confidence": {"type": "number"},
+            },
+            "required": ["severity", "reason", "confidence"],
+            "additionalProperties": False,
+        }
+
+
 class RunnerUnavailable(RuntimeError):
     """The harness CLI is not installed or not authenticated."""
 

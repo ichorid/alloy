@@ -1,9 +1,11 @@
 """The `tdd-loop` recipe.
 
     context -> estimate -> write failing tests -> implement -> verify -> judge -> guard
-                                         ^                             |
-                                         |                    done / retry /
-                                         |                  consilium / human / abort
+                                         ^              |        ^             |
+                                         |          <bug> reports |    done / retry /
+                                         |              v        |  consilium / human / abort
+                                         |            triage ----+
+                                         |         (blocking -> remediate; needs-human -> human gate)
                                          +----- synthesize <- critics (parallel)
 
 Two rules shape everything below:
@@ -22,10 +24,13 @@ from typing import Annotated, Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send, interrupt
 
+from alloy.beads import LABEL_BUG, LABEL_HUMAN, META_DISCOVERED_IN_RUN, META_RECIPE, META_TEST_CMD
 from alloy.config import RoleSpec
 from alloy.models import (
     AgentResult,
     Attempt,
+    BugReport,
+    BugTriage,
     ComplexityEstimate,
     ContextPacket,
     Critique,
@@ -72,6 +77,12 @@ class TddState(TypedDict, total=False):
     change_summary: str
     attempts: Annotated[list[dict[str, Any]], operator.add]
     reported_bugs: Annotated[list[dict[str, Any]], operator.add]
+    triaged_titles: list[str]                 # reports the triage role has labelled
+    filed_bugs: list[dict[str, Any]]          # {bead_id, title, where, severity}
+    implementer_stopped: bool                 # the last implement call reported blocks_task yes
+    blocking_bug: dict[str, Any] | None       # the bug currently routed to remediate
+    remediations: Annotated[list[dict[str, Any]], operator.add]  # {bead_id, outcome}, by remediate
+    triage_route: str | None                  # where the last triage sent the run
     critiques: Annotated[list[dict[str, Any]], reset_or_extend]
     budget_extensions: int
 
@@ -227,6 +238,84 @@ def implement_prompt(
     )
     sections.append(BUG_PROTOCOL)
     return "\n\n".join(sections)
+
+
+def triage_prompt(
+    brief: str,
+    acceptance: str,
+    tests: dict[str, Any] | None,
+    report: dict[str, Any],
+    filed: list[dict[str, Any]],
+    remediations: list[dict[str, Any]],
+    project_context: str | None,
+) -> str:
+    bug = BugReport.model_validate(report)
+    blocks = {True: "yes", False: "no"}.get(bug.blocks_task, "(not stated)")
+    filed_text = "\n".join(
+        f"- {item.get('bead_id') or '(unfiled)'}: {item.get('title', '')} "
+        f"[{item.get('severity', '')}] at {item.get('where') or '?'}"
+        for item in filed
+    ) or "(none yet)"
+    remediation_text = "\n".join(
+        f"- {item.get('bead_id') or '?'}: {item.get('outcome', '')}" for item in remediations
+    ) or "(none yet)"
+    sections = [
+        "You are triaging a bug report from a coding agent. You are read-only: you cannot "
+        "edit code; you only label the report so Alloy can decide what happens next.",
+        brief,
+        f"## Acceptance criteria\n{acceptance or '(none stated)'}",
+        f"## Current test results\n{_render_tests(tests)}",
+        "## The report\n"
+        f"reporter: {bug.reporter or 'unknown'} role, iteration {bug.iteration}\n"
+        f"title: {bug.title}\n"
+        f"where: {bug.where or '(not given)'}\n"
+        f"evidence: {bug.evidence or '(none given)'}\n"
+        f"reporter's opinion, blocks_task: {blocks}",
+        f"## Bugs already filed in this run\n{filed_text}",
+        f"## Remediations already performed in this run\n{remediation_text}",
+    ]
+    if project_context:
+        sections.append(f"## Project context\n{project_context}")
+    sections.append(
+        "Choose exactly one severity:\n"
+        "- \"not-a-bug\"    -- the report is the task itself, the tests it was asked to make "
+        "pass, or a defect that only appears with this task's changes\n"
+        "- \"duplicate\"    -- it matches a bug already filed in this run (listed above)\n"
+        "- \"non-blocking\" -- a real pre-existing defect the task can finish without; "
+        "it is filed for later and stays out of this task's scope\n"
+        "- \"blocking\"     -- a real pre-existing defect the task cannot finish without; "
+        "Alloy fixes it autonomously in its own bead before the task continues\n"
+        "- \"needs-human\"  -- it blocks the task but the fix needs an architectural change "
+        "or a decision outside the task (a schema or public API change, a dependency swap, "
+        "behaviour the acceptance criteria contradict), or the remediations already done in "
+        "this run show remediation is spiralling. This is the operator's carve-out, not the "
+        "default.\n\n"
+        "Weigh the remediations already performed in this run against the progress made: "
+        "there is no fixed cap, but each one spends the task's budget, and a run that keeps "
+        "turning up blocking bugs is better handed to a human. Return severity, reason and "
+        "confidence in the required structured output."
+    )
+    return "\n\n".join(sections)
+
+
+def bug_acceptance(report: BugReport) -> str:
+    return (
+        f"The defect no longer reproduces: {report.evidence or report.title}. "
+        "The existing test suite stays green. The change touches only what this defect "
+        "requires -- no refactors, no API or schema changes."
+    )
+
+
+def bug_description(report: BugReport, verdict: BugTriage, parent_id: str, run_id: str) -> str:
+    return (
+        f"title: {report.title}\n"
+        f"where: {report.where or '(not given)'}\n"
+        f"evidence: {report.evidence or '(none given)'}\n"
+        f"blocks_task (reporter's opinion): {report.blocks_task}\n"
+        f"reported by the {report.reporter or 'unknown'} role in iteration {report.iteration}\n"
+        f"triage: {verdict.severity} (confidence {verdict.confidence:.2f}) -- {verdict.reason}\n"
+        f"parent bead: {parent_id}; run: {run_id}"
+    )
 
 
 def judge_prompt(
@@ -385,8 +474,23 @@ async def classify(
             raise ValueError(result.error or result.summary)
         return model_cls.model_validate(result.structured)
     except Exception as exc:
-        default.reason = f"estimator failed: {exc}"
+        default.reason = f"{role} failed: {exc}"
         return default
+
+
+class TriageFailure:
+    """`classify` default for the triage role: never a severity, so the run
+    can only go to the human gate when triage did not answer."""
+
+    severity = None
+
+    def __init__(self) -> None:
+        self.reason = ""
+
+
+def untriaged(state: TddState) -> list[dict[str, Any]]:
+    done = set(state.get("triaged_titles") or [])
+    return [bug for bug in state.get("reported_bugs", []) if bug["title"] not in done]
 
 
 def build_graph(ctx: RunContext):
@@ -544,13 +648,175 @@ def build_graph(ctx: RunContext):
             ),
             iteration=iteration,
         )
+        reported_bugs = _capture_bugs("implement", result, state, iteration)
         return {
-            "reported_bugs": _capture_bugs("implement", result, state, iteration),
+            "reported_bugs": reported_bugs,
+            "implementer_stopped": any(bug.get("blocks_task") for bug in reported_bugs),
             "iteration": iteration,
             "stage": "implement",
             "instructions": "",
             "implementer": result.runner,
             "change_summary": result.summary,
+        }
+
+    def route_after_implement(state: TddState) -> str:
+        return "triage" if untriaged(state) else "verify"
+
+    def _first_available(spec: RoleSpec) -> RoleSpec | None:
+        """The first entry of the fallback chain whose runner is installed.
+
+        Checked up front so a missing primary (Jev without a key) does not
+        leave a failed ledger row per report; `ctx.call` still falls back
+        on timeouts and non-zero exits."""
+        chain: RoleSpec | None = spec
+        while chain is not None:
+            if ctx.registry.available(chain.runner):
+                return chain
+            chain = chain.fallback
+        return None
+
+    def _park(reason: str, question: str) -> dict[str, Any]:
+        return {
+            "triage_route": "human_gate",
+            "resume_to": "implement",
+            "decision": JudgeDecision(
+                decision="human", reason=reason, next_instructions=question
+            ).model_dump(),
+        }
+
+    def _file_bug(report: BugReport, verdict: BugTriage) -> str:
+        if ctx.beads is None:
+            return "(unfiled)"
+        severity = verdict.severity
+        labels = [LABEL_BUG] + ([LABEL_HUMAN] if severity == "needs-human" else [])
+        metadata = {
+            key: ctx.bead.metadata[key]
+            for key in (META_RECIPE, META_TEST_CMD)
+            if ctx.bead.metadata.get(key)
+        }
+        metadata[META_DISCOVERED_IN_RUN] = ctx.run_id
+        bug_id = ctx.beads.create_bug(
+            title=report.title,
+            description=bug_description(report, verdict, ctx.bead.id, ctx.run_id),
+            acceptance=bug_acceptance(report),
+            discovered_from=ctx.bead.id,
+            priority=3 if severity == "non-blocking" else 1,
+            labels=labels,
+            metadata=metadata,
+            claim=severity == "blocking",
+        )
+        if severity == "needs-human":
+            ctx.beads.add_dependency(ctx.bead.id, bug_id)
+        return bug_id
+
+    async def triage(state: TddState) -> dict[str, Any]:
+        """Label every untriaged `<bug>` report; file what deserves a bead."""
+        iteration = state.get("iteration", 0)
+        ctx.set_stage("triage", iteration=iteration)
+        configured = ctx.recipe.role("triage")
+        triaged = list(state.get("triaged_titles") or [])
+        filed = list(state.get("filed_bugs") or [])
+        remediations = state.get("remediations") or []
+        notes = [state["instructions"]] if state.get("instructions") else []
+        project_context = getattr(ctx, "project_context", None)
+        update: dict[str, Any] = {
+            "stage": "triage", "triaged_titles": triaged, "filed_bugs": filed,
+        }
+        for raw in untriaged(state):
+            report = BugReport.model_validate(raw)
+            where = f"{report.where or '?'}: {report.evidence}"
+            spec = _first_available(configured)
+            if spec is None:
+                return {**update, **_park(
+                    f"no triage runner is available ({configured.label}) for bug report "
+                    f"'{report.title}' at {where}; nothing was filed.",
+                    "Install or configure the triage runner, then resume; the report "
+                    "is triaged before the implementer runs again.",
+                )}
+            failure = TriageFailure()
+            verdict = await classify(
+                ctx, "triage", spec,
+                triage_prompt(
+                    ctx.bead.task_brief(), ctx.bead.acceptance_criteria,
+                    state.get("last_tests"), raw, filed, remediations,
+                    project_context(state) if callable(project_context) else None,
+                ),
+                model_cls=BugTriage, default=failure, iteration=iteration,
+            )
+            if verdict is failure:
+                return {**update, **_park(
+                    f"{failure.reason} while triaging bug report '{report.title}' at {where}; "
+                    "nothing was filed.",
+                    "Decide what to do with the report, then resume.",
+                )}
+            triaged.append(report.title)
+            severity = verdict.severity
+            if severity == "not-a-bug":
+                notes.append(
+                    f"Triage rejected your report '{report.title}': it is part of this task. "
+                    "Continue and make the tests pass."
+                )
+                continue
+            if severity == "duplicate":
+                notes.append(
+                    f"Bug '{report.title}' duplicates a report already filed in this run; "
+                    "proceed with the task."
+                )
+                continue
+            try:
+                bug_id = _file_bug(report, verdict)
+            except Exception as exc:
+                return {**update, **_park(
+                    f"could not file bug '{report.title}' ({severity}) at {where}: {exc}",
+                    "File or dismiss the bug by hand, then resume.",
+                )}
+            entry = {
+                "bead_id": bug_id, "title": report.title, "where": report.where,
+                "severity": severity,
+            }
+            filed.append(entry)
+            if severity == "non-blocking":
+                notes.append(
+                    f"Bug '{report.title}' is filed as {bug_id} and is out of scope: "
+                    "do not fix it here; proceed with the task."
+                )
+                continue
+            if severity == "blocking":
+                return {
+                    **update,
+                    "triage_route": "remediate",
+                    "blocking_bug": {**entry, "reason": verdict.reason},
+                    "instructions": "\n".join(notes),
+                }
+            return {**update, **_park(
+                f"bug '{report.title}' ({bug_id}) needs a human: {verdict.reason}. "
+                f"Bead {ctx.bead.id} is now blocked by {bug_id}.",
+                f"Resolve {bug_id} (see `bd human list`), then resume; the implementer "
+                "runs again with your instructions.",
+            )}
+        return {
+            **update,
+            "triage_route": "implement" if state.get("implementer_stopped") else "verify",
+            "instructions": "\n".join(notes),
+        }
+
+    def route_after_triage(state: TddState) -> str:
+        return state.get("triage_route") or "verify"
+
+    def remediate(state: TddState) -> dict[str, Any]:
+        """Stub: the autonomous fix lands in its own bead. Until then, park."""
+        ctx.set_stage("remediate", iteration=state.get("iteration", 0))
+        bug = state.get("blocking_bug") or {}
+        return {
+            "stage": "remediate",
+            "resume_to": "implement",
+            "decision": JudgeDecision(
+                decision="human",
+                reason=f"blocking bug {bug.get('bead_id')} '{bug.get('title')}' is filed and "
+                "claimed, but autonomous remediation is not built yet.",
+                next_instructions=f"Fix {bug.get('bead_id')} (or merge its fix into this "
+                "branch), then resume; the implementer continues from there.",
+            ).model_dump(),
         }
 
     async def verify(state: TddState) -> dict[str, Any]:
@@ -796,6 +1062,8 @@ def build_graph(ctx: RunContext):
     graph.add_node("tests", write_tests)
     graph.add_node("baseline", baseline)
     graph.add_node("implement", implement)
+    graph.add_node("triage", triage)
+    graph.add_node("remediate", remediate)
     graph.add_node("verify", verify)
     graph.add_node("judge", judge)
     graph.add_node("guard", guard)
@@ -809,7 +1077,11 @@ def build_graph(ctx: RunContext):
     graph.add_edge("estimate", "tests")
     graph.add_conditional_edges("tests", route_after_tests, ["baseline", "finish", "human_gate"])
     graph.add_edge("baseline", "implement")
-    graph.add_edge("implement", "verify")
+    graph.add_conditional_edges("implement", route_after_implement, ["triage", "verify"])
+    graph.add_conditional_edges(
+        "triage", route_after_triage, ["remediate", "human_gate", "implement", "verify"]
+    )
+    graph.add_edge("remediate", "human_gate")
     graph.add_edge("verify", "judge")
     graph.add_edge("judge", "guard")
     graph.add_conditional_edges(
@@ -834,6 +1106,12 @@ def initial_state(ctx: RunContext) -> TddState:
         implementer="",
         attempts=[],
         reported_bugs=[],
+        triaged_titles=[],
+        filed_bugs=[],
+        implementer_stopped=False,
+        blocking_bug=None,
+        remediations=[],
+        triage_route=None,
         critiques=[],
         change_summary="",
         budget_extensions=0,

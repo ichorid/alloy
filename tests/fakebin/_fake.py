@@ -17,6 +17,7 @@ ROLE_MARKERS = [
     ("context", "You are gathering context"),
     ("estimate", "You are estimating how hard this task is"),
     ("tests", "Write failing tests"),
+    ("triage", "You are triaging a bug report"),
     ("implement", "Implement the smallest change"),
     ("judge", "You are judging whether"),
     ("critic", "You are one of several independent critics"),

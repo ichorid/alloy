@@ -68,6 +68,8 @@ class Harness:
         store: Store,
         project: Path,
         alloy_home: Path,
+        beads: Any = None,
+        initial_state_overrides: dict[str, Any] | None = None,
     ) -> None:
         self.bead = bead
         self.recipe_config = config
@@ -75,6 +77,8 @@ class Harness:
         self.store = store
         self.project = Path(project)
         self.alloy_home = Path(alloy_home)
+        self.beads = beads
+        self.initial_state_overrides = initial_state_overrides or {}
         self.thread_id = run_id
         self.worktrees = WorktreeManager(repo=self.project, root=self.alloy_home / "worktrees")
 
@@ -96,14 +100,17 @@ class Harness:
             store=self.store,
             checkpointer=checkpointer,
             log_dir=log_dir,
-            beads=None,
+            beads=self.beads,
         )
 
     async def start(self) -> dict:
         async with open_checkpointer(self.alloy_home / "workflows.db") as checkpointer:
             ctx = self.context(checkpointer)
             graph = tdd_loop.build_graph(ctx)
-            return await graph.ainvoke(tdd_loop.initial_state(ctx), self.config)
+            state = tdd_loop.initial_state(ctx)
+            if self.initial_state_overrides:
+                state = {**state, **self.initial_state_overrides}
+            return await graph.ainvoke(state, self.config)
 
     async def resume(self, payload: Any = None) -> dict:
         async with open_checkpointer(self.alloy_home / "workflows.db") as checkpointer:
@@ -128,6 +135,8 @@ def make_harness(
     config: RecipeConfig | None = None,
     run_id: str | None = None,
     store: Store | None = None,
+    beads: Any = None,
+    initial_state_overrides: dict[str, Any] | None = None,
 ) -> Harness:
     bead = bead or make_bead()
     config = config or load_config()
@@ -145,6 +154,12 @@ def make_harness(
         )
 
     return Harness(
-        bead=bead, config=config, run_id=run_id, store=store,
-        project=project, alloy_home=alloy_home,
+        bead=bead,
+        config=config,
+        run_id=run_id,
+        store=store,
+        project=project,
+        alloy_home=alloy_home,
+        beads=beads,
+        initial_state_overrides=initial_state_overrides,
     )

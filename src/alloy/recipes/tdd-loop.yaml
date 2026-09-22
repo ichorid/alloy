@@ -34,6 +34,16 @@ roles:
       model: sonnet
       timeout_minutes: 5
 
+  triage:
+    # Labels a <bug> report an agent filed mid-run (see AGENTS.md, "Bugs an agent finds").
+    runner: jev
+    model: jev-latest
+    timeout_minutes: 5
+    fallback:
+      runner: claude
+      model: sonnet
+      timeout_minutes: 5
+
   tests:
     # Pinned because tests are the spec the judge enforces; composer-2.5 is non-fast.
     runner: cursor

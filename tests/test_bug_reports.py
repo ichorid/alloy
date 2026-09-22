@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from conftest import implement_entry
+from conftest import implement_entry, triage_entry
 from support import make_harness
 from test_workflow import script
 
@@ -159,7 +159,12 @@ async def test_non_blocking_implement_bug_is_recorded_without_changing_outcome(
         baseline_harness.close()
 
     fake_harnesses.reset_calls()
-    fake_harnesses.configure(script(implement=[_implement_with_trailing_bug()]))
+    fake_harnesses.configure(
+        script(
+            implement=[_implement_with_trailing_bug()],
+            triage=[triage_entry("non-blocking")],
+        )
+    )
 
     bug_harness = make_harness(project, alloy_home)
     try:
