@@ -15,6 +15,7 @@ Two rules shape everything below:
 
 from __future__ import annotations
 
+import logging
 import operator
 from typing import Annotated, Any, TypedDict
 
@@ -23,6 +24,7 @@ from langgraph.types import Send, interrupt
 
 from alloy.config import RoleSpec
 from alloy.models import (
+    AgentResult,
     Attempt,
     ComplexityEstimate,
     ContextPacket,
@@ -31,11 +33,13 @@ from alloy.models import (
     Outcome,
     TestReport,
     clip,
+    extract_bug_reports,
 )
 from alloy.runtime import RunContext
 from alloy.verify import resolve_command
 
 MAX_DIFF_CHARS = 12000
+log = logging.getLogger(__name__)
 
 
 def reset_or_extend(
@@ -67,6 +71,7 @@ class TddState(TypedDict, total=False):
     decision: dict[str, Any] | None
     change_summary: str
     attempts: Annotated[list[dict[str, Any]], operator.add]
+    reported_bugs: Annotated[list[dict[str, Any]], operator.add]
     critiques: Annotated[list[dict[str, Any]], reset_or_extend]
     budget_extensions: int
 
@@ -108,6 +113,13 @@ CONTEXT_SCHEMA = {
     "additionalProperties": False,
 }
 
+BUG_PROTOCOL = """If you discover a defect in existing code outside this task's scope (not the failing tests you were asked to make pass, and not your own change), do not fix it or silently work around it.
+If the defect blocks your task, stop and report it.
+If it does not block your task, finish your work and append the report.
+Use one <bug>...</bug> block per defect, with each field on its own line:
+title: short description; where: file:line; evidence: what you ran or saw.
+blocks_task: yes|no (your opinion; Alloy decides)."""
+
 
 def context_prompt(brief: str, acceptance: str) -> str:
     return f"""You are gathering context for another agent that will implement this task.
@@ -124,6 +136,8 @@ Produce a context packet:
 - test_command: the exact shell command this repo uses to run its test suite
 - conventions: naming, structure and style rules an outsider would get wrong
 - risks: things that could make this change break something else
+
+{BUG_PROTOCOL}
 """
 
 
@@ -166,7 +180,12 @@ Requirements:
   and do not run the whole test suite -- run only the tests you wrote.
 
 When you are done, state in one paragraph which test files you added or changed and what each asserts.
+
+{BUG_PROTOCOL}
 """
+
+
+tests_prompt.__test__ = False  # This prompt helper may be imported by pytest modules.
 
 
 def implement_prompt(
@@ -196,6 +215,8 @@ def implement_prompt(
         "Rules:\n"
         "- Change implementation code, not the tests, unless a test is provably wrong "
         "about the stated acceptance criteria -- and say so explicitly if you do.\n"
+        "- A bug in tests written for THIS task is in scope: use the tests provably "
+        "wrong permission above, not a <bug> block.\n"
         "- Do not disable, skip or loosen assertions to get green.\n"
         "- Keep the change minimal and consistent with the repo's conventions.\n"
         "- Alloy owns task tracking, verification and git: do not run `bd`, do not "
@@ -204,6 +225,7 @@ def implement_prompt(
         "Finish with one paragraph describing what you changed and why, and say "
         "explicitly if you changed any test."
     )
+    sections.append(BUG_PROTOCOL)
     return "\n\n".join(sections)
 
 
@@ -370,6 +392,28 @@ async def classify(
 def build_graph(ctx: RunContext):
     """Compile the tdd-loop graph bound to one task's runtime."""
 
+    def _capture_bugs(
+        role: str, result: AgentResult, state: TddState, iteration: int
+    ) -> list[dict[str, Any]]:
+        titles = {bug["title"] for bug in state.get("reported_bugs", [])}
+        reports = []
+        for bug in extract_bug_reports(result.text):
+            if bug.title in titles:
+                continue
+            bug.reporter = role
+            bug.iteration = iteration
+            reports.append(bug.model_dump())
+            if ctx.beads is not None:
+                try:
+                    ctx.beads.note(
+                        ctx.bead.id,
+                        f"alloy: {role} reported bug '{bug.title}' at {bug.where} "
+                        f"(blocks_task={bug.blocks_task})",
+                    )
+                except Exception:
+                    log.warning("could not record bug on bead %s", ctx.bead.id, exc_info=True)
+        return reports
+
     async def gather_context(state: TddState) -> dict[str, Any]:
         ctx.set_stage("context")
         spec = ctx.recipe.role("context")
@@ -380,8 +424,10 @@ def build_graph(ctx: RunContext):
             schema=CONTEXT_SCHEMA,
             iteration=0,
         )
+        reported_bugs = _capture_bugs("context", result, state, 0)
         packet = _context_from(result)
         return {
+            "reported_bugs": reported_bugs,
             "context": packet.compact(),
             "test_command": resolve_command(
                 ctx.worktree.path,
@@ -426,11 +472,13 @@ def build_graph(ctx: RunContext):
             ),
             iteration=0,
         )
+        reported_bugs = _capture_bugs("tests", result, state, 0)
         if not result.ok:
             # Usually transient (a session limit, an outage): park the run at
             # the human gate with the tests stage as the resume target. Failing
             # the bead outright made a rate limit look like an impossible task.
             return {
+                "reported_bugs": reported_bugs,
                 "stage": "tests",
                 "resume_to": "tests",
                 "decision": JudgeDecision(
@@ -440,7 +488,7 @@ def build_graph(ctx: RunContext):
                     "the tests stage runs again from scratch.",
                 ).model_dump(),
             }
-        return {"stage": "tests", "instructions": ""}
+        return {"stage": "tests", "instructions": "", "reported_bugs": reported_bugs}
 
     def route_after_tests(state: TddState) -> str:
         """A harness that cannot write the tests has nothing for the implementer
@@ -495,6 +543,7 @@ def build_graph(ctx: RunContext):
             iteration=iteration,
         )
         return {
+            "reported_bugs": _capture_bugs("implement", result, state, iteration),
             "iteration": iteration,
             "stage": "implement",
             "instructions": "",
@@ -782,6 +831,7 @@ def initial_state(ctx: RunContext) -> TddState:
         instructions="",
         implementer="",
         attempts=[],
+        reported_bugs=[],
         critiques=[],
         change_summary="",
         budget_extensions=0,
