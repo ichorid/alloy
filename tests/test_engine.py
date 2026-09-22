@@ -6,6 +6,7 @@ import pytest
 
 from alloy import beads as bd
 from alloy.engine import Engine, EngineError
+from support import load_config
 from conftest import (
     bd_create,
     context_entry,
@@ -18,8 +19,10 @@ from conftest import (
 
 
 @pytest.fixture
-def engine(beads_project, alloy_home):
-    return Engine.open(beads_project, alloy_home)
+def engine(beads_project, alloy_home, monkeypatch):
+    engine = Engine.open(beads_project, alloy_home)
+    monkeypatch.setattr(engine, "load_config", lambda name: load_config())
+    return engine
 
 
 def script(**overrides):
@@ -85,14 +88,16 @@ async def test_a_run_is_recorded_with_every_agent_call(
     result = await engine.run(bead_id)
     calls = engine.store.agent_calls(result.run_id)
 
-    assert [call["role"] for call in calls] == ["context", "tests", "implement", "judge"]
+    assert [call["role"] for call in calls] == [
+        "context", "estimate", "tests", "implement", "judge"
+    ]
     for call in calls:
         assert call["prompt_hash"]
         assert call["log_path"]
         assert call["duration_s"] >= 0
     record = engine.store.get_run(result.run_id)
     assert record["status"] == "done"
-    assert record["agent_calls"] == 4
+    assert record["agent_calls"] == 5
 
 
 async def test_failure_marks_the_bead_failed_and_keeps_the_worktree(
@@ -231,7 +236,7 @@ async def test_rerunning_a_cancelled_bead_starts_from_a_clean_graph(
     assert result.run_id != abandoned.run_id
     assert result.outcome == "done"
     assert [call["role"] for call in fake_harnesses.calls] == [
-        "context", "tests", "implement", "judge"
+        "context", "estimate", "tests", "implement", "judge"
     ]
     assert engine.store.get_run(result.run_id)["iteration"] == 1
 

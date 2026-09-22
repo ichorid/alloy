@@ -134,6 +134,20 @@ def context_entry(test_command: str = TEST_COMMAND) -> dict:
     }
 
 
+def estimate_entry(
+    complexity: str = "simple",
+    reason: str = "single-file helper with obvious tests",
+    confidence: float = 0.9,
+) -> dict:
+    return {
+        "structured": {
+            "complexity": complexity,
+            "reason": reason,
+            "confidence": confidence,
+        }
+    }
+
+
 def write_tests_entry() -> dict:
     return {
         "text": "Added tests/test_slugify.py covering the acceptance criteria.",

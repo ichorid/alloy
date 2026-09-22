@@ -92,6 +92,7 @@ TERMINAL_RUN_STATUSES = {RUN_DONE, RUN_FAILED, RUN_CANCELLED}
 # additive: a column is never renamed or dropped here.
 MIGRATIONS: dict[str, dict[str, str]] = {
     "runs": {
+        "complexity": "TEXT",
         "paused_at": "TEXT",                       # set while waiting for a human
         "paused_s": "REAL NOT NULL DEFAULT 0",     # total time spent paused
     },

@@ -15,6 +15,7 @@ from pathlib import Path
 
 ROLE_MARKERS = [
     ("context", "You are gathering context"),
+    ("estimate", "You are estimating how hard this task is"),
     ("tests", "Write failing tests"),
     ("implement", "Implement the smallest change"),
     ("judge", "You are judging whether"),

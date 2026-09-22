@@ -24,6 +24,17 @@ BASE_RECIPE = Path(__file__).parents[1] / "src" / "alloy" / "recipes" / "tdd-loo
 def load_config(**overrides: Any) -> RecipeConfig:
     raw = yaml.safe_load(BASE_RECIPE.read_text())
     config = RecipeConfig.parse(raw, source=BASE_RECIPE)
+    roles = dict(config.roles)
+    if "estimate" in roles:
+        # No jev fake on PATH; exercise estimate through the claude harness.
+        est = roles["estimate"]
+        roles["estimate"] = replace(
+            est,
+            runner="claude",
+            model=est.model,
+            fallback=None,
+        )
+        config = replace(config, roles=roles)
     return replace(config, **overrides) if overrides else config
 
 

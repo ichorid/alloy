@@ -16,7 +16,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from alloy.beads import BeadsClient, Bead, META_STAGE
+from alloy.beads import BeadsClient, Bead, META_COMPLEXITY_ESTIMATED, META_STAGE
 from alloy.config import RecipeConfig, RoleSpec
 from alloy.models import AgentResult, RunnerUnavailable, TestReport, utcnow
 from alloy.runners import RunnerRegistry
@@ -240,6 +240,16 @@ class RunContext:
 
     def set_tests_summary(self, summary: str) -> None:
         self.store.update_run(self.run_id, tests_summary=summary)
+
+    def set_complexity(self, level: str, source: str, reason: str) -> None:
+        self.store.update_run(self.run_id, complexity=level)
+        if self.beads is not None:
+            try:
+                if source == "estimate":
+                    self.beads.set_metadata(self.bead.id, {META_COMPLEXITY_ESTIMATED: level})
+                self.beads.note(self.bead.id, f"Complexity: {level} ({source}). {reason}")
+            except Exception:
+                log.warning("could not record complexity on bead %s", self.bead.id, exc_info=True)
 
     def set_consiliums(self, count: int) -> None:
         self.store.update_run(self.run_id, consiliums=count)
