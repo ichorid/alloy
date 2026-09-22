@@ -14,7 +14,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from alloy.beads import BeadsClient, Bead, META_COMPLEXITY_ESTIMATED, META_STAGE
 from alloy.config import RecipeConfig, RoleSpec
@@ -41,6 +41,8 @@ class RunContext:
     checkpointer: Any
     log_dir: Path
     beads: BeadsClient | None = None
+    # Bound by the engine (Engine.run_child); recipes never import the engine.
+    remediator: Callable[[str], Awaitable[Any]] | None = None
     started_monotonic: float = field(default_factory=time.monotonic)
     _stage: str = "starting"
     _iteration: int = 0
@@ -128,6 +130,14 @@ class RunContext:
         )
         return result
 
+    # -- remediation ------------------------------------------------------
+
+    async def remediate(self, bug_bead_id: str) -> Any:
+        """Run a bug bead as a child of this run and merge its fix in here."""
+        if self.remediator is None:
+            raise RuntimeError("no remediator bound")
+        return await self.remediator(bug_bead_id)
+
     # -- deterministic work -----------------------------------------------
 
     async def verify(self, command: str) -> TestReport:
@@ -181,7 +191,7 @@ class RunContext:
         if consiliums > limits.max_consiliums * multiplier:
             return f"max_consiliums reached ({consiliums}/{limits.max_consiliums * multiplier})"
 
-        calls = self.store.call_count(self.run_id)
+        calls = self.store.call_count(self.run_id, include_children=True)
         allowed_calls = limits.max_agent_calls * multiplier
         if calls >= allowed_calls:
             return f"max_agent_calls reached ({calls}/{allowed_calls})"
@@ -217,7 +227,7 @@ class RunContext:
         return (
             f"{limits.max_iterations * multiplier} iterations allowed, "
             f"{limits.max_consiliums * multiplier} consilium(s) allowed, "
-            f"{self.store.call_count(self.run_id)}/"
+            f"{self.store.call_count(self.run_id, include_children=True)}/"
             f"{limits.max_agent_calls * multiplier} agent calls used, "
             f"{self.elapsed().total_seconds() / 60:.0f}m of "
             f"{limits.max_wall_time_minutes * multiplier:.0f}m elapsed"

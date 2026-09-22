@@ -29,6 +29,12 @@ class Worktree:
         return (self.path / ".git").exists()
 
 
+@dataclass(frozen=True)
+class MergeResult:
+    ok: bool
+    conflict_files: list[str]
+
+
 def branch_name(bead_id: str) -> str:
     return f"{BRANCH_PREFIX}/{bead_id}"
 
@@ -75,6 +81,11 @@ class WorktreeManager:
             _git(["worktree", "add", "-b", branch, str(path), base_commit], self.repo)
         return Worktree(bead_id, path, branch, base_commit)
 
+    def ensure_from(self, bead_id: str, base_commit: str) -> Worktree:
+        """A worktree cut from a specific commit rather than the repo's HEAD --
+        a remediation child starts from its parent's base, not its parent's work."""
+        return self.ensure(bead_id, base=base_commit)
+
     def remove(self, bead_id: str, *, force: bool = False, delete_branch: bool = False) -> bool:
         path = self.path_for(bead_id)
         if not path.exists():
@@ -110,6 +121,50 @@ class WorktreeManager:
 
     def has_changes(self, worktree: Worktree) -> bool:
         return bool(self.changed_files(worktree))
+
+    def changed_paths(
+        self, worktree: Worktree, since_commit: str, *,
+        until: str | None = None, paths: list[str] | None = None,
+    ) -> list[str]:
+        """Paths that differ between `since_commit` and the working tree (or
+        `until`), optionally restricted to `paths`."""
+        args = ["diff", "--name-only", since_commit]
+        if until:
+            args.append(until)
+        if paths:
+            args += ["--", *paths]
+        proc = _git(args, worktree.path, check=False)
+        return [line for line in proc.stdout.splitlines() if line.strip()]
+
+    def added_paths(self, commit: str) -> list[str]:
+        """Paths the commit introduced (relative to its parent)."""
+        proc = _git(
+            ["diff-tree", "--no-commit-id", "--name-only", "-r", "--root",
+             "--diff-filter=A", commit],
+            self.repo, check=False,
+        )
+        return [line for line in proc.stdout.splitlines() if line.strip()]
+
+    # -- commits and merges -----------------------------------------------
+
+    def commit_wip(self, worktree: Worktree, message: str) -> str | None:
+        """Commit everything in the working tree; None when there is nothing to commit."""
+        _git(["add", "-A"], worktree.path)
+        if _git(["diff", "--cached", "--quiet"], worktree.path, check=False).returncode == 0:
+            return None
+        _git(["commit", "-q", "--no-verify", "-m", message], worktree.path)
+        return self._head(worktree.path)
+
+    def merge_branch(self, worktree: Worktree, branch: str) -> MergeResult:
+        """Merge `branch` into the worktree's branch; on conflict, abort and
+        leave the tree exactly where it was."""
+        proc = _git(["merge", "--no-edit", branch], worktree.path, check=False)
+        if proc.returncode == 0:
+            return MergeResult(True, [])
+        conflicts = _git(["diff", "--name-only", "--diff-filter=U"], worktree.path, check=False)
+        _git(["merge", "--abort"], worktree.path, check=False)
+        files = [line for line in conflicts.stdout.splitlines() if line.strip()]
+        return MergeResult(False, files)
 
     # -- internals --------------------------------------------------------
 
