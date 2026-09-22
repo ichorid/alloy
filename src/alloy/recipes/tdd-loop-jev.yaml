@@ -14,19 +14,21 @@ complexity:
   routing: shadow  # shadow keeps role runners; live selects tiers for tiered roles
   escalate_after_retries: 2
   # A tier is a priority-ordered runner list: the first is primary, the rest fallbacks.
+  # `effort` is per entry (claude --effort, codex model_reasoning_effort); cursor has
+  # no effort knob and encodes it in the model id (kimi-k3-high).
   tiers:
     simple:
       - {runner: cursor, model: composer-2.5}
       - {runner: codex, model: gpt-5.6-luna}
-      - {runner: claude-write, model: haiku}
+      - {runner: claude-write, model: haiku, effort: low}
     medium:
-      - {runner: claude-write, model: sonnet}
       - {runner: cursor, model: composer-2.5}
+      - {runner: codex, model: gpt-5.6-terra, effort: high}
+      - {runner: claude-write, model: sonnet, effort: high}
     complex:
-      - {runner: astra}
-      - {runner: claude-write, model: fable}
       - {runner: cursor, model: kimi-k3-high}
       - {runner: claude-write, model: opus}
+      - {runner: astra}
 
 roles:
   context:

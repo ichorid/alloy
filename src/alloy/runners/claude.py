@@ -19,11 +19,18 @@ class ClaudeRunner(CLIRunner):
     supports_native_schema = True
 
     def build_command(
-        self, prompt: str, *, model: str | None, structured_schema: dict | None
+        self,
+        prompt: str,
+        *,
+        model: str | None,
+        structured_schema: dict | None,
+        effort: str | None = None,
     ) -> list[str]:
         args = ["-p", prompt, "--output-format", "json"]
         if model:
             args += ["--model", model]
+        if effort:
+            args += ["--effort", effort]
         if structured_schema:
             args += ["--json-schema", json.dumps(structured_schema)]
         args += self.extra_args
@@ -57,7 +64,7 @@ class ClaudeWriteRunner(ClaudeRunner):
 
     name = "claude-write"
 
-    def build_command(self, prompt, *, model, structured_schema):
+    def build_command(self, prompt, *, model, structured_schema, effort=None):
         return ["--permission-mode", "bypassPermissions", *super().build_command(
-            prompt, model=model, structured_schema=structured_schema
+            prompt, model=model, structured_schema=structured_schema, effort=effort
         )]
