@@ -19,10 +19,11 @@ from conftest import (
     critic_entry,
     implement_entry,
     judge_entry,
+    scope_entry,
     synthesize_entry,
     write_tests_entry,
 )
-from support import load_config
+from support import load_config, scope_config
 
 
 @pytest.fixture
@@ -333,6 +334,106 @@ async def test_run_child_agent_calls_roll_up_into_parent_check_limits(
     breach = parent_ctx.check_limits({"iteration": 0, "consiliums": 0})
     assert breach is not None
     assert "max_agent_calls reached" in breach
+
+
+async def test_run_child_scope_merge_proceeds_when_gate_accepts(
+    engine, beads_project, fake_harnesses,
+):
+    from alloy.recipes.tdd_loop import scope_merge_gate
+
+    parent_id, parent_run_id, parent_wt, _ = await _paused_parent_with_wip(
+        engine, beads_project, fake_harnesses,
+    )
+    bug_id = bd_create(beads_project, "scoped fix", alloy_recipe="tdd-loop")
+    engine.beads.claim(bug_id)
+
+    fake_harnesses.reset_calls()
+    fake_harnesses.configure({
+        **_bug_script(),
+        "scope": scope_entry("merge", "minimal auth fix"),
+    })
+
+    async with open_checkpointer(engine.paths.workflows_db) as checkpointer:
+        parent_ctx = await _parent_context(engine, parent_id, parent_run_id, checkpointer)
+        parent_ctx.recipe = scope_config()
+
+        async def merge_gate(bug, diff: str):
+            return await scope_merge_gate(parent_ctx, bug, diff)
+
+        child_result = await engine.run_child(
+            bug_id, parent=parent_ctx, merge_gate=merge_gate,
+        )
+
+    assert child_result.outcome == "done"
+    assert len(fake_harnesses.calls_for("scope")) == 1
+    assert "slugify" in (parent_wt / "mypkg" / "__init__.py").read_text(encoding="utf-8")
+    assert _porcelain(parent_wt) == ""
+    child_tip = _git(beads_project, "rev-parse", branch_name(bug_id)).stdout.strip()
+    parent_head = _git(parent_wt, "rev-parse", "HEAD").stdout.strip()
+    assert _is_ancestor(child_tip, parent_head, cwd=parent_wt)
+
+
+async def test_run_child_scope_too_broad_aborts_without_merge(
+    engine, beads_project, fake_harnesses,
+):
+    from alloy.recipes.tdd_loop import scope_merge_gate
+
+    parent_id, parent_run_id, parent_wt, _ = await _paused_parent_with_wip(
+        engine, beads_project, fake_harnesses,
+    )
+    bug_id = bd_create(beads_project, "too broad fix", alloy_recipe="tdd-loop")
+    engine.beads.claim(bug_id)
+
+    reason = "rewrites the storage layer"
+    fake_harnesses.reset_calls()
+    fake_harnesses.configure({
+        **_bug_script(),
+        "scope": scope_entry("too-broad", reason),
+    })
+
+    async with open_checkpointer(engine.paths.workflows_db) as checkpointer:
+        parent_ctx = await _parent_context(engine, parent_id, parent_run_id, checkpointer)
+        parent_ctx.recipe = scope_config()
+
+        async def merge_gate(bug, diff: str):
+            return await scope_merge_gate(parent_ctx, bug, diff)
+
+        result = await engine.run_child(bug_id, parent=parent_ctx, merge_gate=merge_gate)
+
+    assert result.outcome == "failed"
+    assert "too-broad" in result.reason
+    assert reason in result.reason
+    assert _porcelain(parent_wt) == ""
+    assert "Merge" not in _git(parent_wt, "log", "--oneline", "-3").stdout
+
+
+async def test_run_child_scope_runner_missing_fails_without_merge(
+    engine, beads_project, fake_harnesses,
+):
+    from alloy.recipes.tdd_loop import scope_merge_gate
+
+    parent_id, parent_run_id, parent_wt, _ = await _paused_parent_with_wip(
+        engine, beads_project, fake_harnesses,
+    )
+    bug_id = bd_create(beads_project, "unscoped fix", alloy_recipe="tdd-loop")
+    engine.beads.claim(bug_id)
+
+    fake_harnesses.reset_calls()
+    fake_harnesses.configure(_bug_script())
+
+    async with open_checkpointer(engine.paths.workflows_db) as checkpointer:
+        parent_ctx = await _parent_context(engine, parent_id, parent_run_id, checkpointer)
+        parent_ctx.recipe = scope_config(runner="missing-scope-runner", fallback=None)
+
+        async def merge_gate(bug, diff: str):
+            return await scope_merge_gate(parent_ctx, bug, diff)
+
+        result = await engine.run_child(bug_id, parent=parent_ctx, merge_gate=merge_gate)
+
+    assert result.outcome == "failed"
+    assert "scope role failed" in result.reason
+    assert _porcelain(parent_wt) == ""
+    assert "Merge" not in _git(parent_wt, "log", "--oneline", "-3").stdout
 
 
 async def test_run_child_refuses_when_parent_run_is_already_a_child(

@@ -18,7 +18,8 @@ from typing import Any, Awaitable, Callable, Mapping
 
 from alloy.beads import BeadsClient, Bead, META_COMPLEXITY_ESTIMATED, META_STAGE
 from alloy.config import RecipeConfig, RoleSpec
-from alloy.models import AgentResult, RunnerUnavailable, TestReport, utcnow
+from alloy.models import AgentResult, ProjectSnapshot, RunnerUnavailable, TestReport, utcnow
+from alloy.paths import project_brief
 from alloy.runners import RunnerRegistry
 from alloy.store import Store
 from alloy.verify import run_tests
@@ -139,6 +140,35 @@ class RunContext:
         if self.remediator is None:
             raise RuntimeError("no remediator bound")
         return await self.remediator(bug_bead_id)
+
+    # -- project context --------------------------------------------------
+
+    def project_context(self, state: Mapping[str, Any] | None = None) -> str:
+        """The project context packet for the scope and triage roles.
+
+        Rebuilt on every call because the bead graph moves while a run is
+        paused; `state` (the graph state, when the caller has it) supplies the
+        attempt history and remediations of this run."""
+        from alloy.recipes.tdd_loop import render_project_context
+
+        snapshot = ProjectSnapshot()
+        if self.beads is not None:
+            try:
+                snapshot = self.beads.project_snapshot(self.bead.id)
+            except Exception:
+                log.warning("project snapshot for %s failed", self.bead.id, exc_info=True)
+        state = state or {}
+        iteration = state.get("iteration")
+        if iteration is None:
+            record = self.store.get_run(self.run_id)
+            iteration = record.get("iteration") if record else None
+        return render_project_context(
+            snapshot,
+            project_brief(self.worktrees.repo),
+            list(state.get("attempts") or []),
+            list(state.get("remediations") or []),
+            iteration=iteration,
+        )
 
     # -- deterministic work -----------------------------------------------
 

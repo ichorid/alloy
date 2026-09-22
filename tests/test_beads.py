@@ -267,6 +267,79 @@ def test_create_bug_rejects_priority_zero_without_creating_a_bead(client, beads_
     assert set(_bug_ids(client)) == before
 
 
+def _create_epic(client: BeadsClient, title: str, description: str) -> str:
+    proc = client._run(["create", title, "-t", "epic", "-d", description, "--silent"])
+    return proc.stdout.strip().splitlines()[-1]
+
+
+def _create_child(client: BeadsClient, title: str, parent_id: str) -> str:
+    proc = client._run(["create", title, "--parent", parent_id, "--silent"])
+    return proc.stdout.strip().splitlines()[-1]
+
+
+@pytest.fixture
+def snapshot_graph(client, beads_project):
+    """Epic with two open children, one implementing child, and one alloy-bug."""
+    epic_id = _create_epic(client, "OAuth login", "Ship OAuth for the API")
+    open_a = _create_child(client, "add token endpoint", epic_id)
+    open_b = _create_child(client, "wire callback route", epic_id)
+    implementing = _create_child(client, "session middleware", epic_id)
+    client.set_status(implementing, bd.STATUS_IMPLEMENTING)
+    parent_for_bug = bd_create(beads_project, "running parent", alloy_recipe="tdd-loop")
+    bug_id = client.create_bug(
+        title="stale refresh token",
+        description="tokens never rotate",
+        acceptance="refresh rotates tokens",
+        discovered_from=parent_for_bug,
+        priority=3,
+        labels=[bd.LABEL_BUG],
+        metadata={bd.META_RECIPE: "tdd-loop", bd.META_DISCOVERED_IN_RUN: "run-snap"},
+    )
+    return {
+        "epic_id": epic_id,
+        "child_id": open_a,
+        "open_a": open_a,
+        "open_b": open_b,
+        "implementing": implementing,
+        "bug_id": bug_id,
+    }
+
+
+def test_project_snapshot_lists_epic_open_implementing_and_filed_bugs(
+    client, snapshot_graph,
+):
+    snapshot = client.project_snapshot(snapshot_graph["child_id"])
+
+    assert "OAuth login" in snapshot.epic
+    assert "Ship OAuth for the API" in snapshot.epic
+
+    open_text = "\n".join(snapshot.open_beads)
+    assert f"{snapshot_graph['open_a']}" in open_text
+    assert "add token endpoint" in open_text
+    assert f"{snapshot_graph['open_b']}" in open_text
+    assert "wire callback route" in open_text
+    assert f"{snapshot_graph['implementing']}" in open_text
+    assert "session middleware" in open_text
+
+    filed_text = "\n".join(snapshot.filed_bugs)
+    assert snapshot_graph["bug_id"] in filed_text
+    assert "stale refresh token" in filed_text
+
+    assert snapshot.stats.get("open_issues", 0) >= 1
+    assert "closed_issues" in snapshot.stats
+
+
+def test_project_snapshot_degrades_gracefully_when_bd_missing(beads_project):
+    client = BeadsClient(repo=beads_project, binary="/nonexistent/bd")
+
+    snapshot = client.project_snapshot("t-1")
+
+    assert snapshot.open_beads == []
+    assert snapshot.epic == ""
+    assert snapshot.filed_bugs == []
+    assert snapshot.stats == {}
+
+
 def test_create_bug_invalid_priority_string_raises_beads_error(client, beads_project):
     parent_id = bd_create(beads_project, "parent", alloy_recipe="tdd-loop")
 

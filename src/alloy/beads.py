@@ -9,6 +9,7 @@ branch, stage).
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,7 +17,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from alloy.models import COMPLEXITY_LEVELS, Complexity
+from alloy.models import COMPLEXITY_LEVELS, Complexity, ProjectSnapshot
+from alloy.paths import project_brief_source
+
+log = logging.getLogger(__name__)
 
 BD_BINARY = "bd"
 
@@ -167,6 +171,68 @@ class BeadsClient:
                            "--has-metadata-key", META_RECIPE])
         return [Bead.model_validate(row) for row in rows]
 
+    # -- project context --------------------------------------------------
+
+    def project_snapshot(self, bead_id: str, *, limit: int = 60) -> ProjectSnapshot:
+        """The bead graph around `bead_id`, rendered for the scope and triage roles.
+
+        Every `bd` failure (missing binary, unknown bead, no epic) degrades to
+        an empty section: the packet informs a judgement, it never blocks one.
+        """
+        snapshot = ProjectSnapshot(brief_source=project_brief_source(self.repo) or "")
+
+        rows: list[dict[str, Any]] = []
+        for status in (STATUS_READY, STATUS_IMPLEMENTING):
+            try:
+                rows += self._json(["list", "--status", status, "--limit", "0", "--flat"])
+            except Exception:
+                log.debug("project_snapshot: bd list --status %s failed", status, exc_info=True)
+        snapshot.open_beads = [_render_bead_line(row) for row in rows[:limit]]
+
+        try:
+            snapshot.epic = self._epic_for(bead_id)
+        except Exception:
+            log.debug("project_snapshot: epic lookup for %s failed", bead_id, exc_info=True)
+
+        try:
+            bugs = self._json(["list", "--all", "--label", LABEL_BUG, "--limit", "0", "--flat"])
+            snapshot.filed_bugs = [_render_bead_line(row) for row in bugs[:limit]]
+        except Exception:
+            log.debug("project_snapshot: bd list --label %s failed", LABEL_BUG, exc_info=True)
+
+        try:
+            payload = self._json(["stats"])
+            summary = payload[0].get("summary") if payload else None
+            snapshot.stats = dict(summary if isinstance(summary, dict) else (payload[0] if payload else {}))
+        except Exception:
+            log.debug("project_snapshot: bd stats failed", exc_info=True)
+        return snapshot
+
+    def _epic_for(self, bead_id: str, *, max_depth: int = 3) -> str:
+        """Walk parent-child edges up from `bead_id` to the nearest epic
+        (or the top-most parent when no ancestor is an epic)."""
+        current = bead_id
+        epic: dict[str, Any] | None = None
+        for _ in range(max_depth):
+            rows = self._json(["show", current])
+            if not rows:
+                break
+            parent_id = _parent_id(rows[0])
+            if not parent_id:
+                break
+            parent_rows = self._json(["show", parent_id])
+            if not parent_rows:
+                break
+            epic = parent_rows[0]
+            if epic.get("issue_type") == "epic":
+                break
+            current = parent_id
+        if epic is None:
+            return ""
+        text = f"{epic.get('id', '')}: {epic.get('title', '')} [{epic.get('status', '')}]"
+        description = str(epic.get("description") or "").strip()
+        return f"{text}\n{description}" if description else text
+
     # -- writes -----------------------------------------------------------
 
     def ensure_statuses(self) -> None:
@@ -270,6 +336,25 @@ class BeadsClient:
     def add_dependency(self, bead_id: str, depends_on_id: str) -> None:
         """Make `bead_id` blocked by `depends_on_id` (bd's default `blocks` edge)."""
         self._run(["dep", "add", bead_id, depends_on_id])
+
+
+def _parent_id(row: dict[str, Any]) -> str | None:
+    """`bd show --json` exposes the parent both as a field and as a
+    `parent-child` dependency; accept either."""
+    parent = row.get("parent")
+    if parent:
+        return str(parent)
+    for dep in row.get("dependencies") or []:
+        if isinstance(dep, dict) and dep.get("dependency_type") == "parent-child":
+            return str(dep.get("id") or dep.get("depends_on_id") or "") or None
+    return None
+
+
+def _render_bead_line(row: dict[str, Any]) -> str:
+    return (
+        f"{row.get('id', '?')} [{row.get('issue_type', 'task')} "
+        f"P{row.get('priority', '?')} {row.get('status', '')}] {row.get('title', '')}"
+    )
 
 
 def _first_json_value(stdout: str) -> Any:

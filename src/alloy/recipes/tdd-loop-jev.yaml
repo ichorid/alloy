@@ -54,6 +54,17 @@ roles:
       model: sonnet
       timeout_minutes: 5
 
+  scope:
+    # Decides whether a remediation child's fix may merge into its parent
+    # (merge / too-broad / subverts-task), judged from the project context packet.
+    runner: jev
+    model: jev-latest
+    timeout_minutes: 5
+    fallback:
+      runner: claude
+      model: sonnet
+      timeout_minutes: 5
+
   tests:
     # Pinned because tests are the spec the judge enforces; composer-2.5 is non-fast.
     runner: cursor

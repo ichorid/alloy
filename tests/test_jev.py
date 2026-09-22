@@ -151,3 +151,48 @@ async def test_jev_classifies_complexity_estimate_schema(tmp_path):
     questions = captured["payload"]["questions"]
     assert list(questions.keys()) == ["complexity"]
     assert set(questions["complexity"]["criteria"]) == {"simple", "medium", "complex"}
+
+
+async def test_jev_classifies_scope_verdict_schema(tmp_path):
+    from alloy.models import ScopeVerdict
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "model": "jev-1.13.0",
+                "answers": {
+                    "verdict": {
+                        "type": "choice",
+                        "choice": "merge",
+                        "confidence": 0.88,
+                        "probabilities": {
+                            "merge": 0.88,
+                            "too-broad": 0.07,
+                            "subverts-task": 0.05,
+                        },
+                    }
+                },
+                "usage": {"input_tokens": 90, "output_tokens": 3},
+            },
+        )
+
+    schema = ScopeVerdict.schema_for_agents()
+    runner = _runner(handler, log_dir=tmp_path / "logs")
+    result = await runner.run(
+        "You are deciding whether a bug fix is safe to merge",
+        Path("."),
+        structured_schema=schema,
+    )
+
+    assert result.ok
+    assert result.structured["verdict"] == "merge"
+    assert result.structured["confidence"] == 0.88
+    questions = captured["payload"]["questions"]
+    assert list(questions.keys()) == ["verdict"]
+    assert set(questions["verdict"]["criteria"]) == {
+        "merge", "too-broad", "subverts-task",
+    }

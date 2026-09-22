@@ -36,6 +36,8 @@ from alloy.models import (
     Critique,
     JudgeDecision,
     Outcome,
+    ProjectSnapshot,
+    ScopeVerdict,
     TestReport,
     clip,
     extract_bug_reports,
@@ -44,6 +46,8 @@ from alloy.runtime import RunContext
 from alloy.verify import resolve_command
 
 MAX_DIFF_CHARS = 12000
+PROJECT_CONTEXT_CHARS = 6000
+"""Hard cap on the project context packet handed to the scope and triage roles."""
 log = logging.getLogger(__name__)
 
 
@@ -296,6 +300,124 @@ def triage_prompt(
         "confidence in the required structured output."
     )
     return "\n\n".join(sections)
+
+
+def render_project_context(
+    snapshot: ProjectSnapshot,
+    brief: str,
+    run_history: list[Any],
+    remediations: list[dict[str, Any]],
+    *,
+    iteration: int | None = None,
+) -> str:
+    """The project context packet: brief, bead graph, progress -- clipped to a
+    fixed size so the scope role sees the whole project, never a transcript."""
+    history_text = "\n".join(
+        item if isinstance(item, str) else Attempt.model_validate(item).render()
+        for item in run_history
+    ) or "(none)"
+    remediation_text = "\n".join(
+        f"- {item.get('bead_id') or '?'}: {item.get('outcome', '')}" for item in remediations
+    ) or "(none yet)"
+    stats_text = ", ".join(f"{key}={value}" for key, value in snapshot.stats.items()) or "(unknown)"
+    progress = [f"stats: {stats_text}"]
+    if iteration is not None:
+        progress.append(f"parent run iteration: {iteration}")
+    sections = [
+        f"## Project brief ({snapshot.brief_source or 'none'})\n{brief or '(no project brief)'}",
+        "## Bead graph\n"
+        f"### Epic\n{snapshot.epic or '(no parent epic)'}\n\n"
+        f"### Open and in-progress beads\n{chr(10).join(snapshot.open_beads) or '(none)'}\n\n"
+        f"### Bugs Alloy has filed\n{chr(10).join(snapshot.filed_bugs) or '(none)'}",
+        "## Progress\n"
+        f"{chr(10).join(progress)}\n\n"
+        f"### Parent run attempt history\n{history_text}\n\n"
+        f"### Remediations already performed in this run\n{remediation_text}",
+    ]
+    text = "\n\n".join(sections)
+    # `clip` adds its elision marker on top of the budget; the packet's cap is hard.
+    budget = PROJECT_CONTEXT_CHARS
+    clipped = clip(text, budget)
+    while len(clipped) > PROJECT_CONTEXT_CHARS and budget > 0:
+        budget -= len(clipped) - PROJECT_CONTEXT_CHARS
+        clipped = clip(text, budget)
+    return clipped
+
+
+def scope_prompt(
+    project_context: str,
+    parent_brief: str,
+    parent_acceptance: str,
+    bug_brief: str,
+    diffstat: str,
+    diff: str,
+) -> str:
+    return "\n\n".join([
+        "You are deciding whether a bug fix is safe to merge into a paused task. You are "
+        "read-only: you cannot edit code; you only label the fix so Alloy can decide "
+        "whether it lands.",
+        f"## Project context\n{project_context}",
+        f"## The paused task (parent)\n{parent_brief}",
+        f"## Parent acceptance criteria\n{parent_acceptance or '(none stated)'}",
+        f"## The bug being fixed\n{bug_brief}",
+        f"## Diffstat\n{diffstat}",
+        f"## The fix\n```diff\n{clip(diff, MAX_DIFF_CHARS)}\n```",
+        "Choose exactly one verdict:\n"
+        "- \"merge\"         -- the change is what this defect requires and nothing more; "
+        "it fits what the project brief and bead graph say the project is doing\n"
+        "- \"too-broad\"     -- an architecture-sized change for a bug fix: new subsystems, "
+        "public API or schema changes, broad refactors, dependency swaps, or work that "
+        "belongs to another open bead; judge this against the project brief and the bead "
+        "graph, not against a file count\n"
+        "- \"subverts-task\" -- it changes behaviour the parent's acceptance criteria rely "
+        "on, so the paused task would pass or fail for the wrong reason\n\n"
+        "Return verdict, reason and confidence in the required structured output.",
+    ])
+
+
+def _diffstat(diff: str) -> str:
+    files = insertions = deletions = 0
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            files += 1
+        elif line.startswith("+") and not line.startswith("+++"):
+            insertions += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            deletions += 1
+    return f"{files} files changed, {insertions} insertions(+), {deletions} deletions(-)"
+
+
+async def scope_gate(ctx: RunContext, bug_bead: Any, diff: str) -> ScopeVerdict:
+    """Ask the scope role whether `diff` (a remediation child's fix) may merge
+    into `ctx`'s task. Never `merge` by default: an unverifiable merge into a
+    paused task is blind, so every failure reads as too-broad."""
+    default = ScopeVerdict(verdict="too-broad")
+    try:
+        spec = ctx.recipe.role("scope")
+        prompt = scope_prompt(
+            ctx.project_context(),
+            ctx.bead.task_brief(),
+            ctx.bead.acceptance_criteria,
+            bug_bead.task_brief(),
+            _diffstat(diff),
+            diff,
+        )
+    except Exception as exc:
+        default.reason = f"scope role failed: {exc}"
+        return default
+    verdict = await classify(ctx, "scope", spec, prompt, model_cls=ScopeVerdict, default=default)
+    if verdict is default:
+        default.reason = f"scope role failed: {default.reason.removeprefix('scope failed: ')}"
+    return verdict
+
+
+async def scope_merge_gate(ctx: RunContext, bug_bead: Any, diff: str) -> tuple[bool, str]:
+    """`Engine.MergeGate` adapter: only `merge` proceeds; every other label is
+    returned with the label so the parent's note says why the fix stayed out."""
+    verdict = await scope_gate(ctx, bug_bead, diff)
+    if verdict.verdict == "merge":
+        return True, verdict.reason
+    return False, f"{verdict.verdict}: {verdict.reason}"
 
 
 def bug_acceptance(report: BugReport) -> str:
