@@ -572,3 +572,55 @@ def test_opening_store_against_an_inflight_calls_table_without_pid_adds_the_colu
     store.set_call_pid("call-1", 4242)
 
     assert store.active_calls("r1")[0]["pid"] == 4242
+
+
+# -- alloy-0uc.8: parent/child run linkage ---------------------------------
+
+
+def test_runs_table_has_parent_run_id_column(store: Store):
+    with store.connect() as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(runs)")}
+    assert "parent_run_id" in columns
+
+
+def test_children_of_lists_direct_child_runs(store: Store):
+    _make_run(store, "parent")
+    _make_run(store, "child-a")
+    _make_run(store, "child-b")
+    store.update_run("child-a", parent_run_id="parent")
+    store.update_run("child-b", parent_run_id="parent")
+
+    child_ids = sorted(run["run_id"] for run in store.children_of("parent"))
+    assert child_ids == ["child-a", "child-b"]
+
+
+def test_call_count_include_children_sums_child_agent_calls(store: Store):
+    _make_run(store, "parent")
+    _make_run(store, "child")
+    store.update_run("child", parent_run_id="parent")
+    for index in range(2):
+        _finish(store, "parent", f"parent-{index}", role="context", usage={})
+    for index in range(3):
+        _finish(store, "child", f"child-{index}", role="implement", usage={})
+
+    assert store.call_count("parent") == 2
+    assert store.call_count("child") == 3
+    assert store.call_count("parent", include_children=True) == 5
+
+
+def test_orphaned_runs_omits_child_while_parent_still_running(store: Store):
+    import os
+
+    from alloy.store import RUN_RUNNING
+
+    _make_run(store, "parent", pid=os.getpid())
+    _make_run(store, "child", pid=dead_pid())
+    store.update_run("child", parent_run_id="parent")
+    assert store.get_run("parent")["status"] == RUN_RUNNING
+
+    orphan_ids = {run["run_id"] for run in store.orphaned_runs()}
+    assert "child" not in orphan_ids
+
+    store.update_run("parent", pid=dead_pid())
+    orphan_ids = {run["run_id"] for run in store.orphaned_runs()}
+    assert "child" in orphan_ids

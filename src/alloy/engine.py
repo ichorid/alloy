@@ -11,8 +11,8 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from pathlib import Path, PurePosixPath
+from typing import Any, Awaitable, Callable
 
 from langgraph.types import Command
 
@@ -34,9 +34,13 @@ from alloy.store import (
     RUN_WAITING_HUMAN,
     Store,
 )
-from alloy.worktree import WorktreeError, WorktreeManager
+from alloy.worktree import Worktree, WorktreeError, WorktreeManager
 
 RECURSION_LIMIT = 200
+
+# Decides whether a remediation child's diff may be merged into its parent:
+# (bug bead, diff against base) -> (ok, reason).
+MergeGate = Callable[[Bead, str], Awaitable[tuple[bool, str]]]
 
 log = logging.getLogger("alloy.engine")
 
@@ -65,6 +69,7 @@ class Engine:
     paths: AlloyPaths
     store: Store
     beads: BeadsClient
+    merge_gate: MergeGate | None = None
 
     @classmethod
     def open(cls, repo: Path | str, root: Path | str | None = None) -> "Engine":
@@ -177,6 +182,125 @@ class Engine:
         except (KeyError, ConfigError) as exc:
             raise EngineError(str(exc)) from exc
 
+    # -- remediation ------------------------------------------------------
+
+    async def run_child(
+        self, bead_id: str, *, parent: RunContext, merge_gate: MergeGate | None = None
+    ) -> RunResult:
+        """Fix a bug bead from inside a parent run and merge the fix into it.
+
+        The parent's uncommitted work is parked in a WIP commit; the child is
+        cut from the parent's *base* (the defect predates the parent's work, so
+        it reproduces there against a green suite); when the child is done its
+        diff passes a deterministic guard and the merge gate before being
+        merged into the parent's worktree. Any failure leaves the parent tree
+        clean at the WIP commit.
+        """
+        parent_record = self.store.get_run(parent.run_id)
+        if parent_record is None:
+            raise EngineError(f"no run recorded for parent {parent.run_id}")
+        if parent_record.get("parent_run_id"):
+            raise EngineError(
+                f"run {parent.run_id} is itself a remediation child of "
+                f"{parent_record['parent_run_id']}; remediation is one level deep"
+            )
+        bug = self.beads.show(bead_id)
+        recipe_name = bug.recipe or parent.recipe.name
+        self.validate_recipe(recipe_name)
+        if bug.status not in (bd.STATUS_READY, bd.STATUS_IMPLEMENTING):
+            raise EngineError(
+                f"{bead_id} is '{bug.status}'; only '{bd.STATUS_READY}' beads can start"
+            )
+        if bug.status == bd.STATUS_READY and not self.beads.claim(bead_id):
+            raise EngineError(f"{bead_id} was claimed by someone else")
+
+        worktrees = parent.worktrees
+        # Read before the WIP commit: the parent's base is where its work
+        # started, and the child must never see what came after.
+        base = parent.worktree.base_commit
+        wip_sha = worktrees.commit_wip(
+            parent.worktree, f"alloy: wip before remediating {bead_id}"
+        )
+        try:
+            child_wt = worktrees.ensure_from(bead_id, base)
+        except WorktreeError as exc:
+            raise EngineError(str(exc)) from exc
+
+        result = await self._execute(
+            bug, recipe_name, run_id=None, resume_payload=None,
+            thread_id=f"{parent.run_id}/{bead_id}", worktree=child_wt,
+            parent_run_id=parent.run_id,
+        )
+        if result.outcome != Outcome.DONE.value:
+            return result
+
+        worktrees.commit_wip(child_wt, f"alloy: fix {bead_id} (remediating {parent.bead.id})")
+
+        touched = self._guarded_test_paths(worktrees, child_wt, base, wip_sha)
+        if touched:
+            return self._fail_child(
+                bug, result, parent,
+                "test-file guard: the fix modifies test file(s) added by the parent's "
+                f"work in progress: {', '.join(touched)}",
+            )
+
+        diff = worktrees.diff(child_wt)
+        if merge_gate is None:
+            return self._fail_child(bug, result, parent, "merge gate failed: no merge gate bound")
+        ok, reason = await merge_gate(bug, diff)
+        if not ok:
+            return self._fail_child(bug, result, parent, f"merge gate rejected the fix: {reason}")
+
+        merged = worktrees.merge_branch(parent.worktree, child_wt.branch)
+        if not merged.ok:
+            return self._fail_child(
+                bug, result, parent,
+                f"merge conflict merging {child_wt.branch} into {parent.worktree.branch}: "
+                f"{', '.join(merged.conflict_files) or 'unknown files'}",
+            )
+
+        note = (f"alloy: remediation of {bead_id} merged into {parent.worktree.branch} "
+                f"for {parent.bead.id} (parent run {parent.run_id})")
+        self.beads.note(bead_id, note)
+        self.beads.note(parent.bead.id, note)
+        log.info("%s: child %s merged into %s", parent.bead.id, bead_id, parent.worktree.branch)
+        return result
+
+    def _guarded_test_paths(
+        self, worktrees: WorktreeManager, child_wt: Worktree, base: str, wip_sha: str | None
+    ) -> list[str]:
+        """Test files the parent's WIP commit added that the child changed.
+
+        A fix that rewrites or removes the task's own tests can never be
+        right. Adding the same test with identical content is not a change.
+        """
+        if wip_sha is None:
+            return []
+        wip_tests = [p for p in worktrees.added_paths(wip_sha) if _is_test_path(p)]
+        child_changed = set(worktrees.changed_paths(child_wt, base))
+        touched = [p for p in wip_tests if p in child_changed]
+        if not touched:
+            return []
+        return worktrees.changed_paths(child_wt, wip_sha, until="HEAD", paths=touched)
+
+    def _fail_child(
+        self, bug: Bead, result: RunResult, parent: RunContext, reason: str
+    ) -> RunResult:
+        """The child finished but its fix cannot land: record why on both sides.
+        The parent tree is already clean at its WIP commit; the child branch
+        stays for a human to inspect."""
+        self.store.finish_run(result.run_id, status=RUN_FAILED,
+                              outcome=Outcome.FAILED.value, reason=reason)
+        self.beads.set_status(bug.id, bd.STATUS_FAILED)
+        self.beads.set_metadata(bug.id, {bd.META_STAGE: Outcome.FAILED.value})
+        self.beads.note(bug.id, f"alloy: remediation for {parent.bead.id} not merged -- {reason}. "
+                                f"Branch kept at {result.worktree}")
+        self.beads.note(parent.bead.id,
+                        f"alloy: remediation of {bug.id} not merged -- {reason}")
+        log.warning("%s: child %s not merged: %s", parent.bead.id, bug.id, reason)
+        return RunResult(bug.id, result.run_id, Outcome.FAILED.value, reason=reason,
+                         worktree=result.worktree)
+
     def _refuse_if_live(self, bead_id: str, record: dict[str, Any] | None) -> None:
         if (
             record is not None
@@ -195,14 +319,16 @@ class Engine:
         return load_recipe(name, alloy_root=self.paths.root, project=self.repo)
 
     def build_context(
-        self, bead: Bead, recipe_name: str, *, run_id: str, checkpointer: Any
+        self, bead: Bead, recipe_name: str, *, run_id: str, checkpointer: Any,
+        worktree: Worktree | None = None,
     ) -> RunContext:
         config = self.load_config(recipe_name)
         worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
-        worktree = worktrees.ensure(bead.id)
+        if worktree is None:
+            worktree = worktrees.ensure(bead.id)
         log_dir = self.paths.run_logs(run_id)
         log_dir.mkdir(parents=True, exist_ok=True)
-        return RunContext(
+        ctx = RunContext(
             bead=bead,
             recipe=config,
             run_id=run_id,
@@ -214,6 +340,10 @@ class Engine:
             log_dir=log_dir,
             beads=self.beads,
         )
+        ctx.remediator = lambda bug_id: self.run_child(
+            bug_id, parent=ctx, merge_gate=self.merge_gate
+        )
+        return ctx
 
     # -- internals --------------------------------------------------------
 
@@ -225,6 +355,8 @@ class Engine:
         run_id: str | None,
         resume_payload: dict[str, Any] | None,
         thread_id: str | None = None,
+        worktree: Worktree | None = None,
+        parent_run_id: str | None = None,
     ) -> RunResult:
         recipe = recipes.get(recipe_name)
         fresh = run_id is None
@@ -236,7 +368,8 @@ class Engine:
         async with open_checkpointer(self.paths.workflows_db) as checkpointer:
             try:
                 ctx = self.build_context(
-                    bead, recipe_name, run_id=run_id, checkpointer=checkpointer
+                    bead, recipe_name, run_id=run_id, checkpointer=checkpointer,
+                    worktree=worktree,
                 )
             except (ConfigError, KeyError, WorktreeError) as exc:
                 raise EngineError(str(exc)) from exc
@@ -245,7 +378,7 @@ class Engine:
                 self.store.create_run(
                     run_id=run_id, bead_id=bead.id, thread_id=thread_id, recipe=recipe_name,
                     repo=self.repo, worktree=ctx.worktree.path, branch=ctx.worktree.branch,
-                    log_dir=ctx.log_dir,
+                    log_dir=ctx.log_dir, parent_run_id=parent_run_id,
                 )
                 log.info("%s: run %s started (%s) in %s",
                          bead.id, run_id, recipe_name, ctx.worktree.path)
@@ -383,4 +516,14 @@ def _interrupt_payload(pending: Any) -> dict[str, Any]:
 
 def _pid_alive(pid: int | None) -> bool:
     return pid_alive(pid)
+
+
+def _is_test_path(path: str) -> bool:
+    parts = PurePosixPath(path)
+    name = parts.name
+    return (
+        any(part in ("tests", "test") for part in parts.parts[:-1])
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+    )
 

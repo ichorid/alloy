@@ -95,6 +95,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "complexity": "TEXT",
         "paused_at": "TEXT",                       # set while waiting for a human
         "paused_s": "REAL NOT NULL DEFAULT 0",     # total time spent paused
+        "parent_run_id": "TEXT",                   # set on a remediation child run (alloy-0uc.8)
     },
     "agent_calls": {
         "structured_json": "TEXT",                 # the raw structured output, e.g. the judge's verdict
@@ -141,18 +142,19 @@ class Store:
         worktree: Path | None,
         branch: str | None,
         log_dir: Path | None,
+        parent_run_id: str | None = None,
     ) -> None:
         now = utcnow().isoformat()
         with self.connect() as conn:
             conn.execute(
                 "INSERT INTO runs (run_id, bead_id, thread_id, recipe, repo, worktree, branch,"
-                " status, stage, started_at, updated_at, log_dir, pid)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " status, stage, started_at, updated_at, log_dir, pid, parent_run_id)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     run_id, bead_id, thread_id, recipe, str(repo),
                     str(worktree) if worktree else None, branch,
                     RUN_RUNNING, "starting", now, now,
-                    str(log_dir) if log_dir else None, os.getpid(),
+                    str(log_dir) if log_dir else None, os.getpid(), parent_run_id,
                 ),
             )
 
@@ -238,10 +240,32 @@ class Store:
             ).fetchall()
         return {row["status"]: row["n"] for row in rows}
 
+    def children_of(self, run_id: str) -> list[dict[str, Any]]:
+        """Remediation runs started from `run_id` (see Engine.run_child)."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM runs WHERE parent_run_id = ? ORDER BY started_at", (run_id,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def orphaned_runs(self) -> list[dict[str, Any]]:
-        """Runs marked running whose process is gone -- i.e. crash survivors."""
-        return [run for run in self.active_runs()
-                if run["status"] == RUN_RUNNING and not _pid_alive(run["pid"])]
+        """Runs marked running whose process is gone -- i.e. crash survivors.
+
+        A child run whose parent is still running is not an orphan: the parent
+        drives it and recovers it, so it is only offered for adoption once the
+        parent itself is orphaned.
+        """
+        active = self.active_runs()
+        running = {run["run_id"]: run for run in active if run["status"] == RUN_RUNNING}
+        orphans = []
+        for run in active:
+            if run["status"] != RUN_RUNNING or _pid_alive(run["pid"]):
+                continue
+            parent = running.get(run.get("parent_run_id"))
+            if parent is not None and _pid_alive(parent["pid"]):
+                continue
+            orphans.append(run)
+        return orphans
 
     # -- agent call ledger ------------------------------------------------
 
@@ -346,11 +370,16 @@ class Store:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def call_count(self, run_id: str) -> int:
+    def call_count(self, run_id: str, *, include_children: bool = False) -> int:
+        """Agent calls made by the run; with `include_children`, also those of
+        its remediation children, so a child spends the parent's budget."""
+        query = "SELECT COUNT(*) AS n FROM agent_calls WHERE run_id = ?"
+        params: tuple[Any, ...] = (run_id,)
+        if include_children:
+            query += " OR run_id IN (SELECT run_id FROM runs WHERE parent_run_id = ?)"
+            params += (run_id,)
         with self.connect() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) AS n FROM agent_calls WHERE run_id = ?", (run_id,)
-            ).fetchone()
+            row = conn.execute(query, params).fetchone()
         return int(row["n"]) if row else 0
 
     def token_totals(self, run_id: str) -> dict:
