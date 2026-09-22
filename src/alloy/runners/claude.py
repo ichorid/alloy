@@ -25,8 +25,13 @@ class ClaudeRunner(CLIRunner):
         model: str | None,
         structured_schema: dict | None,
         effort: str | None = None,
+        resume_session: str | None = None,
     ) -> list[str]:
-        args = ["-p", prompt, "--output-format", "json"]
+        args: list[str] = []
+        if resume_session:
+            # `--resume <session-id>` (checked against claude 2.1.280).
+            args += ["--resume", resume_session]
+        args += ["-p", prompt, "--output-format", "json"]
         if model:
             args += ["--model", model]
         if effort:
@@ -64,7 +69,10 @@ class ClaudeWriteRunner(ClaudeRunner):
 
     name = "claude-write"
 
-    def build_command(self, prompt, *, model, structured_schema, effort=None):
+    def build_command(
+        self, prompt, *, model, structured_schema, effort=None, resume_session=None
+    ):
         return ["--permission-mode", "bypassPermissions", *super().build_command(
-            prompt, model=model, structured_schema=structured_schema, effort=effort
+            prompt, model=model, structured_schema=structured_schema, effort=effort,
+            resume_session=resume_session,
         )]

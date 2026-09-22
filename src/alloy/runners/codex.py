@@ -25,8 +25,18 @@ class CodexRunner(CLIRunner):
         model: str | None,
         structured_schema: dict | None,
         effort: str | None = None,
+        resume_session: str | None = None,
     ) -> list[str]:
-        args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", self.sandbox]
+        if resume_session:
+            # `codex exec resume <SESSION_ID> [PROMPT]` (checked against
+            # codex-cli 0.155.1). The subcommand takes --json, --model and -c
+            # but not --sandbox, so the sandbox rides on the config key.
+            args = [
+                "exec", "resume", resume_session, "--json", "--skip-git-repo-check",
+                "-c", f'sandbox_mode="{self.sandbox}"',
+            ]
+        else:
+            args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", self.sandbox]
         if model:
             args += ["--model", model]
         if effort:

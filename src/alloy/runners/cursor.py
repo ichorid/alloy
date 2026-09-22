@@ -20,7 +20,12 @@ class CursorRunner(CLIRunner):
     read_only = False
 
     def build_command(
-        self, prompt: str, *, model: str | None, structured_schema: dict | None
+        self,
+        prompt: str,
+        *,
+        model: str | None,
+        structured_schema: dict | None,
+        resume_session: str | None = None,
     ) -> list[str]:
         args = ["-p", prompt, "--output-format", "json", "--force"]
         if self.read_only:
@@ -28,6 +33,9 @@ class CursorRunner(CLIRunner):
         if model:
             args += ["--model", model]
         args += self.extra_args
+        if resume_session:
+            # `--resume [chatId]` (checked against cursor-agent 2026.09.18).
+            args += ["--resume", resume_session]
         return args
 
     def parse(self, stdout, stderr, exit_code):

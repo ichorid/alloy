@@ -93,6 +93,7 @@ class JevRunner:
         timeout: timedelta | None = None,
         structured_schema: dict | None = None,
         on_spawn: Callable[[int], None] | None = None,  # no subprocess: nothing to report
+        resume_session: str | None = None,  # stateless HTTP call: nothing to resume
     ) -> AgentResult:
         api_key = self._resolve_api_key()
         if not api_key:

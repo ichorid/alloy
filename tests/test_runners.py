@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from pathlib import Path
 
@@ -291,3 +292,185 @@ async def test_run_context_passes_role_effort_to_claude_write_argv(
     argv = fake_harnesses.calls_for("implement")[0]["argv"]
     idx = argv.index("--effort")
     assert argv[idx + 1] == "low"
+
+
+# -- runner session resume (alloy-21u.2) ---------------------------------------
+
+
+def _run_context_for_resume_tests(
+    fake_harnesses, project, tmp_path, *, run_id: str = "run-resume"
+) -> RunContext:
+    store = Store(tmp_path / "alloy.db")
+    store.create_run(
+        run_id=run_id,
+        bead_id="t-1",
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    return RunContext(
+        bead=make_bead(),
+        recipe=None,
+        run_id=run_id,
+        worktree=SimpleNamespace(path=project),
+        worktrees=None,
+        registry=RunnerRegistry(log_dir=tmp_path / "logs"),
+        store=store,
+        checkpointer=None,
+        log_dir=tmp_path,
+        beads=None,
+    )
+
+
+def test_claude_build_command_includes_resume_before_prompt_flag():
+    runner = RunnerRegistry().get("claude")
+    argv = runner.build_command(
+        "p", model="sonnet", structured_schema=None, resume_session="abc"
+    )
+    resume_idx = argv.index("--resume")
+    assert argv[resume_idx + 1] == "abc"
+    assert resume_idx < argv.index("-p")
+
+
+def test_claude_write_build_command_includes_resume_before_prompt_flag():
+    runner = RunnerRegistry().get("claude-write")
+    argv = runner.build_command(
+        "p", model="sonnet", structured_schema=None, resume_session="abc"
+    )
+    resume_idx = argv.index("--resume")
+    assert argv[resume_idx + 1] == "abc"
+    assert resume_idx < argv.index("-p")
+
+
+def test_codex_build_command_uses_exec_resume_subcommand():
+    runner = RunnerRegistry().get("codex")
+    prompt = "do it"
+    argv = runner.build_command(
+        prompt, model=None, structured_schema=None, resume_session="t1"
+    )
+    assert argv[:3] == ["exec", "resume", "t1"]
+    assert "--json" in argv
+    assert argv[-1] == prompt
+
+
+def test_codex_readonly_build_command_uses_exec_resume_subcommand():
+    runner = RunnerRegistry().get("codex-readonly")
+    prompt = "review this"
+    argv = runner.build_command(
+        prompt, model=None, structured_schema=None, resume_session="t1"
+    )
+    assert argv[:3] == ["exec", "resume", "t1"]
+    assert "--json" in argv
+    assert argv[-1] == prompt
+
+
+def test_cursor_build_command_appends_resume_flag():
+    runner = RunnerRegistry().get("cursor")
+    argv = runner.build_command(
+        "hi", model=None, structured_schema=None, resume_session="c1"
+    )
+    idx = argv.index("--resume")
+    assert argv[idx + 1] == "c1"
+
+
+def test_cursor_plan_build_command_appends_resume_flag():
+    runner = RunnerRegistry().get("cursor-plan")
+    argv = runner.build_command(
+        "hi", model=None, structured_schema=None, resume_session="c1"
+    )
+    idx = argv.index("--resume")
+    assert argv[idx + 1] == "c1"
+
+
+def test_generic_runner_renders_resume_args_template_token():
+    runner = RunnerRegistry(
+        {
+            "myagent": {
+                "binary": "echo",
+                "args": ["{resume_args}", "{prompt}"],
+                "resume_flag": "--resume",
+            }
+        }
+    ).get("myagent")
+    argv = runner.build_command(
+        "hi", model=None, structured_schema=None, resume_session="s1"
+    )
+    assert argv[:2] == ["--resume", "s1"]
+    assert argv[-1] == "hi"
+
+
+@pytest.mark.parametrize(
+    "runner_name,kwargs",
+    [
+        ("claude", {"model": "sonnet"}),
+        ("claude-write", {"model": "haiku"}),
+        ("codex", {"model": None}),
+        ("codex-readonly", {"model": None}),
+        ("cursor", {"model": None}),
+        ("cursor-plan", {"model": None}),
+        ("pi", {"model": "gpt-5"}),
+    ],
+)
+def test_build_command_argv_unchanged_when_resume_session_is_none(runner_name, kwargs):
+    runner = RunnerRegistry().get(runner_name)
+    baseline = runner.build_command("hi", structured_schema=None, **kwargs)
+    unchanged = runner.build_command(
+        "hi", structured_schema=None, resume_session=None, **kwargs
+    )
+    assert unchanged == baseline
+
+
+async def test_run_context_passes_resume_session_through_fake_harness(
+    fake_harnesses, project, tmp_path
+):
+    fake_harnesses.configure({"implement": {"text": "ok"}})
+    ctx = _run_context_for_resume_tests(fake_harnesses, project, tmp_path)
+    spec = RoleSpec.parse({"runner": "codex"})
+    result = await ctx.call(
+        "implement",
+        spec,
+        "Implement the smallest change.",
+        resume_session="abc",
+    )
+    assert result.ok
+    call = fake_harnesses.calls_for("implement")[0]
+    assert call["resume"] == "abc"
+    ledger_row = ctx.store.agent_calls(ctx.run_id)[-1]
+    usage = json.loads(ledger_row["usage_json"])
+    assert usage["resumed"] is True
+
+
+async def test_run_context_drops_resume_session_on_fallback(
+    fake_harnesses, project, tmp_path
+):
+    fake_harnesses.configure(
+        {
+            "implement@codex": [{"exit": 2, "stderr": "codex: rate limited", "text": ""}],
+            "implement@claude": [{"text": "ok"}],
+        }
+    )
+    ctx = _run_context_for_resume_tests(fake_harnesses, project, tmp_path)
+    spec = RoleSpec.parse(
+        {
+            "runner": "codex",
+            "fallback": {"runner": "claude-write", "model": "fable"},
+        }
+    )
+    result = await ctx.call(
+        "implement",
+        spec,
+        "Implement the smallest change.",
+        resume_session="abc",
+    )
+    assert result.ok
+    calls = fake_harnesses.calls_for("implement")
+    assert calls[0]["resume"] == "abc"
+    assert "resume" not in calls[1]
+    implement_calls = [
+        c for c in ctx.store.agent_calls(ctx.run_id) if c["role"] == "implement"
+    ]
+    assert json.loads(implement_calls[0]["usage_json"])["resumed"] is True
+    assert json.loads(implement_calls[1]["usage_json"])["resumed"] is False

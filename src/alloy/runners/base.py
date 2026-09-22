@@ -40,6 +40,7 @@ class AgentRunner(Protocol):
         timeout: timedelta | None = None,
         structured_schema: dict | None = None,
         on_spawn: Callable[[int], None] | None = None,
+        resume_session: str | None = None,
     ) -> AgentResult: ...
 
 
@@ -163,9 +164,11 @@ class CLIRunner:
         model: str | None,
         structured_schema: dict | None,
         effort: str | None = None,
+        resume_session: str | None = None,
     ) -> list[str]:
-        """Arguments after the binary. ``effort`` is only passed to subclasses
-        that declare it, so adapters without an effort flag need not know."""
+        """Arguments after the binary. ``effort`` and ``resume_session`` are
+        only passed to subclasses that declare them, so adapters without an
+        effort or resume flag need not know."""
         raise NotImplementedError
 
     def build_prompt(self, prompt: str, structured_schema: dict | None) -> str:
@@ -195,10 +198,15 @@ class CLIRunner:
         timeout: timedelta | None = None,
         structured_schema: dict | None = None,
         on_spawn: Callable[[int], None] | None = None,
+        resume_session: str | None = None,
     ) -> AgentResult:
         """`on_spawn(pid)` fires once the harness exists (journal 9): the
         caller records the pid so the process group can still be killed if
-        `alloy run` itself dies before the call ends."""
+        `alloy run` itself dies before the call ends.
+
+        `resume_session` continues an earlier harness session (the
+        ``session_id`` of a previous :class:`AgentResult`) instead of
+        starting cold; adapters whose CLI cannot resume simply ignore it."""
         binary_path = self.resolve_binary()
         if binary_path is None:
             raise RunnerUnavailable(f"{self.name}: '{self.binary}' not found on PATH")
@@ -208,6 +216,8 @@ class CLIRunner:
         build_kwargs: dict[str, Any] = {"model": model, "structured_schema": structured_schema}
         if effort is not None and _accepts_kwarg(self.build_command, "effort"):
             build_kwargs["effort"] = effort
+        if resume_session is not None and _accepts_kwarg(self.build_command, "resume_session"):
+            build_kwargs["resume_session"] = resume_session
         argv = [binary_path, *self.build_command(effective_prompt, **build_kwargs)]
         digest = prompt_hash(effective_prompt)
         started = utcnow()
