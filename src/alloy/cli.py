@@ -397,17 +397,21 @@ def logs(
     if record is None:
         _fail(f"no run recorded for {bead_id}")
         return
-    calls = engine.store.agent_calls(record["run_id"])[-tail:]
+    runs = [record, *engine.store.children_of(record["run_id"])]
+    calls = sorted(
+        (call for run in runs for call in engine.store.agent_calls(run["run_id"])),
+        key=lambda call: call["id"],
+    )[-tail:]
     if json:
         _emit({"run_id": record["run_id"], "log_dir": record["log_dir"], "calls": calls}, True)
         return
     console.print(f"[bold]run[/bold] {record['run_id']}   [bold]logs[/bold] {record['log_dir']}")
     table = Table(show_header=True, header_style="bold")
-    for column in ("#", "role", "runner", "model", "iter", "secs", "exit", "artifact"):
+    for column in ("#", "bead", "role", "runner", "model", "iter", "secs", "exit", "artifact"):
         table.add_column(column)
     for index, call in enumerate(calls, 1):
         table.add_row(
-            str(index), call["role"], call["runner"], call["model"] or "-",
+            str(index), call["bead_id"], call["role"], call["runner"], call["model"] or "-",
             str(call["iteration"]), f"{call['duration_s']:.1f}",
             str(call["exit_code"]), call["log_path"] or "-",
         )
@@ -651,6 +655,12 @@ def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
     return {
         "bead": record["bead_id"],
         "run_id": record["run_id"],
+        "parent_run_id": record.get("parent_run_id"),
+        "children": [child["run_id"] for child in engine.store.children_of(record["run_id"])],
+        "remediating": (
+            record["stage"].split(":", 1)[1]
+            if (record["stage"] or "").startswith("remediate:") else None
+        ),
         "recipe": record["recipe"],
         "status": record["status"],
         "stage": record["stage"],
@@ -676,6 +686,7 @@ def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
 
 
 _EMPTY_RUN_FIELDS: dict[str, Any] = {
+    "parent_run_id": None, "children": [], "remediating": None,
     "complexity": None, "complexity_source": None, "dispatch_tier": None,
     "run_id": None, "status": None, "stage": None, "iteration": 0,
     "max_iterations": None, "consiliums": 0, "agent_calls": 0, "tests": None,
