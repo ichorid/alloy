@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -253,3 +254,27 @@ def make_harness(
         initial_state_overrides=initial_state_overrides,
         remediator=remediator,
     )
+
+
+def wait_for_role(fake_harnesses: Any, role: str, timeout: float) -> None:
+    """Block until the fake CLI has logged a call for ``role`` (polls calls.jsonl).
+
+    The fake appends to calls.jsonl before it sleeps, so seeing the call means the
+    previous node's checkpoint has already been committed.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if fake_harnesses.calls_for(role):
+            return
+        time.sleep(0.1)
+    raise AssertionError(f"role {role!r} never ran; saw {fake_harnesses.calls}")
+
+
+async def await_role(fake_harnesses: Any, role: str, timeout: float) -> None:
+    """Async twin of :func:`wait_for_role`; yields so an in-process engine task can run."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if fake_harnesses.calls_for(role):
+            return
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"role {role!r} never ran; saw {fake_harnesses.calls}")

@@ -12,7 +12,6 @@ import os
 import signal
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -30,7 +29,7 @@ from conftest import (
     synthesize_entry,
     write_tests_entry,
 )
-from support import make_harness
+from support import await_role, make_harness, wait_for_role
 
 
 def script(**overrides):
@@ -52,8 +51,11 @@ async def test_an_interrupted_run_resumes_without_repeating_finished_stages(
     fake_harnesses.configure(script(implement=[{"sleep": 30}]))
     harness = make_harness(project, alloy_home)
 
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(harness.start(), timeout=8)
+    task = asyncio.create_task(harness.start())
+    await await_role(fake_harnesses, "implement", timeout=30)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
     assert [call["role"] for call in fake_harnesses.calls] == [
         "context", "estimate", "tests", "implement"
@@ -105,7 +107,7 @@ async def test_a_killed_process_leaves_an_orphaned_run_that_can_be_adopted(
         env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")},
     )
     try:
-        _wait_for_role(fake_harnesses, "implement", timeout=90)
+        wait_for_role(fake_harnesses, "implement", timeout=90)
     finally:
         child.send_signal(signal.SIGKILL)
         child.wait(timeout=30)
@@ -151,12 +153,3 @@ async def test_restart_can_answer_what_was_running_and_where(
     assert snapshot["checkpoint_id"]
     assert snapshot["interrupts"]                    # it is safe to resume, and how
     assert snapshot["values"]["iteration"] == 1
-
-
-def _wait_for_role(fake_harnesses, role: str, timeout: float) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if fake_harnesses.calls_for(role):
-            return
-        time.sleep(0.2)
-    raise AssertionError(f"role {role!r} never ran; saw {fake_harnesses.calls}")
