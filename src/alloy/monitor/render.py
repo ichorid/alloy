@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 COLUMNS = ("bead", "recipe", "status", "stage", "iter", "cons", "tests", "elapsed", "now",
-           "tokens", "judge")
+           "tokens", "judge", "complexity")
 
 
 def header_line(snapshot: dict[str, Any]) -> str:
@@ -34,7 +34,7 @@ def run_rows(snapshot: dict[str, Any]) -> list[tuple[str, ...]]:
 
 def _row(run: dict[str, Any]) -> tuple[str, ...]:
     return (
-        _text(run.get("bead_id")),
+        ("  └ " if run.get("parent_run_id") else "") + _text(run.get("bead_id")),
         _text(run.get("recipe")),
         _text(run.get("status")),
         _text(run.get("stage")),
@@ -45,6 +45,7 @@ def _row(run: dict[str, Any]) -> tuple[str, ...]:
         _now(run.get("current_calls") or []),
         _tokens(run.get("tokens") or {}),
         _judge(run.get("judge")),
+        _text(run.get("complexity")),
     )
 
 

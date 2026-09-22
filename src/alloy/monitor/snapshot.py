@@ -64,6 +64,8 @@ def _run_entry(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
     return {
         "bead_id": record["bead_id"],
         "run_id": run_id,
+        "parent_run_id": record.get("parent_run_id"),
+        "complexity": record.get("complexity"),
         "recipe": record["recipe"],
         "status": record["status"],
         "stage": state.get("stage") or record["stage"],

@@ -44,6 +44,8 @@ def _run(
     judge=None,
     worktree="/home/vader/.alloy/worktrees/alloy-a1b2",
     branch="alloy/alloy-a1b2",
+    parent_run_id=None,
+    complexity=None,
 ) -> dict:
     return {
         "bead_id": bead_id,
@@ -63,6 +65,8 @@ def _run(
         "judge": judge,
         "worktree": worktree,
         "branch": branch,
+        "parent_run_id": parent_run_id,
+        "complexity": complexity,
     }
 
 
@@ -87,7 +91,7 @@ def _judge(raw_decision="retry", raw_confidence=0.61, effective_decision="retry"
     }
 
 
-COLUMN_COUNT = 11  # bead, recipe, status, stage, i/max, c/max, tests, elapsed, now, tokens, judge
+COLUMN_COUNT = 12  # bead, recipe, status, stage, i/max, c/max, tests, elapsed, now, tokens, judge, complexity
 
 
 # -- run_rows -----------------------------------------------------------------
@@ -249,3 +253,26 @@ def test_header_line_reports_lifetime_totals():
     assert "12" in line
     assert "2" in line
     assert "1" in line
+
+
+# -- alloy-0uc.9: child runs and complexity in render ------------------------
+
+
+def test_child_run_row_is_indented_with_tree_marker():
+    parent = _run(
+        run_id="parent-run", bead_id="alloy-parent", complexity="simple",
+    )
+    child = _run(
+        run_id="child-run", bead_id="alloy-child", parent_run_id="parent-run",
+    )
+    rows = run_rows(_snapshot(runs=[parent, child]))
+
+    child_row = next(row for row in rows if "alloy-child" in row[0])
+    assert "└" in child_row[0]
+
+
+def test_parent_run_row_shows_complexity_when_set():
+    parent = _run(complexity="simple")
+    row = run_rows(_snapshot(runs=[parent]))[0]
+
+    assert "simple" in row
