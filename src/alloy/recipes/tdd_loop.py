@@ -1,9 +1,9 @@
 """The `tdd-loop` recipe.
 
-    context -> estimate -> write failing tests -> implement -> verify -> judge -> guard
-                                         ^              |        ^             |
-                                         |          <bug> reports |    done / retry /
-                                         |              v        |  consilium / human / abort
+    context -> estimate -> write failing tests -> implement -> verification loop -> judge -> guard
+                                         ^              |        ^        |                  |
+                                         |          <bug> reports |  red required     done / retry /
+                                         |              v        |  check -> guard  consilium / human / abort
                                          |            triage ----+
                                          |         (blocking -> remediate; needs-human -> human gate)
                                          +----- synthesize <- critics (parallel)
@@ -32,6 +32,7 @@ from alloy.models import (
     BugReport,
     BugTriage,
     CheckRequest,
+    CheckResult,
     ComplexityEstimate,
     ContextPacket,
     Critique,
@@ -40,14 +41,13 @@ from alloy.models import (
     utcnow,
     ProjectSnapshot,
     ScopeVerdict,
-    TestReport,
     TestsOutput,
+    VerifierAction,
     clip,
     extract_bug_reports,
     next_level,
 )
 from alloy.runtime import RunContext
-from alloy.verify import resolve_command
 
 MAX_DIFF_CHARS = 12000
 PROJECT_CONTEXT_CHARS = 6000
@@ -74,7 +74,6 @@ class TddState(TypedDict, total=False):
     complexity_source: str
     retries_on_tier: int
     escalations: Annotated[list[dict[str, Any]], operator.add]
-    test_command: str | None
     baseline_checks: list[dict[str, Any]]      # CheckRequest dicts from the tests role
     baseline: list[dict[str, Any]] | None      # CheckResult dicts from prove_red
     baseline_repairs: int
@@ -85,7 +84,12 @@ class TddState(TypedDict, total=False):
     instructions: str
     implementer: str  # the runner that actually produced the last change
 
-    last_tests: dict[str, Any] | None
+    checks: Annotated[list[dict[str, Any]], operator.add]  # CheckResult dicts, every iteration
+    iteration_checks: int                      # checks run in the current iteration
+    verifier_stop: dict[str, Any] | None       # the VerifierAction that ended the last loop
+    last_check: dict[str, Any] | None          # the most recent CheckResult
+    last_instructions: str                     # what the last implement call was told
+    verify_route: str | None                   # where verification_loop sent the run
     decision: dict[str, Any] | None
     change_summary: str
     attempts: Annotated[list[dict[str, Any]], operator.add]
@@ -224,11 +228,14 @@ def implement_prompt(
     brief: str,
     acceptance: str,
     context: dict[str, Any],
-    test_command: str | None,  # legacy whole-suite command; still in state for verify, not shown
+    test_command: str | None,  # legacy slot, unused; removed with the context packet field
     instructions: str,
     history: list[dict[str, Any]],
-    last_tests: dict[str, Any] | None,
+    failed_check: dict[str, Any] | None = None,
     baseline_checks: list[dict[str, Any]] | None = None,
+    *,
+    diff: str = "",
+    previous_instructions: str = "",
 ) -> str:
     sections = [
         "Implement the smallest change that makes the failing tests pass.",
@@ -238,8 +245,18 @@ def implement_prompt(
     ]
     if baseline_checks:
         sections.append("## Checks that must go green\n" + _render_checks(baseline_checks))
-    if last_tests:
-        sections.append(f"## Current test results\n{_render_tests(last_tests)}")
+    if failed_check:
+        # A repair iteration: a required check went red and the run came
+        # straight back here without a judge call.
+        check = CheckResult.model_validate(failed_check)
+        sections.append(
+            "## Failed check\n"
+            f"`{check.command}` -> exit {check.exit_code} ({check.headline()})\n\n"
+            f"{check.output_tail}"
+        )
+        sections.append(f"## Current diff\n```diff\n{clip(diff, MAX_DIFF_CHARS)}\n```")
+        if previous_instructions:
+            sections.append(f"## Previous repair instructions\n{previous_instructions}")
     if history:
         sections.append("## Previous attempts\n" + _render_history(history))
     if instructions:
@@ -265,7 +282,7 @@ def implement_prompt(
 def triage_prompt(
     brief: str,
     acceptance: str,
-    tests: dict[str, Any] | None,
+    checks: list[dict[str, Any]],
     report: dict[str, Any],
     filed: list[dict[str, Any]],
     remediations: list[dict[str, Any]],
@@ -286,7 +303,7 @@ def triage_prompt(
         "edit code; you only label the report so Alloy can decide what happens next.",
         brief,
         f"## Acceptance criteria\n{acceptance or '(none stated)'}",
-        f"## Current test results\n{_render_tests(tests)}",
+        f"## Current test results\n{_render_results(checks)}",
         "## The report\n"
         f"reporter: {bug.reporter or 'unknown'} role, iteration {bug.iteration}\n"
         f"title: {bug.title}\n"
@@ -463,10 +480,11 @@ def judge_prompt(
     acceptance: str,
     context: dict[str, Any],
     diff: str,
-    tests: dict[str, Any] | None,
+    checks: list[dict[str, Any]],
     history: list[dict[str, Any]],
     iteration: int,
     limits_note: str,
+    verifier_stop: dict[str, Any] | None = None,
 ) -> str:
     return f"""You are judging whether a coding task is complete. You cannot edit code;
 you only decide what happens next.
@@ -485,7 +503,7 @@ you only decide what happens next.
 ```
 
 ## Test results
-{_render_tests(tests)}
+{_render_results(checks, verifier_stop)}
 
 ## Attempt history
 {_render_history(history) or "(first attempt)"}
@@ -504,6 +522,83 @@ Do not answer "done" if tests are failing. Do not answer "done" if the diff is e
 Judge the diff on merit: green tests that were weakened or skipped are not done.
 If the diff edits or deletes tests, say so in `reason` and decide whether the edit
 was justified by the acceptance criteria.
+"""
+
+
+def verifier_prompt(
+    brief: str,
+    acceptance: str,
+    context: dict[str, Any],
+    diff: str,
+    changed_files: list[str],
+    checks_this_run: list[dict[str, Any]],
+    iteration: int,
+    checks_left_iteration: int,
+    checks_left_run: int,
+    history: list[dict[str, Any]],
+    baseline_checks: list[dict[str, Any]] | None = None,
+) -> str:
+    results = [CheckResult.model_validate(item) for item in checks_this_run]
+    if results:
+        last = results[-1]
+        last_text = f"`{last.command}` -> {last.headline()}\n\n{last.output_tail}"
+        if not last.runnable:
+            last_text += (
+                f"\n\nThe previous command could not run: `{last.command}` -> "
+                f"{last.headline()}. Name a command that exists in this repository, "
+                "or stop."
+            )
+    else:
+        last_text = "(nothing has run yet this run)"
+    return f"""You are choosing the next verification check for a coding task. You are read-only:
+you cannot edit code and you never run anything yourself. Alloy runs the one command you
+name, in the worktree root, exactly as written, and shows you the result.
+
+{brief}
+
+## Acceptance criteria
+{acceptance or "(none stated)"}
+
+## Repository context
+{_render_context(context)}
+
+## Baseline commands (the tests role's targeted checks; red before implementation)
+{_render_checks(baseline_checks or []) or "(none)"}
+
+## Changed files
+{chr(10).join(changed_files) or "(no changes)"}
+
+## Current diff
+```diff
+{clip(diff, MAX_DIFF_CHARS)}
+```
+
+## Checks run so far in this run
+{chr(10).join(_render_check_lines(results)) or "(none yet)"}
+
+## Last result
+{last_text}
+
+## Attempt history
+{_render_history(history) or "(first attempt)"}
+
+## Budget
+iteration {iteration}; {checks_left_iteration} more check(s) allowed this iteration, \
+{checks_left_run} more in this run
+
+Answer with the structured output. Either:
+- action "run": exactly one shell command Alloy will run in the worktree root, its
+  purpose, its kind (regression, targeted, lint, typecheck, build or custom -- any
+  project script counts as custom) and whether it is required. A red required check
+  sends the task straight back to the implementer; a red optional check is only
+  reported to you.
+- action "stop": when the evidence is sufficient. Give the reason and list the
+  remaining_risks you could not check.
+
+Prefer the most targeted check that would move the evidence: the tests written for
+this task first, then what the diff could have broken, then the wider suite, lint or
+build. Do not repeat a check whose result cannot have changed. Never claim to have
+run anything yourself.
 """
 
 
@@ -571,11 +666,41 @@ def _render_checks(checks: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _render_tests(tests: dict[str, Any] | None) -> str:
-    if not tests:
-        return "(not run yet)"
-    report = TestReport.model_validate(tests)
-    return f"`{report.command}` -> exit {report.exit_code} ({report.headline()})\n\n{report.tail}"
+def _render_check_lines(results: list[CheckResult]) -> list[str]:
+    return [
+        f"#{index} [{result.kind}] `{result.command}` -> {result.headline()}"
+        + ("" if result.required else " (optional)")
+        for index, result in enumerate(results, 1)
+    ]
+
+
+def _render_results(
+    checks: list[dict[str, Any]], verifier_stop: dict[str, Any] | None = None
+) -> str:
+    """The checks of one iteration: every headline, then the last output tail."""
+    results = [CheckResult.model_validate(item) for item in checks]
+    if results:
+        lines = _render_check_lines(results)
+        lines += ["", f"Last output (`{results[-1].command}`):", results[-1].output_tail]
+    else:
+        lines = ["(no checks were run this iteration)"]
+    if verifier_stop:
+        stop = VerifierAction.model_validate(verifier_stop)
+        lines.append(f"\nVerifier stopped: {stop.reason or '(no reason given)'}")
+        if stop.remaining_risks:
+            lines.append("Remaining risks: " + "; ".join(stop.remaining_risks))
+    return "\n".join(lines)
+
+
+def _checks_of(state: TddState, iteration: int) -> list[dict[str, Any]]:
+    return [item for item in state.get("checks") or [] if item.get("iteration") == iteration]
+
+
+def _checks_headline(checks: list[dict[str, Any]]) -> str:
+    if not checks:
+        return "(no checks run)"
+    results = [CheckResult.model_validate(item) for item in checks]
+    return "; ".join(f"[{result.kind}] {result.headline()}" for result in results)
 
 
 def _render_history(history: list[dict[str, Any]]) -> str:
@@ -589,7 +714,8 @@ def _evidence_packet(state: TddState, ctx: RunContext, diff: str) -> str:
             f"## Acceptance criteria\n{ctx.bead.acceptance_criteria or '(none stated)'}",
             f"## Repository context\n{_render_context(state.get('context'))}",
             f"## Current diff\n```diff\n{clip(diff, MAX_DIFF_CHARS)}\n```",
-            f"## Test results\n{_render_tests(state.get('last_tests'))}",
+            f"## Test results\n"
+            f"{_render_results(_checks_of(state, state.get('iteration', 0)), state.get('verifier_stop'))}",
             f"## Attempt history\n{_render_history(state.get('attempts', [])) or '(none)'}",
         ]
     )
@@ -681,11 +807,6 @@ def build_graph(ctx: RunContext):
         return {
             "reported_bugs": reported_bugs,
             "context": packet.compact(),
-            "test_command": resolve_command(
-                ctx.worktree.path,
-                configured=ctx.bead.test_command or ctx.recipe.verify.command,
-                from_context=packet.test_command,
-            ),
             "stage": "context",
         }
 
@@ -830,6 +951,8 @@ def build_graph(ctx: RunContext):
         spec = ctx.role_spec("implement", state)
         if ctx.recipe.complexity.routing == "live" and ctx.recipe.role("implement").tiered:
             ctx.set_dispatch_tier(state.get("complexity"))
+        last_check = state.get("last_check")
+        repairing = bool(last_check) and _is_red(last_check)
         result = await ctx.call(
             "implement",
             spec,
@@ -837,11 +960,13 @@ def build_graph(ctx: RunContext):
                 ctx.bead.task_brief(),
                 ctx.bead.acceptance_criteria,
                 state.get("context", {}),
-                state.get("test_command"),
+                None,
                 state.get("instructions", ""),
                 state.get("attempts", []),
-                state.get("last_tests"),
+                last_check if repairing else None,
                 baseline_checks=state.get("baseline_checks", []),
+                diff=ctx.diff() if repairing else "",
+                previous_instructions=state.get("last_instructions", "") if repairing else "",
             ),
             iteration=iteration,
         )
@@ -850,6 +975,8 @@ def build_graph(ctx: RunContext):
             "reported_bugs": reported_bugs,
             "implementer_stopped": any(bug.get("blocks_task") for bug in reported_bugs),
             "iteration": iteration,
+            "iteration_checks": 0,
+            "last_instructions": state.get("instructions", ""),
             "stage": "implement",
             "instructions": "",
             "implementer": result.runner,
@@ -857,7 +984,7 @@ def build_graph(ctx: RunContext):
         }
 
     def route_after_implement(state: TddState) -> str:
-        return "triage" if untriaged(state) else "verify"
+        return "triage" if untriaged(state) else "verification_loop"
 
     def _first_available(spec: RoleSpec) -> RoleSpec | None:
         """The first entry of the fallback chain whose runner is installed.
@@ -935,7 +1062,7 @@ def build_graph(ctx: RunContext):
                 ctx, "triage", spec,
                 triage_prompt(
                     ctx.bead.task_brief(), ctx.bead.acceptance_criteria,
-                    state.get("last_tests"), raw, filed, remediations,
+                    _checks_of(state, iteration), raw, filed, remediations,
                     project_context(state) if callable(project_context) else None,
                 ),
                 model_cls=BugTriage, default=failure, iteration=iteration,
@@ -1003,12 +1130,13 @@ def build_graph(ctx: RunContext):
             )}
         return {
             **update,
-            "triage_route": "implement" if state.get("implementer_stopped") else "verify",
+            "triage_route": "implement" if state.get("implementer_stopped")
+            else "verification_loop",
             "instructions": "\n".join(notes),
         }
 
     def route_after_triage(state: TddState) -> str:
-        return state.get("triage_route") or "verify"
+        return state.get("triage_route") or "verification_loop"
 
     async def remediate(state: TddState) -> dict[str, Any]:
         """Run the blocking bug as a child of this run and merge its fix in here.
@@ -1059,18 +1187,146 @@ def build_graph(ctx: RunContext):
         last = remediations[-1] if remediations else {}
         return "implement" if last.get("outcome") == Outcome.DONE.value else "human_gate"
 
-    async def verify(state: TddState) -> dict[str, Any]:
-        ctx.set_stage("verify", iteration=state.get("iteration", 0))
-        command = state.get("test_command")
-        if not command:
-            report = TestReport(
-                command="(none)", exit_code=1,
-                tail="Alloy could not determine a test command for this repository.",
+    async def verification_loop(state: TddState) -> dict[str, Any]:
+        """Ask the verifier for one check at a time and run each as-is.
+
+        The verifier proposes; Alloy executes and enforces the budgets. A red
+        required check goes straight back to the implementer (through guard,
+        so the iteration limits still apply) without a judge call; a stop, or
+        the per-iteration budget, hands the evidence to the judge; the run-wide
+        cap routes to guard, which parks the run like max_iterations."""
+        iteration = state.get("iteration", 0)
+        ctx.set_stage("verify", iteration=iteration)
+        spec = ctx.recipe.role("verifier")
+        per_iteration = ctx.recipe.verification.max_checks_per_iteration
+        allowed_total = ctx.total_checks_allowed(state)
+        checks = list(state.get("checks") or [])
+        new_checks: list[dict[str, Any]] = []
+        iteration_checks = int(state.get("iteration_checks", 0) or 0)
+        unrunnable_streak = 0
+        last_action: VerifierAction | None = None
+        update: dict[str, Any] = {
+            "stage": "verify", "checks": new_checks, "verify_route": "judge",
+            "verifier_stop": None,
+        }
+        if checks:
+            update["last_check"] = checks[-1]
+
+        while True:
+            total = len(state.get("baseline") or []) + len(checks)
+            if total >= allowed_total:
+                update.update(
+                    verify_route="guard",
+                    iteration_checks=iteration_checks,
+                    decision=JudgeDecision(
+                        decision="retry",
+                        reason=f"the run's verification budget is spent ({total} checks)",
+                    ).model_dump(),
+                )
+                return update
+            if iteration_checks >= per_iteration:
+                risks = list(last_action.remaining_risks) if last_action else []
+                stop = VerifierAction(
+                    action="stop",
+                    reason=f"Alloy stopped verification after {iteration_checks} checks "
+                    "this iteration",
+                    remaining_risks=[*risks, "verifier check budget exhausted"],
+                )
+                break
+            failure = VerifierAction(action="stop")
+            diff = ctx.diff()
+            action = await classify(
+                ctx, "verifier", spec,
+                verifier_prompt(
+                    ctx.bead.task_brief(),
+                    ctx.bead.acceptance_criteria,
+                    state.get("context", {}),
+                    diff,
+                    ctx.worktrees.changed_files(ctx.worktree),
+                    checks,
+                    iteration,
+                    per_iteration - iteration_checks,
+                    allowed_total - total,
+                    state.get("attempts", []),
+                    baseline_checks=state.get("baseline_checks", []),
+                ),
+                model_cls=VerifierAction, default=failure, iteration=iteration,
             )
-        else:
-            report = await ctx.verify(command)
-        ctx.set_tests_summary(report.headline())
-        return {"last_tests": report.model_dump(mode="json"), "stage": "verify"}
+            if action is failure or (action.action == "run" and not action.command.strip()):
+                why = failure.reason if action is failure else \
+                    "verifier proposed a run without a command"
+                stop = VerifierAction(
+                    action="stop",
+                    reason=f"verifier failed: {why}",
+                    remaining_risks=["verifier did not answer; no further checks were run"],
+                )
+                break
+            last_action = action
+            if action.action == "stop":
+                stop = action
+                break
+
+            result = await ctx.run_check(action.to_request())
+            result.iteration = iteration
+            record = result.model_dump(mode="json")
+            checks.append(record)
+            new_checks.append(record)
+            iteration_checks += 1
+            update.update(last_check=record, iteration_checks=iteration_checks)
+            ctx.set_tests_summary(f"{len(checks)} checks, last: {result.headline()}")
+
+            if not result.runnable:
+                unrunnable_streak += 1
+                if unrunnable_streak >= 2:
+                    unrunnable = [CheckResult.model_validate(c) for c in checks[-2:]]
+                    update.update(
+                        verify_route="human_gate",
+                        resume_to="implement",
+                        decision=JudgeDecision(
+                            decision="human",
+                            reason="the verifier proposed two commands in a row that could "
+                            "not run: " + ", ".join(
+                                f"`{c.command}` ({c.headline()})" for c in unrunnable
+                            ),
+                            next_instructions="Check the worktree's toolchain or tell the "
+                            "implementer what to verify, then resume; the implementer "
+                            "runs again.",
+                        ).model_dump(),
+                    )
+                    return update
+                continue
+            unrunnable_streak = 0
+
+            if result.required and not result.ok:
+                reason = f"required check `{result.command}` failed ({result.headline()})"
+                update.update(
+                    verify_route="guard",
+                    decision=JudgeDecision(
+                        decision="retry",
+                        reason=reason,
+                        next_instructions=(
+                            f"The required check `{result.command}` exited "
+                            f"{result.exit_code}; see '## Failed check'. Make it pass "
+                            "without weakening or skipping it."
+                        ),
+                    ).model_dump(),
+                    attempts=[Attempt(
+                        iteration=iteration,
+                        implementer=state.get("implementer")
+                        or ctx.role_spec("implement", state).runner,
+                        change_summary=state.get("change_summary", ""),
+                        checks=_checks_headline(_checks_of({"checks": checks}, iteration)),
+                        decision="repair",
+                        reason=reason,
+                    ).model_dump()],
+                )
+                return update
+
+        update.update(verifier_stop=stop.model_dump(), iteration_checks=iteration_checks)
+        return update
+
+    def route_after_verification(state: TddState) -> str:
+        return state.get("verify_route") or "judge"
 
     async def judge(state: TddState) -> dict[str, Any]:
         ctx.set_stage("judge", iteration=state.get("iteration", 0))
@@ -1084,10 +1340,11 @@ def build_graph(ctx: RunContext):
                 ctx.bead.acceptance_criteria,
                 state.get("context", {}),
                 diff,
-                state.get("last_tests"),
+                _checks_of(state, state.get("iteration", 0)),
                 state.get("attempts", []),
                 state.get("iteration", 0),
                 ctx.limits_note(state),
+                verifier_stop=state.get("verifier_stop"),
             ),
             schema=JudgeDecision.schema_for_agents(),
             iteration=state.get("iteration", 0),
@@ -1097,9 +1354,7 @@ def build_graph(ctx: RunContext):
             iteration=state.get("iteration", 0),
             implementer=state.get("implementer") or ctx.role_spec("implement", state).runner,
             change_summary=state.get("change_summary", ""),
-            tests=TestReport.model_validate(state["last_tests"]).headline()
-            if state.get("last_tests")
-            else "(none)",
+            checks=_checks_headline(_checks_of(state, state.get("iteration", 0))),
             decision=decision.decision,
             reason=decision.reason,
         )
@@ -1120,11 +1375,13 @@ def build_graph(ctx: RunContext):
             state.get("decision") or {"decision": "retry", "reason": "no decision recorded"}
         )
         breach = ctx.check_limits(state)
-        tests = state.get("last_tests")
-        tests_green = tests is not None and TestReport.model_validate(tests).ok
+        # Green means: every required check of this iteration passed.
+        tests_green = not any(
+            _is_red(check) for check in _checks_of(state, state.get("iteration", 0))
+        )
 
         decision = proposed
-        if proposed.decision == "done" and tests is not None and not tests_green:
+        if proposed.decision == "done" and not tests_green:
             decision = JudgeDecision(
                 decision="retry",
                 reason="judge said done while tests are failing; overridden by Alloy",
@@ -1320,7 +1577,7 @@ def build_graph(ctx: RunContext):
     graph.add_node("implement", implement)
     graph.add_node("triage", triage)
     graph.add_node("remediate", remediate)
-    graph.add_node("verify", verify)
+    graph.add_node("verification_loop", verification_loop)
     graph.add_node("judge", judge)
     graph.add_node("guard", guard)
     graph.add_node("critic", critic, input_schema=CriticInput)
@@ -1335,12 +1592,17 @@ def build_graph(ctx: RunContext):
     graph.add_conditional_edges(
         "prove_red", route_after_prove_red, ["tests", "implement", "human_gate"]
     )
-    graph.add_conditional_edges("implement", route_after_implement, ["triage", "verify"])
     graph.add_conditional_edges(
-        "triage", route_after_triage, ["remediate", "human_gate", "implement", "verify"]
+        "implement", route_after_implement, ["triage", "verification_loop"]
+    )
+    graph.add_conditional_edges(
+        "triage", route_after_triage,
+        ["remediate", "human_gate", "implement", "verification_loop"],
     )
     graph.add_conditional_edges("remediate", route_after_remediate, ["implement", "human_gate"])
-    graph.add_edge("verify", "judge")
+    graph.add_conditional_edges(
+        "verification_loop", route_after_verification, ["judge", "guard", "human_gate"]
+    )
     graph.add_edge("judge", "guard")
     graph.add_conditional_edges(
         "guard", route, ["implement", "critic", "human_gate", "finish"]
@@ -1368,6 +1630,12 @@ def initial_state(ctx: RunContext) -> TddState:
         baseline_repairs=0,
         tests_session=None,
         implementer="",
+        checks=[],
+        iteration_checks=0,
+        verifier_stop=None,
+        last_check=None,
+        last_instructions="",
+        verify_route=None,
         attempts=[],
         reported_bugs=[],
         triaged_titles=[],
@@ -1406,12 +1674,18 @@ def _tests_output_from(result) -> TestsOutput:
 
 
 def _last_exit_code(state: TddState) -> int | None:
-    """The human gate's `tests` field: the verify exit code once it has run,
-    else the last baseline check's."""
-    if state.get("last_tests"):
-        return state["last_tests"].get("exit_code")
+    """The human gate's `tests` field: the last verifier check's exit code once
+    one has run, else the last baseline check's."""
+    if state.get("last_check"):
+        return state["last_check"].get("exit_code")
     baseline = state.get("baseline") or []
     return baseline[-1].get("exit_code") if baseline else None
+
+
+def _is_red(check: dict[str, Any]) -> bool:
+    """A runnable, required check that did not pass."""
+    result = CheckResult.model_validate(check)
+    return result.required and result.runnable and not result.ok
 
 
 def _decision_from(result, state: TddState) -> JudgeDecision:

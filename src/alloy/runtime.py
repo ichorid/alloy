@@ -271,6 +271,9 @@ class RunContext:
         if calls >= allowed_calls:
             return f"max_agent_calls reached ({calls}/{allowed_calls})"
 
+        if self.total_checks(state) >= self.total_checks_allowed(state):
+            return "max_total_checks reached"
+
         elapsed = self.elapsed()
         allowed_wall = timedelta(minutes=limits.max_wall_time_minutes * multiplier)
         if elapsed > allowed_wall:
@@ -279,6 +282,13 @@ class RunContext:
                 f"{allowed_wall.total_seconds() / 60:.0f}m)"
             )
         return None
+
+    def total_checks(self, state: Mapping[str, Any]) -> int:
+        """Checks this run has executed: the baseline plus every verifier check."""
+        return len(state.get("baseline") or []) + len(state.get("checks") or [])
+
+    def total_checks_allowed(self, state: Mapping[str, Any]) -> int:
+        return self.recipe.verification.max_total_checks * self.budget(dict(state))
 
     def elapsed(self) -> timedelta:
         """Wall time since the run was first created, across restarts, minus

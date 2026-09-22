@@ -213,6 +213,44 @@ def implement_entry(succeed: bool = True) -> dict:
     }
 
 
+def verifier_run_entry(
+    command: str,
+    *,
+    kind: str = "targeted",
+    purpose: str = "",
+    required: bool = True,
+) -> dict:
+    return {
+        "structured": {
+            "action": "run",
+            "command": command,
+            "purpose": purpose or f"Run {kind} verification",
+            "kind": kind,
+            "required": required,
+            "reason": "",
+            "remaining_risks": [],
+        }
+    }
+
+
+def verifier_stop_entry(
+    reason: str = "verification evidence is sufficient",
+    *,
+    risks: tuple[str, ...] = (),
+) -> dict:
+    return {
+        "structured": {
+            "action": "stop",
+            "command": "",
+            "purpose": "",
+            "kind": "custom",
+            "required": True,
+            "reason": reason,
+            "remaining_risks": list(risks),
+        }
+    }
+
+
 def judge_entry(decision: str, reason: str = "", instructions: str = "") -> dict:
     return {
         "structured": {
