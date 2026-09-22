@@ -7,9 +7,15 @@ from pathlib import Path
 
 import pytest
 
+from types import SimpleNamespace
+
+from alloy.config import RoleSpec
 from alloy.models import RunnerUnavailable
 from alloy.runners import RunnerRegistry
 from alloy.runners.base import extract_json_object, schema_instructions
+from alloy.runtime import RunContext
+from alloy.store import Store
+from support import make_bead
 
 
 SCHEMA = {"type": "object", "properties": {"decision": {"type": "string"}}}
@@ -221,3 +227,67 @@ def test_json_extraction_survives_chatty_agents(text, expected):
 
 def test_schema_instructions_include_the_schema():
     assert "decision" in schema_instructions(SCHEMA)
+
+
+def test_claude_build_command_includes_effort_when_set():
+    runner = RunnerRegistry().get("claude")
+    argv = runner.build_command("hi", model="haiku", effort="low", structured_schema=None)
+    idx = argv.index("--effort")
+    assert argv[idx + 1] == "low"
+
+
+def test_claude_build_command_omits_effort_when_none():
+    runner = RunnerRegistry().get("claude")
+    argv = runner.build_command("hi", model="haiku", effort=None, structured_schema=None)
+    assert "--effort" not in argv
+
+
+def test_codex_build_command_includes_model_reasoning_effort_when_set():
+    runner = RunnerRegistry().get("codex")
+    argv = runner.build_command("hi", model="gpt-5.6-terra", effort="high", structured_schema=None)
+    idx = argv.index("-c")
+    assert argv[idx + 1] == 'model_reasoning_effort="high"'
+
+
+def test_codex_build_command_omits_model_reasoning_effort_when_none():
+    runner = RunnerRegistry().get("codex")
+    argv = runner.build_command("hi", model="gpt-5.6-terra", effort=None, structured_schema=None)
+    assert not any("model_reasoning_effort" in arg for arg in argv)
+
+
+async def test_run_context_passes_role_effort_to_claude_write_argv(
+    fake_harnesses, project, tmp_path
+):
+    fake_harnesses.configure({"implement": {"text": "ok"}})
+    store = Store(tmp_path / "alloy.db")
+    run_id = "run-effort"
+    store.create_run(
+        run_id=run_id,
+        bead_id="t-1",
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    ctx = RunContext(
+        bead=make_bead(),
+        recipe=None,
+        run_id=run_id,
+        worktree=SimpleNamespace(path=project),
+        worktrees=None,
+        registry=RunnerRegistry(log_dir=tmp_path / "logs"),
+        store=store,
+        checkpointer=None,
+        log_dir=tmp_path,
+        beads=None,
+    )
+    spec = RoleSpec.parse(
+        {"runner": "claude-write", "model": "haiku", "effort": "low"}
+    )
+    result = await ctx.call("implement", spec, "Implement the smallest change.")
+    assert result.ok
+    argv = fake_harnesses.calls_for("implement")[0]["argv"]
+    idx = argv.index("--effort")
+    assert argv[idx + 1] == "low"

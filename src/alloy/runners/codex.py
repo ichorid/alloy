@@ -19,11 +19,18 @@ class CodexRunner(CLIRunner):
     sandbox = "workspace-write"
 
     def build_command(
-        self, prompt: str, *, model: str | None, structured_schema: dict | None
+        self,
+        prompt: str,
+        *,
+        model: str | None,
+        structured_schema: dict | None,
+        effort: str | None = None,
     ) -> list[str]:
         args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", self.sandbox]
         if model:
             args += ["--model", model]
+        if effort:
+            args += ["-c", f'model_reasoning_effort="{effort}"']
         args += self.extra_args
         args.append(prompt)
         return args

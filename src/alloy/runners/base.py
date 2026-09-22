@@ -8,6 +8,7 @@ never reach the workflow graph.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import re
@@ -35,6 +36,7 @@ class AgentRunner(Protocol):
         cwd: Path,
         *,
         model: str | None = None,
+        effort: str | None = None,
         timeout: timedelta | None = None,
         structured_schema: dict | None = None,
         on_spawn: Callable[[int], None] | None = None,
@@ -109,6 +111,15 @@ def schema_instructions(schema: dict[str, Any]) -> str:
     )
 
 
+def _accepts_kwarg(func: Callable[..., Any], name: str) -> bool:
+    """Subclasses (GenericCLIRunner, user adapters) may predate a keyword; only
+    pass it to those that declare it."""
+    try:
+        return name in inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 class CLIRunner:
     """Base adapter: builds argv, runs it, records raw output, normalizes the result.
 
@@ -146,9 +157,15 @@ class CLIRunner:
     # -- subclass hooks ---------------------------------------------------
 
     def build_command(
-        self, prompt: str, *, model: str | None, structured_schema: dict | None
+        self,
+        prompt: str,
+        *,
+        model: str | None,
+        structured_schema: dict | None,
+        effort: str | None = None,
     ) -> list[str]:
-        """Arguments after the binary."""
+        """Arguments after the binary. ``effort`` is only passed to subclasses
+        that declare it, so adapters without an effort flag need not know."""
         raise NotImplementedError
 
     def build_prompt(self, prompt: str, structured_schema: dict | None) -> str:
@@ -174,6 +191,7 @@ class CLIRunner:
         cwd: Path,
         *,
         model: str | None = None,
+        effort: str | None = None,
         timeout: timedelta | None = None,
         structured_schema: dict | None = None,
         on_spawn: Callable[[int], None] | None = None,
@@ -187,12 +205,10 @@ class CLIRunner:
 
         model = model or self.default_model
         effective_prompt = self.build_prompt(prompt, structured_schema)
-        argv = [
-            binary_path,
-            *self.build_command(
-                effective_prompt, model=model, structured_schema=structured_schema
-            ),
-        ]
+        build_kwargs: dict[str, Any] = {"model": model, "structured_schema": structured_schema}
+        if effort is not None and _accepts_kwarg(self.build_command, "effort"):
+            build_kwargs["effort"] = effort
+        argv = [binary_path, *self.build_command(effective_prompt, **build_kwargs)]
         digest = prompt_hash(effective_prompt)
         started = utcnow()
         clock = time.monotonic()

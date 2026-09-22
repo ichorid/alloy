@@ -101,6 +101,8 @@ class RunContext:
                     # journal 9: the row exists before the harness does; the
                     # pid lands on it as soon as the spawn succeeds.
                     extra["on_spawn"] = lambda pid: self.store.set_call_pid(call_id, pid)
+                if spec.effort is not None and _accepts_kwarg(runner, "effort"):
+                    extra["effort"] = spec.effort
                 result = await runner.run(
                     prompt,
                     self.worktree.path,
@@ -268,7 +270,13 @@ class RunContext:
 def _accepts_on_spawn(runner: Any) -> bool:
     """Runners without a subprocess (HTTP adapters, test stubs) need not know
     about `on_spawn`; only pass it to those that declare the parameter."""
+    return _accepts_kwarg(runner, "on_spawn")
+
+
+def _accepts_kwarg(runner: Any, name: str) -> bool:
+    """Only pass optional `run` keywords (`on_spawn`, `effort`) to runners
+    that declare them."""
     try:
-        return "on_spawn" in inspect.signature(runner.run).parameters
+        return name in inspect.signature(runner.run).parameters
     except (TypeError, ValueError):
         return False

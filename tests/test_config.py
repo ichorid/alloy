@@ -56,16 +56,19 @@ def test_builtin_recipe_simple_tier_chain(recipe_name):
     simple = config.complexity.tiers["simple"]
     assert simple.runner == "cursor"
     assert simple.model == "composer-2.5"
+    assert simple.effort is None
 
     fb1 = simple.fallback
     assert fb1 is not None
     assert fb1.runner == "codex"
     assert fb1.model == "gpt-5.6-luna"
+    assert fb1.effort is None
 
     fb2 = fb1.fallback
     assert fb2 is not None
     assert fb2.runner == "claude-write"
     assert fb2.model == "haiku"
+    assert fb2.effort == "low"
     assert fb2.fallback is None
 
 
@@ -73,14 +76,22 @@ def test_builtin_recipe_simple_tier_chain(recipe_name):
 def test_builtin_recipe_medium_tier_chain(recipe_name):
     config = load_recipe(recipe_name)
     medium = config.complexity.tiers["medium"]
-    assert medium.runner == "claude-write"
-    assert medium.model == "sonnet"
+    assert medium.runner == "cursor"
+    assert medium.model == "composer-2.5"
+    assert medium.effort is None
 
     fb1 = medium.fallback
     assert fb1 is not None
-    assert fb1.runner == "cursor"
-    assert fb1.model == "composer-2.5"
-    assert fb1.fallback is None
+    assert fb1.runner == "codex"
+    assert fb1.model == "gpt-5.6-terra"
+    assert fb1.effort == "high"
+
+    fb2 = fb1.fallback
+    assert fb2 is not None
+    assert fb2.runner == "claude-write"
+    assert fb2.model == "sonnet"
+    assert fb2.effort == "high"
+    assert fb2.fallback is None
 
 
 @pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
@@ -98,23 +109,22 @@ def test_builtin_recipe_estimate_role_uses_jev_with_claude_fallback(recipe_name)
 def test_builtin_recipe_complex_tier_chain(recipe_name):
     config = load_recipe(recipe_name)
     complex_ = config.complexity.tiers["complex"]
-    assert complex_.runner == "astra"
-    assert complex_.fallback is not None
+    assert complex_.runner == "cursor"
+    assert complex_.model == "kimi-k3-high"
+    assert complex_.effort is None
 
     fb1 = complex_.fallback
+    assert fb1 is not None
     assert fb1.runner == "claude-write"
-    assert fb1.model == "fable"
-    assert fb1.fallback is not None
+    assert fb1.model == "opus"
+    assert fb1.effort is None
 
     fb2 = fb1.fallback
-    assert fb2.runner == "cursor"
-    assert fb2.model == "kimi-k3-high"
-    assert fb2.fallback is not None
-
-    fb3 = fb2.fallback
-    assert fb3.runner == "claude-write"
-    assert fb3.model == "opus"
-    assert fb3.fallback is None
+    assert fb2 is not None
+    assert fb2.runner == "astra"
+    assert fb2.model is None
+    assert fb2.effort is None
+    assert fb2.fallback is None
 
 
 @pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
@@ -268,5 +278,61 @@ def test_parse_folds_tier_list_into_fallback_chain():
     raw["roles"]["implement"]["tiered"] = True
     config = RecipeConfig.parse(raw)
     simple = config.complexity.tiers["simple"]
-    assert simple == RoleSpec(runner="cursor", model="composer-2.5",
-                               fallback=RoleSpec(runner="codex", model="gpt-5.6-luna"))
+    assert simple == RoleSpec(
+        runner="cursor",
+        model="composer-2.5",
+        fallback=RoleSpec(runner="codex", model="gpt-5.6-luna"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# RoleSpec.effort (alloy-0uc.14)
+# ---------------------------------------------------------------------------
+
+
+def test_role_spec_parse_effort_sets_field_and_label():
+    spec = RoleSpec.parse(
+        {"runner": "claude-write", "model": "haiku", "effort": "low"}
+    )
+    assert spec.effort == "low"
+    assert spec.label == "claude-write:haiku@low"
+
+
+def test_role_spec_parse_codex_without_effort():
+    spec = RoleSpec.parse({"runner": "codex"})
+    assert spec.effort is None
+
+
+def test_role_spec_parse_rejects_unknown_effort():
+    with pytest.raises(ConfigError):
+        RoleSpec.parse({"runner": "claude-write", "effort": "turbo"})
+
+
+def test_complexity_tier_rejects_effort_on_cursor_runner():
+    raw = _base_raw_recipe(
+        complexity={
+            "routing": "live",
+            "tiers": {
+                "simple": [
+                    {"runner": "cursor", "model": "composer-2.5", "effort": "low"},
+                ],
+            },
+        }
+    )
+    with pytest.raises(ConfigError):
+        RecipeConfig.parse(raw)
+
+
+def test_complexity_tier_rejects_effort_on_cursor_plan_runner():
+    raw = _base_raw_recipe(
+        complexity={
+            "routing": "live",
+            "tiers": {
+                "simple": [
+                    {"runner": "cursor-plan", "model": "composer-2.5", "effort": "high"},
+                ],
+            },
+        }
+    )
+    with pytest.raises(ConfigError):
+        RecipeConfig.parse(raw)

@@ -20,6 +20,11 @@ BUILTIN_RECIPE_DIR = Path(__file__).parent / "recipes"
 
 DEFAULT_ROLE_TIMEOUT_MIN = 20.0
 
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+# Cursor has no effort knob: the effort lives in the model id (kimi-k3-high).
+_RUNNERS_WITHOUT_EFFORT = ("cursor", "cursor-plan")
+
 
 @dataclass(frozen=True)
 class RoleSpec:
@@ -35,6 +40,10 @@ class RoleSpec:
     Codex CLI is missing, rate-limited, or times out.
     """
     tiered: bool = False
+    effort: str | None = None
+    """Reasoning effort for this entry (claude ``--effort``, codex
+    ``model_reasoning_effort``). Per entry, not a global default, so a tier can
+    pair a cheap model with low effort and its fallback with high."""
 
     @property
     def timeout(self) -> timedelta:
@@ -42,7 +51,8 @@ class RoleSpec:
 
     @property
     def label(self) -> str:
-        return f"{self.runner}:{self.model}" if self.model else self.runner
+        label = f"{self.runner}:{self.model}" if self.model else self.runner
+        return f"{label}@{self.effort}" if self.effort else label
 
     @classmethod
     def parse(cls, raw: Any, *, default_runner: str = "claude") -> "RoleSpec":
@@ -50,6 +60,11 @@ class RoleSpec:
             return cls(runner=raw)
         raw = raw or {}
         fallback_raw = raw.get("fallback")
+        effort = raw.get("effort")
+        if effort is not None and effort not in EFFORT_LEVELS:
+            raise ConfigError(
+                f"invalid effort {effort!r}; expected one of {', '.join(EFFORT_LEVELS)}"
+            )
         return cls(
             runner=raw.get("runner", default_runner),
             model=raw.get("model"),
@@ -57,6 +72,7 @@ class RoleSpec:
             fallback=cls.parse(fallback_raw, default_runner=default_runner)
             if fallback_raw else None,
             tiered=bool(raw.get("tiered", False)),
+            effort=effort,
         )
 
 
@@ -86,7 +102,13 @@ class ComplexitySpec:
             for entry in reversed(entries):
                 if not isinstance(entry, dict):
                     raise ConfigError(f"complexity tier {level!r} entries must be mappings")
-                chain = replace(RoleSpec.parse(entry), fallback=chain)
+                spec = RoleSpec.parse(entry)
+                if spec.effort and spec.runner in _RUNNERS_WITHOUT_EFFORT:
+                    raise ConfigError(
+                        f"complexity tier {level!r}: runner {spec.runner!r} has no effort "
+                        "knob; encode it in the model id instead"
+                    )
+                chain = replace(spec, fallback=chain)
             tiers[level] = chain
         return cls(routing=routing, escalate_after_retries=retries, tiers=tiers)
 
