@@ -57,6 +57,8 @@ def _run_node_and_call_seconds(nodeid: str) -> float:
             "-q",
             "-o",
             "addopts=",
+            "-p",
+            "no:xdist",
             nodeid,
             "--durations=0",
         ],

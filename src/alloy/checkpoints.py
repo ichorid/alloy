@@ -8,6 +8,7 @@ synchronously.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -30,7 +31,14 @@ async def open_checkpointer(path: Path) -> AsyncIterator[AsyncSqliteSaver]:
         await saver.setup()
         yield saver
     finally:
-        await connection.close()
+        # Drain queued writes outside the cancelled task. If cancellation arrives
+        # during close, finish cleanup before letting the caller resume the run.
+        closing = asyncio.create_task(connection.close())
+        try:
+            await asyncio.shield(closing)
+        except asyncio.CancelledError:
+            await closing
+            raise
 
 
 def read_checkpoint(path: Path, thread_id: str) -> dict[str, Any] | None:
