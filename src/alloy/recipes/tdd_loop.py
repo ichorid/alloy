@@ -527,7 +527,9 @@ def build_graph(ctx: RunContext):
     async def implement(state: TddState) -> dict[str, Any]:
         iteration = state.get("iteration", 0) + 1
         ctx.set_stage("implement", iteration=iteration)
-        spec = ctx.recipe.role("implement")
+        spec = ctx.role_spec("implement", state)
+        if ctx.recipe.complexity.routing == "live" and ctx.recipe.role("implement").tiered:
+            ctx.set_dispatch_tier(state.get("complexity"))
         result = await ctx.call(
             "implement",
             spec,
@@ -587,7 +589,7 @@ def build_graph(ctx: RunContext):
         decision = _decision_from(result, state)
         attempt = Attempt(
             iteration=state.get("iteration", 0),
-            implementer=state.get("implementer") or ctx.recipe.role("implement").runner,
+            implementer=state.get("implementer") or ctx.role_spec("implement", state).runner,
             change_summary=state.get("change_summary", ""),
             tests=TestReport.model_validate(state["last_tests"]).headline()
             if state.get("last_tests")

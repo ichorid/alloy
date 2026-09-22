@@ -515,6 +515,12 @@ def _current_agent(
     if config and stage in _STAGE_ROLES:
         spec = config.roles.get(stage)
         if spec:
+            try:
+                # Live routing dispatches tiered roles through the tier chain
+                # for the run's complexity (recorded on the run row by estimate).
+                spec = config.resolve_role(stage, record.get("complexity"))
+            except ConfigError:
+                pass  # complexity not known yet: show the role's own spec
             # A failed primary call for this very stage/iteration means the
             # fallback is what is running now.
             calls = engine.store.agent_calls(record["run_id"])
