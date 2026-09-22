@@ -27,6 +27,11 @@ def test_slugify_basic():
     assert slugify("Hello World") == "hello-world"
 '''
 
+PASSING_TEST_GREEN = '''
+def test_slugify_placeholder():
+    assert True
+'''
+
 IMPLEMENTATION = '''
 import re
 
@@ -176,10 +181,26 @@ def estimate_entry(
     }
 
 
-def write_tests_entry() -> dict:
+def write_tests_entry(
+    *,
+    baseline_checks: list[dict[str, str]] | None = None,
+    passing: bool = False,
+) -> dict:
+    if baseline_checks is None:
+        baseline_checks = [
+            {
+                "command": f"{sys.executable} -m pytest -q tests/test_slugify.py",
+                "purpose": "Confirm slugify tests fail before implementation",
+            }
+        ]
+    content = PASSING_TEST_GREEN if passing else PASSING_TEST
     return {
         "text": "Added tests/test_slugify.py covering the acceptance criteria.",
-        "write": [{"path": "tests/test_slugify.py", "content": PASSING_TEST}],
+        "write": [{"path": "tests/test_slugify.py", "content": content}],
+        "structured": {
+            "summary": "Added tests/test_slugify.py for slugify acceptance criteria.",
+            "baseline_checks": baseline_checks,
+        },
     }
 
 
