@@ -17,6 +17,14 @@ from pydantic import BaseModel, Field
 MAX_EMBEDDED_TEXT = 4000
 """Hard cap on any agent text copied into graph state."""
 
+COMPLEXITY_LEVELS = ("simple", "medium", "complex")
+Complexity = Literal["simple", "medium", "complex"]
+
+
+def next_level(level: Complexity) -> str:
+    index = COMPLEXITY_LEVELS.index(level)
+    return COMPLEXITY_LEVELS[min(index + 1, len(COMPLEXITY_LEVELS) - 1)]
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
