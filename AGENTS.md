@@ -123,6 +123,19 @@ alloy start
 - If `alloy recipes` reports a runner as missing, fix that before running —
   don't route around it by hand.
 
+## Agent skills
+
+Decomposition and day-to-day Alloy operation are spelled out in project skills
+(kept in sync between editors):
+
+| Skill | Role |
+|-------|------|
+| `alloy-product-designer` | Spec → epic + dependency-ordered beads |
+| `alloy-manager` | Run, monitor, human gates, review, merge |
+
+- **Cursor:** `.cursor/skills/<name>/SKILL.md`
+- **Claude Code:** `.claude/skills/<name>/SKILL.md`
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:46cd31e7 -->
 ## Beads Issue Tracker
 
