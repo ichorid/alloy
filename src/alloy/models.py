@@ -268,6 +268,45 @@ class CheckResult(BaseModel):
 TestReport = CheckResult  # legacy alias; removed by alloy-21u.7
 
 
+class TestsOutput(BaseModel):
+    """Structured answer of the tests role: what it wrote and the exact commands
+    that prove the requested behaviour is not implemented yet. Alloy runs them;
+    the role never says whether they passed."""
+
+    summary: str = ""
+    baseline_checks: list[CheckRequest] = Field(default_factory=list)
+
+    @field_validator("baseline_checks", mode="after")
+    @classmethod
+    def _targeted_and_required(cls, checks: list[CheckRequest]) -> list[CheckRequest]:
+        return [
+            check.model_copy(update={"kind": "targeted", "required": True}) for check in checks
+        ]
+
+    @classmethod
+    def schema_for_agents(cls) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string"},
+                "baseline_checks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "string"},
+                            "purpose": {"type": "string"},
+                        },
+                        "required": ["command", "purpose"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["summary", "baseline_checks"],
+            "additionalProperties": False,
+        }
+
+
 Decision = Literal["done", "retry", "consilium", "human", "abort"]
 DECISIONS: tuple[str, ...] = ("done", "retry", "consilium", "human", "abort")
 

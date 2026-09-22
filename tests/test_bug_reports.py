@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from conftest import implement_entry, triage_entry
-from support import make_harness
+from support import make_bead, make_harness
 from test_workflow import script
 
 from alloy.models import BugReport, extract_bug_reports
@@ -166,7 +166,9 @@ async def test_non_blocking_implement_bug_is_recorded_without_changing_outcome(
         )
     )
 
-    bug_harness = make_harness(project, alloy_home)
+    # A fresh bead gets a fresh worktree: the first run's worktree already
+    # contains the implementation, so its targeted baseline would be green.
+    bug_harness = make_harness(project, alloy_home, bead=make_bead("t-2"))
     try:
         with_bug = await bug_harness.start()
     finally:

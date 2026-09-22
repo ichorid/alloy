@@ -246,7 +246,15 @@ async def test_two_runs_for_the_same_bead_each_show_their_own_state(
 ):
     store = Store(alloy_home / "alloy.db")
 
-    fake_harnesses.configure(script(judge=[judge_entry("human", "need a decision")]))
+    # Both runs share the bead's worktree. The parked run must not leave a
+    # working slugify behind, or the second run's targeted baseline is green
+    # and prove_red parks it at the human gate instead of letting it finish.
+    fake_harnesses.configure(
+        script(
+            implement=[implement_entry(succeed=False)],
+            judge=[judge_entry("human", "need a decision")],
+        )
+    )
     parked = make_harness(project, alloy_home, store=store, run_id="run-parked")
     try:
         await parked.start()

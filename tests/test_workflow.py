@@ -6,6 +6,7 @@ them -- especially where Alloy overrules the agent.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import replace
 
 from alloy.config import Limits
@@ -77,8 +78,124 @@ async def test_baseline_records_that_the_new_tests_fail_first(
     finally:
         harness.close()
 
-    assert final["baseline"]["exit_code"] != 0  # tests were failing before implementation
+    assert final["baseline"][0]["exit_code"] != 0  # tests were failing before implementation
     assert final["last_tests"]["exit_code"] == 0  # and passing after
+
+
+# -- targeted baseline (prove_red) ------------------------------------------
+
+
+async def test_prove_red_runs_targeted_baseline_checks_from_tests_role(
+    project, alloy_home, fake_harnesses
+):
+    fake_harnesses.configure(script())
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    baseline = final["baseline"]
+    assert isinstance(baseline, list)
+    assert len(baseline) == 1
+    command = baseline[0]["command"]
+    assert command.endswith("tests/test_slugify.py")
+    assert baseline[0]["exit_code"] != 0
+
+    log_dir = alloy_home / "logs" / harness.run_id
+    targeted_logs = list(log_dir.glob("check-*-targeted-*.log"))
+    assert len(targeted_logs) == 1
+    assert targeted_logs[0].read_text(encoding="utf-8").splitlines()[0] == f"$ {command}"
+
+
+async def test_implement_prompt_lists_baseline_checks_not_whole_suite_command(
+    project, alloy_home, fake_harnesses
+):
+    fake_harnesses.configure(script())
+    harness = make_harness(project, alloy_home)
+    try:
+        await harness.start()
+    finally:
+        harness.close()
+
+    first_implement = fake_harnesses.calls_for("implement")[0]["prompt"]
+    assert "Checks that must go green" in first_implement
+    assert f"{sys.executable} -m pytest -q tests/test_slugify.py" in first_implement
+    assert "## Test command" not in first_implement
+
+
+async def test_green_baseline_reruns_tests_then_proceeds_when_red(
+    project, alloy_home, fake_harnesses
+):
+    fake_harnesses.configure(
+        script(tests=[write_tests_entry(passing=True), write_tests_entry()])
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    assert final["baseline_repairs"] == 1
+    tests_calls = fake_harnesses.calls_for("tests")
+    assert len(tests_calls) == 2
+    assert "passed" in tests_calls[1]["prompt"]
+    assert f"{sys.executable} -m pytest -q tests/test_slugify.py" in tests_calls[1]["prompt"]
+
+
+async def test_always_green_baseline_parks_at_human_gate(
+    project, alloy_home, fake_harnesses
+):
+    config = replace(
+        load_config(),
+        verification=replace(load_config().verification, max_baseline_repairs=1),
+    )
+    fake_harnesses.configure(
+        script(tests=[write_tests_entry(passing=True), write_tests_entry(passing=True)])
+    )
+    harness = make_harness(project, alloy_home, config=config)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert "__interrupt__" in final
+    reason = final["__interrupt__"][0].value["reason"]
+    assert reason.startswith("baseline unexpectedly green")
+    assert len(fake_harnesses.calls_for("tests")) == 2
+    assert fake_harnesses.calls_for("implement") == []
+
+
+async def test_unrunnable_baseline_reruns_tests_with_command_not_found(
+    project, alloy_home, fake_harnesses
+):
+    fake_harnesses.configure(
+        script(
+            tests=[
+                write_tests_entry(
+                    baseline_checks=[
+                        {
+                            "command": "definitely-not-a-program",
+                            "purpose": "probe missing executable",
+                        }
+                    ]
+                ),
+                write_tests_entry(),
+            ]
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    tests_calls = fake_harnesses.calls_for("tests")
+    assert len(tests_calls) == 2
+    assert "command not found" in tests_calls[1]["prompt"]
+    assert "definitely-not-a-program" in tests_calls[1]["prompt"]
 
 
 # -- retry ------------------------------------------------------------------

@@ -31,6 +31,7 @@ from alloy.models import (
     Attempt,
     BugReport,
     BugTriage,
+    CheckRequest,
     ComplexityEstimate,
     ContextPacket,
     Critique,
@@ -40,6 +41,7 @@ from alloy.models import (
     ProjectSnapshot,
     ScopeVerdict,
     TestReport,
+    TestsOutput,
     clip,
     extract_bug_reports,
     next_level,
@@ -73,7 +75,10 @@ class TddState(TypedDict, total=False):
     retries_on_tier: int
     escalations: Annotated[list[dict[str, Any]], operator.add]
     test_command: str | None
-    baseline: dict[str, Any] | None
+    baseline_checks: list[dict[str, Any]]      # CheckRequest dicts from the tests role
+    baseline: list[dict[str, Any]] | None      # CheckResult dicts from prove_red
+    baseline_repairs: int
+    tests_session: dict[str, Any] | None       # {runner, session_id} of the last tests call
 
     iteration: int
     consiliums: int
@@ -179,7 +184,10 @@ Return complexity, reason and confidence in the required structured output.
 """
 
 
-def tests_prompt(brief: str, acceptance: str, context: dict[str, Any]) -> str:
+def tests_prompt(
+    brief: str, acceptance: str, context: dict[str, Any], instructions: str = ""
+) -> str:
+    required = f"\n## Required changes this iteration\n{instructions}\n" if instructions else ""
     return f"""Write failing tests for this task. Do not implement the behavior itself.
 
 {brief}
@@ -189,7 +197,7 @@ def tests_prompt(brief: str, acceptance: str, context: dict[str, Any]) -> str:
 
 ## Repository context
 {_render_context(context)}
-
+{required}
 Requirements:
 - Add tests that encode the acceptance criteria, following this repo's existing test conventions.
 - The tests must fail right now, because the behavior does not exist yet.
@@ -198,7 +206,12 @@ Requirements:
 - Alloy owns task tracking, verification and git: do not run `bd`, do not commit,
   and do not run the whole test suite -- run only the tests you wrote.
 
-When you are done, state in one paragraph which test files you added or changed and what each asserts.
+When you are done, answer with the structured output: `summary` (one paragraph naming which
+test files you added or changed and what each asserts) and `baseline_checks`, the exact
+shell commands, each with its purpose, that Alloy will run to demonstrate the requested
+behaviour is not implemented yet. Every command must target only the tests you wrote
+(e.g. one test file or node id), never the whole suite, and must be red right now.
+Alloy runs them itself and decides from the exit codes.
 
 {BUG_PROTOCOL}
 """
@@ -211,10 +224,11 @@ def implement_prompt(
     brief: str,
     acceptance: str,
     context: dict[str, Any],
-    test_command: str | None,
+    test_command: str | None,  # legacy whole-suite command; still in state for verify, not shown
     instructions: str,
     history: list[dict[str, Any]],
     last_tests: dict[str, Any] | None,
+    baseline_checks: list[dict[str, Any]] | None = None,
 ) -> str:
     sections = [
         "Implement the smallest change that makes the failing tests pass.",
@@ -222,8 +236,8 @@ def implement_prompt(
         f"## Acceptance criteria\n{acceptance or '(none stated)'}",
         f"## Repository context\n{_render_context(context)}",
     ]
-    if test_command:
-        sections.append(f"## Test command\n`{test_command}`")
+    if baseline_checks:
+        sections.append("## Checks that must go green\n" + _render_checks(baseline_checks))
     if last_tests:
         sections.append(f"## Current test results\n{_render_tests(last_tests)}")
     if history:
@@ -549,6 +563,14 @@ def _render_context(context: dict[str, Any] | None) -> str:
     return "\n".join(line for line in lines if line)
 
 
+def _render_checks(checks: list[dict[str, Any]]) -> str:
+    lines = []
+    for raw in checks:
+        check = CheckRequest.model_validate(raw)
+        lines.append(f"- `{check.command}`" + (f" -- {check.purpose}" if check.purpose else ""))
+    return "\n".join(lines)
+
+
 def _render_tests(tests: dict[str, Any] | None) -> str:
     if not tests:
         return "(not run yet)"
@@ -698,8 +720,12 @@ def build_graph(ctx: RunContext):
             "tests",
             spec,
             tests_prompt(
-                ctx.bead.task_brief(), ctx.bead.acceptance_criteria, state.get("context", {})
+                ctx.bead.task_brief(),
+                ctx.bead.acceptance_criteria,
+                state.get("context", {}),
+                state.get("instructions", ""),
             ),
+            schema=TestsOutput.schema_for_agents(),
             iteration=0,
         )
         reported_bugs = _capture_bugs("tests", result, state, 0)
@@ -718,7 +744,16 @@ def build_graph(ctx: RunContext):
                     "the tests stage runs again from scratch.",
                 ).model_dump(),
             }
-        return {"stage": "tests", "instructions": "", "reported_bugs": reported_bugs}
+        output = _tests_output_from(result)
+        update: dict[str, Any] = {
+            "stage": "tests",
+            "instructions": "",
+            "reported_bugs": reported_bugs,
+            "baseline_checks": [c.model_dump(mode="json") for c in output.baseline_checks],
+        }
+        if result.session_id:
+            update["tests_session"] = {"runner": result.runner, "session_id": result.session_id}
+        return update
 
     def route_after_tests(state: TddState) -> str:
         """A harness that cannot write the tests has nothing for the implementer
@@ -728,31 +763,66 @@ def build_graph(ctx: RunContext):
             return "finish"
         if decision == "human":
             return "human_gate"
-        return "baseline"
+        return "prove_red"
 
     def route_after_human(state: TddState) -> str:
         return state.get("resume_target") or "implement"
 
-    async def baseline(state: TddState) -> dict[str, Any]:
-        """Confirm the new tests actually fail before anyone implements anything."""
+    async def prove_red(state: TddState) -> dict[str, Any]:
+        """Run the tests role's baseline checks. RED -- every check runnable and
+        failing -- is the only way forward; anything else sends the tests role
+        back with the facts, a bounded number of times, then a human."""
         ctx.set_stage("baseline")
-        command = state.get("test_command")
-        if not command:
-            return {
-                "baseline": None,
-                "stage": "baseline",
-                "instructions": "No test command could be determined; "
-                "make sure the suite is runnable.",
-            }
-        report = await ctx.verify(command)
-        note = ""
-        if report.ok:
-            note = (
-                "Note: the suite already passes, so the new tests may not exercise the "
-                "requested behavior. Check that they encode the acceptance criteria."
+        checks = [CheckRequest.model_validate(c) for c in state.get("baseline_checks", [])]
+        results = [await ctx.run_check(check) for check in checks]
+        update: dict[str, Any] = {
+            "baseline": [r.model_dump(mode="json") for r in results],
+            "stage": "baseline",
+            "instructions": "",
+        }
+        problems: list[str] = []
+        unrunnable = False
+        if not checks:
+            problems.append("no baseline command given")
+            unrunnable = True
+        for result in results:
+            if not result.runnable:
+                problems.append(f"`{result.command}`: {result.headline()}")
+                unrunnable = True
+            elif result.ok:
+                problems.append(f"`{result.command}`: passed")
+        if not problems:
+            return update
+        repairs = state.get("baseline_repairs", 0) + 1
+        headline = "baseline not runnable" if unrunnable else "baseline unexpectedly green"
+        detail = f"{headline}: " + "; ".join(problems)
+        if repairs > ctx.recipe.verification.max_baseline_repairs:
+            update.update(
+                resume_to="tests",
+                decision=JudgeDecision(
+                    decision="human",
+                    reason=detail,
+                    next_instructions="The tests role could not produce a red, runnable "
+                    "baseline. Tell it what to fix; the tests stage runs again.",
+                ).model_dump(),
             )
-        return {"baseline": report.model_dump(mode="json"), "stage": "baseline",
-                "instructions": note}
+            return update
+        update.update(
+            baseline_repairs=repairs,
+            instructions=(
+                f"The baseline you supplied did not prove the behaviour is missing "
+                f"({detail}). Every baseline command must run and fail right now. Fix "
+                "the tests or the commands and answer with the corrected baseline_checks."
+            ),
+        )
+        return update
+
+    def route_after_prove_red(state: TddState) -> str:
+        if (state.get("decision") or {}).get("decision") == "human" and state.get("resume_to"):
+            return "human_gate"
+        if state.get("instructions"):
+            return "tests"
+        return "implement"
 
     async def implement(state: TddState) -> dict[str, Any]:
         iteration = state.get("iteration", 0) + 1
@@ -771,6 +841,7 @@ def build_graph(ctx: RunContext):
                 state.get("instructions", ""),
                 state.get("attempts", []),
                 state.get("last_tests"),
+                baseline_checks=state.get("baseline_checks", []),
             ),
             iteration=iteration,
         )
@@ -1206,7 +1277,7 @@ def build_graph(ctx: RunContext):
                 "question": decision.get("next_instructions", ""),
                 "limit_hit": state.get("limit_hit"),
                 "iteration": state.get("iteration", 0),
-                "tests": (state.get("last_tests") or {}).get("exit_code"),
+                "tests": _last_exit_code(state),
                 "worktree": str(ctx.worktree.path),
             }
         )
@@ -1245,7 +1316,7 @@ def build_graph(ctx: RunContext):
     graph.add_node("context", gather_context)
     graph.add_node("estimate", estimate)
     graph.add_node("tests", write_tests)
-    graph.add_node("baseline", baseline)
+    graph.add_node("prove_red", prove_red)
     graph.add_node("implement", implement)
     graph.add_node("triage", triage)
     graph.add_node("remediate", remediate)
@@ -1260,8 +1331,10 @@ def build_graph(ctx: RunContext):
     graph.add_edge(START, "context")
     graph.add_edge("context", "estimate")
     graph.add_edge("estimate", "tests")
-    graph.add_conditional_edges("tests", route_after_tests, ["baseline", "finish", "human_gate"])
-    graph.add_edge("baseline", "implement")
+    graph.add_conditional_edges("tests", route_after_tests, ["prove_red", "finish", "human_gate"])
+    graph.add_conditional_edges(
+        "prove_red", route_after_prove_red, ["tests", "implement", "human_gate"]
+    )
     graph.add_conditional_edges("implement", route_after_implement, ["triage", "verify"])
     graph.add_conditional_edges(
         "triage", route_after_triage, ["remediate", "human_gate", "implement", "verify"]
@@ -1290,6 +1363,10 @@ def initial_state(ctx: RunContext) -> TddState:
         retries_on_tier=0,
         escalations=[],
         instructions="",
+        baseline_checks=[],
+        baseline=None,
+        baseline_repairs=0,
+        tests_session=None,
         implementer="",
         attempts=[],
         reported_bugs=[],
@@ -1317,6 +1394,24 @@ def _context_from(result) -> ContextPacket:
             pass
     return ContextPacket(summary=clip(result.text, 3000) if result.ok else
                          f"(context gathering failed: {result.error})")
+
+
+def _tests_output_from(result) -> TestsOutput:
+    if result.structured:
+        try:
+            return TestsOutput.model_validate(result.structured)
+        except Exception:
+            pass
+    return TestsOutput(summary=clip(result.text, 3000))
+
+
+def _last_exit_code(state: TddState) -> int | None:
+    """The human gate's `tests` field: the verify exit code once it has run,
+    else the last baseline check's."""
+    if state.get("last_tests"):
+        return state["last_tests"].get("exit_code")
+    baseline = state.get("baseline") or []
+    return baseline[-1].get("exit_code") if baseline else None
 
 
 def _decision_from(result, state: TddState) -> JudgeDecision:
