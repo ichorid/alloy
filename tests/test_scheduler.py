@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from alloy import beads as bd
@@ -16,6 +18,7 @@ from conftest import (
     synthesize_entry,
     write_tests_entry,
 )
+from support import await_role
 
 
 def script(**overrides):
@@ -94,14 +97,15 @@ async def test_recover_adopts_runs_whose_process_died(
     scheduler, beads_project, fake_harnesses
 ):
     """Start a run, lose the process, and let the next scheduler finish it."""
-    import asyncio
-
     engine = scheduler.engine
     fake_harnesses.configure(script(implement=[{"sleep": 60}]))
     bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop")
 
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(engine.run(bead_id), timeout=8)
+    task = asyncio.create_task(engine.run(bead_id))
+    await await_role(fake_harnesses, "implement", timeout=30)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
     record = engine.store.latest_run_for_bead(bead_id)
     engine.store.update_run(record["run_id"], pid=dead_pid())
@@ -154,14 +158,15 @@ async def test_recover_reconciles_inflight_before_adopting_orphaned_runs(
     """Per the plan, `Scheduler.recover()` must reconcile stale `inflight_calls`
     rows before it re-adopts any orphaned run, so a leaked row from the crashed
     process is never attributed to whatever runs next."""
-    import asyncio
-
     engine = scheduler.engine
     fake_harnesses.configure(script(implement=[{"sleep": 60}]))
     bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop")
 
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(engine.run(bead_id), timeout=8)
+    task = asyncio.create_task(engine.run(bead_id))
+    await await_role(fake_harnesses, "implement", timeout=30)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
     record = engine.store.latest_run_for_bead(bead_id)
     engine.store.update_run(record["run_id"], pid=dead_pid())
