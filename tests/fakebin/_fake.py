@@ -37,6 +37,17 @@ def find_prompt(argv: list[str]) -> tuple[str, str]:
     return "unknown", max(candidates, key=len) if candidates else ""
 
 
+def find_resume(argv: list[str]) -> str | None:
+    """The session id passed to `--resume <id>` (claude, cursor) or
+    `exec resume <id>` (codex), if any."""
+    if argv[:2] == ["exec", "resume"] and len(argv) > 2:
+        return argv[2]
+    for index, arg in enumerate(argv[:-1]):
+        if arg == "--resume":
+            return argv[index + 1]
+    return None
+
+
 def take(config: dict, role: str, runner: str, counters: Path) -> dict:
     entry = config.get(f"{role}@{runner}", config.get(role))
     if entry is None:
@@ -75,21 +86,26 @@ def main() -> int:
     runner = Path(sys.argv[0]).name
     argv = sys.argv[1:]
     role, prompt = find_prompt(argv)
+    resume = find_resume(argv)
 
     workdir = Path(os.environ["ALLOY_FAKE_DIR"])
     workdir.mkdir(parents=True, exist_ok=True)
     config = json.loads(Path(os.environ["ALLOY_FAKE_CONFIG"]).read_text())
     entry = take(config, role, runner, workdir / "counters.json")
 
+    record = {
+        "runner": runner, "role": role, "cwd": os.getcwd(),
+        "argv": argv, "prompt": prompt,
+    }
+    if resume is not None:
+        record["resume"] = resume
     with (workdir / "calls.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({
-            "runner": runner, "role": role, "cwd": os.getcwd(),
-            "argv": argv, "prompt": prompt,
-        }) + "\n")
+        handle.write(json.dumps(record) + "\n")
 
     apply_side_effects(entry)
 
     text = entry.get("text", f"{runner} handled {role}")
+    session_id = str(entry.get("session_id", "fake-session"))
     structured = entry.get("structured")
     exit_code = int(entry.get("exit", 0))
     if entry.get("stderr"):
@@ -103,7 +119,7 @@ def main() -> int:
     if runner.startswith("claude"):
         envelope = {
             "type": "result", "subtype": "success", "is_error": envelope_is_error,
-            "result": text, "session_id": "fake-session", "num_turns": 1,
+            "result": text, "session_id": session_id, "num_turns": 1,
             "total_cost_usd": 0.01,
             "usage": {"input_tokens": 100, "output_tokens": 20},
         }
@@ -111,7 +127,8 @@ def main() -> int:
             envelope["structured_output"] = structured
         print(json.dumps(envelope))
     elif runner.startswith("codex"):
-        print(json.dumps({"type": "thread.started", "thread_id": "fake-thread"}))
+        thread_id = str(entry.get("session_id", "fake-thread"))
+        print(json.dumps({"type": "thread.started", "thread_id": thread_id}))
         if entry.get("codex_error") is not None:
             print(json.dumps({
                 "type": "error",
@@ -131,7 +148,7 @@ def main() -> int:
         body = text if structured is None else json.dumps(structured)
         print(json.dumps({
             "type": "result", "subtype": "success", "is_error": envelope_is_error,
-            "duration_ms": 10, "result": body, "session_id": "fake-session",
+            "duration_ms": 10, "result": body, "session_id": session_id,
             "usage": {"inputTokens": 100, "outputTokens": 20},
         }))
     else:  # pi and any generic templated runner

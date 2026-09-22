@@ -65,22 +65,39 @@ class RunContext:
         *,
         schema: dict[str, Any] | None = None,
         iteration: int = 0,
+        resume_session: str | None = None,
     ) -> AgentResult:
         """Run one harness, always inside this task's worktree, always recorded.
 
         If the role names a fallback and the primary runner is unavailable,
         times out, or exits non-zero, the same prompt goes to the fallback.
         Every attempt is recorded, so the ledger shows what actually ran.
+
+        `resume_session` continues an earlier session of the primary runner;
+        a fallback is a different harness and cannot resume it, so the
+        fallback attempt always starts cold.
         """
-        result = await self._call_one(role, spec, prompt, schema=schema, iteration=iteration)
+        result = await self._call_one(
+            role, spec, prompt, schema=schema, iteration=iteration,
+            resume_session=resume_session,
+        )
         while not result.ok and spec.fallback is not None:
             log.warning(
                 "%s: %s failed (%s); falling back to %s",
                 role, spec.label, (result.error or f"exit {result.exit_code}")[:200],
                 spec.fallback.label,
             )
+            if resume_session is not None:
+                log.warning(
+                    "%s: dropping resume session %s -- %s cannot resume a %s session",
+                    role, resume_session, spec.fallback.label, spec.label,
+                )
+                resume_session = None
             spec = spec.fallback
-            result = await self._call_one(role, spec, prompt, schema=schema, iteration=iteration)
+            result = await self._call_one(
+                role, spec, prompt, schema=schema, iteration=iteration,
+                resume_session=None,
+            )
         return result
 
     async def _call_one(
@@ -91,6 +108,7 @@ class RunContext:
         *,
         schema: dict[str, Any] | None,
         iteration: int,
+        resume_session: str | None = None,
     ) -> AgentResult:
         """One harness invocation, visible in `inflight_calls` while it runs
         and moved into `agent_calls` in the same transaction when it ends."""
@@ -111,6 +129,8 @@ class RunContext:
                     extra["on_spawn"] = lambda pid: self.store.set_call_pid(call_id, pid)
                 if spec.effort is not None and _accepts_kwarg(runner, "effort"):
                     extra["effort"] = spec.effort
+                if resume_session is not None and _accepts_kwarg(runner, "resume_session"):
+                    extra["resume_session"] = resume_session
                 result = await runner.run(
                     prompt,
                     self.worktree.path,
@@ -125,6 +145,9 @@ class RunContext:
                     runner=spec.runner, model=spec.model, ok=False, exit_code=127,
                     started_at=now, ended_at=now, duration_s=0.0, error=str(exc),
                 )
+            # Recorded in usage_json so `alloy logs` can show which calls
+            # continued an earlier session.
+            result.usage = {**(result.usage or {}), "resumed": resume_session is not None}
             self.store.finish_call(
                 call_id, run_id=self.run_id, bead_id=self.bead.id, role=role,
                 iteration=iteration, result=result,
@@ -343,8 +366,8 @@ def _accepts_on_spawn(runner: Any) -> bool:
 
 
 def _accepts_kwarg(runner: Any, name: str) -> bool:
-    """Only pass optional `run` keywords (`on_spawn`, `effort`) to runners
-    that declare them."""
+    """Only pass optional `run` keywords (`on_spawn`, `effort`,
+    `resume_session`) to runners that declare them."""
     try:
         return name in inspect.signature(runner.run).parameters
     except (TypeError, ValueError):

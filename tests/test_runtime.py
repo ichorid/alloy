@@ -79,6 +79,39 @@ class UnavailableRunner:
         raise RunnerUnavailable("codex is not installed")
 
 
+class RecordingRunner:
+    """Records optional keywords forwarded by RunContext.call."""
+
+    def __init__(self, name: str, *, ok: bool = True) -> None:
+        self.name = name
+        self.ok = ok
+        self.resume_sessions: list[str | None] = []
+
+    async def run(
+        self,
+        prompt,
+        cwd,
+        *,
+        model,
+        timeout,
+        structured_schema,
+        resume_session: str | None = None,
+    ):
+        self.resume_sessions.append(resume_session)
+        now = utcnow()
+        return AgentResult(
+            runner=self.name,
+            model=model,
+            ok=self.ok,
+            exit_code=0 if self.ok else 1,
+            text="ok" if self.ok else "",
+            started_at=now,
+            ended_at=now,
+            duration_s=0.01,
+            error=None if self.ok else "failed",
+        )
+
+
 @pytest.fixture
 def ctx_factory(tmp_path):
     store = Store(tmp_path / "alloy.db")
@@ -246,3 +279,36 @@ async def test_check_limits_includes_three_child_calls_in_parent_agent_budget(ct
     breach = ctx.check_limits({"iteration": 0, "consiliums": 0})
     assert breach is not None
     assert "max_agent_calls reached" in breach
+
+
+async def test_call_forwards_resume_session_to_runner(ctx_factory):
+    runner = RecordingRunner("codex")
+    ctx = ctx_factory(_StaticRegistry(runner))
+
+    await ctx.call(
+        "implement",
+        RoleSpec(runner="codex"),
+        "prompt",
+        resume_session="sess-1",
+    )
+
+    assert runner.resume_sessions == ["sess-1"]
+
+
+async def test_call_drops_resume_session_when_falling_back_to_another_runner(ctx_factory):
+    primary = RecordingRunner("codex", ok=False)
+    fallback = RecordingRunner("claude-write")
+    ctx = ctx_factory(
+        _MappedRegistry({"codex": primary, "claude-write": fallback})
+    )
+    spec = RoleSpec.parse(
+        {
+            "runner": "codex",
+            "fallback": {"runner": "claude-write", "model": "fable"},
+        }
+    )
+
+    await ctx.call("implement", spec, "prompt", resume_session="sess-1")
+
+    assert primary.resume_sessions == ["sess-1"]
+    assert fallback.resume_sessions == [None]

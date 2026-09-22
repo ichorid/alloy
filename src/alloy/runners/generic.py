@@ -10,6 +10,7 @@ recipe config and Alloy can drive it without new code.
         model_args: ["--model", "{model}"]
         output: json_envelope
         text_field: result
+        resume_flag: --session      # optional; renders `{resume_args}` in args
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ class GenericCLIRunner(CLIRunner):
         output: str = "text",
         text_field: str = "result",
         usage_field: str = "usage",
+        resume_flag: str | None = None,
         default_model: str | None = None,
         env: dict[str, str] | None = None,
         log_dir=None,
@@ -46,11 +48,27 @@ class GenericCLIRunner(CLIRunner):
         self.output = output
         self.text_field = text_field
         self.usage_field = usage_field
+        self.resume_flag = resume_flag
 
     def build_command(
-        self, prompt: str, *, model: str | None, structured_schema: dict | None
+        self,
+        prompt: str,
+        *,
+        model: str | None,
+        structured_schema: dict | None,
+        resume_session: str | None = None,
     ) -> list[str]:
-        args = [part.replace("{prompt}", prompt) for part in self.args_template]
+        # `{resume_args}` expands to `<resume_flag> <id>` when resuming and to
+        # nothing at all otherwise -- never to an empty argument.
+        resume_args: list[str] = []
+        if resume_session and self.resume_flag:
+            resume_args = [self.resume_flag, resume_session]
+        args: list[str] = []
+        for part in self.args_template:
+            if part == "{resume_args}":
+                args += resume_args
+            else:
+                args.append(part.replace("{prompt}", prompt))
         if model and self.model_args_template:
             args += [part.replace("{model}", model) for part in self.model_args_template]
         return args + self.extra_args
