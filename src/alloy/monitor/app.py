@@ -49,7 +49,7 @@ class MonitorApp(App[None]):
         stats = Static("loading…", id="stats")
         stats.border_title = "STATS"
         yield stats
-        limits = Static("", id="limits")
+        limits = Static("", id="limits", markup=True)
         limits.border_title = "LIMITS"
         limits.display = False
         yield limits

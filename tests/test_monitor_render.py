@@ -341,6 +341,102 @@ def test_limits_lines_on_empty_limits_returns_empty_list():
     assert limits_lines(snapshot) == []
 
 
+# -- alloy-o89.2: color-coded threshold bars in limits panel ------------------
+
+
+def _available_claude_limits(*windows) -> dict:
+    return {
+        "claude": {
+            "harness": "claude",
+            "installed": True,
+            "available": True,
+            "fetched_at": "2026-09-23T10:00:00+00:00",
+            "as_of": "2026-09-23T10:00:00+00:00",
+            "source": "oauth-usage-api",
+            "error": None,
+            "status": None,
+            "windows": list(windows),
+        },
+    }
+
+
+def _claude_limits_line(*windows) -> str:
+    from alloy.monitor.render import limits_lines
+
+    snapshot = _snapshot()
+    snapshot["limits"] = _available_claude_limits(*windows)
+    return limits_lines(snapshot)[0]
+
+
+def _assert_bracketed_usage_bar(line: str, percent: int, color: str) -> None:
+    assert f"[{color}]{percent}%" in line or f"[{color}]5h {percent}%" in line
+    for start in range(len(line)):
+        if line[start] != "[":
+            continue
+        end = line.index("]", start)
+        bar = line[start + 1 : end]
+        if bar and ("█" in bar or "░" in bar) and all(ch in "█░" for ch in bar):
+            return
+    raise AssertionError(f"no bracketed usage bar in: {line}")
+
+
+def test_limits_line_at_42_percent_renders_green_bracketed_bar():
+    from alloy.limits import window
+
+    line = _claude_limits_line(window("five_hour", "5h", 42.0, None))
+
+    _assert_bracketed_usage_bar(line, 42, "#7ee787")
+
+
+def test_limits_line_at_71_percent_renders_yellow_bracketed_bar():
+    from alloy.limits import window
+
+    line = _claude_limits_line(window("five_hour", "5h", 71.0, None))
+
+    _assert_bracketed_usage_bar(line, 71, "#e3b341")
+
+
+def test_limits_line_at_92_percent_renders_red_bracketed_bar():
+    from alloy.limits import window
+
+    line = _claude_limits_line(window("five_hour", "5h", 92.0, None))
+
+    _assert_bracketed_usage_bar(line, 92, "#f85149")
+
+
+def test_limits_line_stale_window_renders_stale_badge():
+    from alloy.limits import window
+
+    win = window("five_hour", "5h", 42.0, None)
+    win["stale"] = True
+    line = _claude_limits_line(win)
+
+    assert "[#e3b341][stale][/]" in line
+
+
+def test_limits_line_unavailable_harness_renders_error_in_red():
+    from alloy.monitor.render import limits_lines
+
+    snapshot = _snapshot()
+    snapshot["limits"] = {
+        "codex": {
+            "harness": "codex",
+            "installed": True,
+            "available": False,
+            "fetched_at": "2026-09-23T10:00:00+00:00",
+            "as_of": None,
+            "source": None,
+            "error": "no local sample",
+            "status": None,
+            "windows": [],
+        },
+    }
+
+    line = limits_lines(snapshot)[0]
+
+    assert "[#f85149]unavailable: no local sample[/]" in line
+
+
 def test_header_line_includes_session_totals_when_present():
     snapshot = _snapshot()
     snapshot["session_totals"] = {"done": 1, "failed": 1, "cancelled": 0}
