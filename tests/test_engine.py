@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import sys
 
 import pytest
+from typer.testing import CliRunner
 
 from alloy import beads as bd
+from alloy.cli import app
 from alloy.engine import Engine, EngineError
 from support import load_config
 from conftest import (
@@ -221,6 +224,35 @@ async def test_status_output_is_machine_readable(engine, beads_project, fake_har
     assert row["runner"] is None
     assert row["model"] is None
     assert row["elapsed"].endswith("m")
+
+
+async def test_status_json_includes_checks_for_finished_run(
+    engine, beads_project, alloy_home, fake_harnesses
+):
+    fake_harnesses.configure(script(verifier=[
+        verifier_run_entry(f"{sys.executable} -m pytest -q", kind="regression"),
+        verifier_stop_entry("suite green"),
+    ]))
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    result = await engine.run(bead_id)
+
+    snapshot = engine.graph_snapshot_for_run(result.run_id)
+    final_checks = snapshot["values"]["checks"]
+
+    runner = CliRunner()
+    cli_result = runner.invoke(
+        app,
+        ["status", bead_id, "--json", "--repo", str(beads_project), "--root", str(alloy_home)],
+    )
+
+    assert cli_result.exit_code == 0
+    row = json.loads(cli_result.stdout)["beads"][0]
+    assert "checks" in row
+    assert row["checks"]["total"] == len(final_checks)
+    assert row["checks"]["last"]["exit_code"] == 0
+    assert row["checks"]["last"]["command"]
+    assert row["checks"]["last"]["kind"]
+    assert row["checks"]["last"]["headline"]
 
 
 async def test_rerunning_a_cancelled_bead_starts_from_a_clean_graph(

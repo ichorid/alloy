@@ -19,6 +19,7 @@ from alloy.config import ConfigError, RecipeConfig
 from alloy.engine import Engine
 from alloy.scheduler import read_pid
 from alloy.store import RUN_CANCELLED, RUN_DONE, RUN_FAILED
+from alloy.verify import checks_summary
 
 READY_CAP = 1000
 LIFETIME_STATUSES = (RUN_DONE, RUN_FAILED, RUN_CANCELLED)
@@ -74,6 +75,7 @@ def _run_entry(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
         "consiliums": int(state.get("consiliums", 0) or 0),
         "max_consiliums": max_consiliums,
         "tests_summary": record["tests_summary"],
+        "checks": checks_summary(state),
         "elapsed_minutes": _elapsed_minutes(record, now),
         "current_calls": [
             _call_entry(config, call, now) for call in engine.store.active_calls(run_id)

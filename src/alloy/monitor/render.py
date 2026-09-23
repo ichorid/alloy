@@ -40,7 +40,7 @@ def _row(run: dict[str, Any]) -> tuple[str, ...]:
         _text(run.get("stage")),
         f"{_text(run.get('iteration'))}/{_text(run.get('max_iterations'))}",
         f"{_text(run.get('consiliums'))}/{_text(run.get('max_consiliums'))}",
-        _text(run.get("tests_summary")),
+        _tests(run),
         _elapsed(run.get("elapsed_minutes")),
         _now(run.get("current_calls") or []),
         _tokens(run.get("tokens") or {}),
@@ -51,6 +51,15 @@ def _row(run: dict[str, Any]) -> tuple[str, ...]:
 
 def _text(value: Any) -> str:
     return "-" if value is None else str(value)
+
+
+def _tests(run: dict[str, Any]) -> str:
+    """`n checks` once the verification loop has run anything, else the ledger's
+    tests summary verbatim."""
+    checks = run.get("checks")
+    if isinstance(checks, dict) and checks.get("total") is not None:
+        return f"{checks['total']} checks"
+    return _text(run.get("tests_summary"))
 
 
 def _elapsed(minutes: Any) -> str:

@@ -15,6 +15,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
+from typing import Any, Mapping
 
 from alloy.models import CheckRequest, CheckResult, clip
 from alloy.procs import terminate_process_tree
@@ -151,6 +152,54 @@ async def run_check(
         passed=passed,
         failed=failed,
     )
+
+
+def checks_summary(state: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The `checks` object of `alloy status --json` and the monitor snapshot.
+
+    Read from the graph state: how many verifier checks the run has executed,
+    how many of those in the current iteration, and what the last one said.
+    None until the first check has run."""
+    checks = list(state.get("checks") or [])
+    if not checks:
+        return None
+    last = CheckResult.model_validate(checks[-1])
+    return {
+        "total": len(checks),
+        "iteration": int(state.get("iteration_checks", 0) or 0),
+        "last": {
+            "command": last.command,
+            "kind": last.kind,
+            "exit_code": last.exit_code,
+            "headline": last.headline(),
+        },
+    }
+
+
+def check_logs(log_dir: Path | str | None) -> list[dict[str, Any]]:
+    """Every check-*.log a run wrote, in start order, with the kind and exit
+    code from its header (`check-{index}-{kind}-{ms}.log`, see `run_check`)."""
+    if not log_dir or not Path(log_dir).is_dir():
+        return []
+    entries: list[tuple[int, int, dict[str, Any]]] = []
+    for path in Path(log_dir).glob("check-*.log"):
+        parts = path.stem.split("-")
+        try:
+            index, started_ms = int(parts[1]), int(parts[-1])
+        except (IndexError, ValueError):
+            continue
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[:4]
+        header = dict(line.split("=", 1) for line in lines[1:] if "=" in line)
+        command = lines[0] if lines else ""
+        entries.append((index, started_ms, {
+            "index": index,
+            "command": command[2:] if command.startswith("$ ") else command,
+            "kind": header.get("kind") or "-".join(parts[2:-1]) or "custom",
+            "exit_code": int(header["exit"]) if header.get("exit", "").lstrip("-").isdigit()
+            else None,
+            "log_path": str(path),
+        }))
+    return [entry for _, _, entry in sorted(entries, key=lambda item: item[:2])]
 
 
 def command_env(worktree: Path) -> dict[str, str]:
