@@ -32,6 +32,11 @@ def test_slugify_placeholder():
     assert True
 '''
 
+HELPER_TEST = '''
+def test_helper_placeholder():
+    assert True
+'''
+
 IMPLEMENTATION = '''
 import re
 
@@ -204,6 +209,17 @@ def write_tests_entry(
     }
 
 
+def write_tests_with_helper_entry(
+    *,
+    baseline_checks: list[dict[str, str]] | None = None,
+    passing: bool = False,
+) -> dict:
+    """Tests role adds slugify tests plus an untouched helper file."""
+    entry = write_tests_entry(baseline_checks=baseline_checks, passing=passing)
+    entry["write"].append({"path": "tests/test_helper.py", "content": HELPER_TEST})
+    return entry
+
+
 def implement_entry(succeed: bool = True) -> dict:
     """A working implementation, or a deliberately broken one."""
     body = IMPLEMENTATION if succeed else "def slugify(text):\n    return None\n"
@@ -253,6 +269,56 @@ def implement_empty_diff_entry() -> dict:
         "text": "Reverted all changes from the base commit.",
         "write": [{"path": "mypkg/__init__.py", "content": ""}],
         "delete": ["tests/test_slugify.py"],
+    }
+
+
+def implement_rewrite_tests_entry(*, succeed: bool = True) -> dict:
+    """Implement slugify and rewrite the tests role's file (fingerprint change)."""
+    body = IMPLEMENTATION if succeed else "def slugify(text):\n    return None\n"
+    rewritten = PASSING_TEST.replace(
+        'assert slugify("Hello World") == "hello-world"',
+        'assert slugify("Hello World") == "hello-world"  # implementer fixed assertion',
+    )
+    return {
+        "text": "Implemented slugify and adjusted the failing test assertion.",
+        "write": [
+            {"path": "mypkg/__init__.py", "content": body},
+            {"path": "tests/test_slugify.py", "content": rewritten},
+        ],
+    }
+
+
+def implement_rewrite_helper_test_entry(*, succeed: bool = True) -> dict:
+    """Implement slugify and rewrite only the helper test the baseline does not run."""
+    body = IMPLEMENTATION if succeed else "def slugify(text):\n    return None\n"
+    rewritten = HELPER_TEST.replace(
+        "assert True",
+        "assert True  # implementer touched helper only",
+    )
+    return {
+        "text": "Implemented slugify and adjusted the helper test file.",
+        "write": [
+            {"path": "mypkg/__init__.py", "content": body},
+            {"path": "tests/test_helper.py", "content": rewritten},
+        ],
+    }
+
+
+def implement_add_test_entry() -> dict:
+    """Implement slugify and add a test file absent after prove_red."""
+    return {
+        "text": "Implemented slugify and added an extra regression test.",
+        "write": [
+            {"path": "mypkg/__init__.py", "content": IMPLEMENTATION},
+            {
+                "path": "tests/test_extra.py",
+                "content": (
+                    "from mypkg import slugify\n\n\n"
+                    "def test_slugify_single_char():\n"
+                    '    assert slugify("a") == "a"\n'
+                ),
+            },
+        ],
     }
 
 

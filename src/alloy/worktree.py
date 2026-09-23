@@ -7,6 +7,7 @@ human can inspect them, and are only removed on request.
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -171,6 +172,15 @@ class WorktreeManager:
 
     def has_changes(self, worktree: Worktree) -> bool:
         return bool(self.changed_files(worktree))
+
+    def fingerprints(self, worktree: Worktree, paths: list[str]) -> dict[str, str]:
+        """sha256 of each path's current contents; paths absent on disk are omitted."""
+        result: dict[str, str] = {}
+        for path in paths:
+            target = worktree.path / path
+            if target.is_file():
+                result[path] = hashlib.sha256(target.read_bytes()).hexdigest()
+        return result
 
     def changed_paths(
         self, worktree: Worktree, since_commit: str, *,

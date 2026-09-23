@@ -90,6 +90,7 @@ class TddState(TypedDict, total=False):
     baseline: list[dict[str, Any]] | None      # CheckResult dicts from prove_red
     baseline_repairs: int
     tests_session: dict[str, Any] | None       # {runner, session_id} of the last tests call
+    test_fingerprints: dict[str, str]          # path -> sha256 of every test file after prove_red
 
     iteration: int
     consiliums: int
@@ -516,6 +517,7 @@ def judge_prompt(
     iteration: int,
     limits_note: str,
     verifier_stop: dict[str, Any] | None = None,
+    changed_tests: list[str] | None = None,
 ) -> str:
     return f"""You are judging whether a coding task is complete. You cannot edit code;
 you only decide what happens next.
@@ -532,6 +534,9 @@ you only decide what happens next.
 ```diff
 {clip_diff(diff)}
 ```
+
+## Tests changed by the implementer
+{chr(10).join(changed_tests or []) or "(none)"}
 
 ## Test results
 {_render_results(checks, verifier_stop)}
@@ -1071,6 +1076,12 @@ def build_graph(ctx: RunContext):
             elif result.ok:
                 problems.append(f"`{result.command}`: passed")
         if not problems:
+            # The implementer starts from here: remember what every test file
+            # looked like so the gates can tell its edits from the tests role's.
+            test_paths = [
+                path for path in ctx.worktrees.changed_files(ctx.worktree) if is_test_path(path)
+            ]
+            update["test_fingerprints"] = ctx.worktrees.fingerprints(ctx.worktree, test_paths)
             return update
         repairs = state.get("baseline_repairs", 0) + 1
         headline = "baseline not runnable" if unrunnable else "baseline unexpectedly green"
@@ -1536,6 +1547,17 @@ def build_graph(ctx: RunContext):
     def route_after_check(state: TddState) -> str:
         return state.get("verify_route") or "verifier_step"
 
+    def implementer_changed_tests(state: TddState) -> list[str]:
+        """Test files whose contents moved since prove_red: edited, deleted or
+        added by the implementer, as opposed to written by the tests role."""
+        before = state.get("test_fingerprints") or {}
+        current = [
+            path for path in ctx.worktrees.changed_files(ctx.worktree) if is_test_path(path)
+        ]
+        paths = sorted(set(before) | set(current))
+        after = ctx.worktrees.fingerprints(ctx.worktree, paths)
+        return [path for path in paths if before.get(path) != after.get(path)]
+
     async def acceptance_gate(state: TddState) -> dict[str, Any]:
         """A cheap semantic check after the verifier stops: is the evidence enough?
 
@@ -1551,9 +1573,7 @@ def build_graph(ctx: RunContext):
         checks = _checks_of(state, iteration)
         stop_raw = state.get("verifier_stop")
         stop = VerifierAction.model_validate(stop_raw) if stop_raw else None
-        changed_tests = [
-            path for path in ctx.worktrees.changed_files(ctx.worktree) if is_test_path(path)
-        ]
+        changed_tests = implementer_changed_tests(state)
         verdict = await classify(
             ctx, "acceptance", spec,
             acceptance_prompt(
@@ -1585,6 +1605,7 @@ def build_graph(ctx: RunContext):
             implementer=state.get("implementer") or ctx.role_spec("implement", state).runner,
             change_summary=state.get("change_summary", ""),
             checks=_checks_headline(checks),
+            changed_tests=changed_tests,
         )
         if verdict.decision == "accept":
             update.update(
@@ -1629,6 +1650,7 @@ def build_graph(ctx: RunContext):
         ctx.set_stage("judge", iteration=state.get("iteration", 0))
         spec = ctx.recipe.role("judge")
         diff = ctx.diff()
+        changed_tests = implementer_changed_tests(state)
         result = await ctx.call(
             "judge",
             spec,
@@ -1642,6 +1664,7 @@ def build_graph(ctx: RunContext):
                 state.get("iteration", 0),
                 ctx.limits_note(state),
                 verifier_stop=state.get("verifier_stop"),
+                changed_tests=changed_tests,
             ),
             schema=JudgeDecision.schema_for_agents(),
             iteration=state.get("iteration", 0),
@@ -1654,6 +1677,7 @@ def build_graph(ctx: RunContext):
             checks=_checks_headline(_checks_of(state, state.get("iteration", 0))),
             decision=decision.decision,
             reason=decision.reason,
+            changed_tests=changed_tests,
         )
         return {
             "decision": decision.model_dump(),
@@ -1706,6 +1730,7 @@ def build_graph(ctx: RunContext):
                 checks=_checks_headline(_checks_of(state, iteration)),
                 decision=decision.decision,
                 reason=decision.reason,
+                changed_tests=implementer_changed_tests(state),
             ).model_dump()]
 
         if decision.decision in ("done", "abort", "human"):
@@ -1964,6 +1989,7 @@ def initial_state(ctx: RunContext) -> TddState:
         baseline=None,
         baseline_repairs=0,
         tests_session=None,
+        test_fingerprints={},
         implementer="",
         checks=[],
         iteration_checks=0,
