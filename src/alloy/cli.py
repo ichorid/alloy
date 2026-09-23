@@ -23,9 +23,11 @@ from typer.core import TyperCommand
 
 from alloy import beads as bd
 from alloy import recipes
-from alloy.config import ConfigError, RecipeConfig, RoleSpec, discover_recipes, load_recipe
+from alloy.config import (
+    ConfigError, MemorySpec, RecipeConfig, RoleSpec, discover_recipes, load_recipe,
+)
 from alloy.engine import Engine, EngineError
-from alloy.models import utcnow, with_provenance
+from alloy.models import ProjectMemory, memory_inventory, utcnow, with_provenance
 from alloy.monitor import build_snapshot
 from alloy.monitor.app import MonitorApp
 from alloy.monitor.render import COLUMNS, header_line, run_rows
@@ -471,6 +473,50 @@ def logs(
         table.add_row(
             str(index), check["kind"], "-" if exit_code is None else str(exit_code),
             check["command"], check["log_path"],
+        )
+    console.print(table)
+
+
+memory_app = typer.Typer(help="Inspect project memory (bd memories) as Alloy sees it.",
+                         no_args_is_help=True)
+app.add_typer(memory_app, name="memory")
+
+
+@memory_app.command(name="list")
+def memory_list(
+    repo: Optional[Path] = RepoOption,
+    root: Optional[Path] = RootOption,
+    json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+) -> None:
+    """List every non-meta memory: key, owner, provenance, age in days and
+    flags (contradiction recorded, embedded, proposal pending)."""
+    engine = _engine(repo, root)
+    try:
+        memories = engine.beads.memories()
+    except bd.BeadsError as exc:
+        _fail(str(exc))
+        return
+    memory = ProjectMemory.from_raw(memories, MemorySpec())
+    rows = memory_inventory(memory, utcnow().date())
+    if json:
+        _emit(rows, True)
+        return
+    if not rows:
+        console.print("no project memories")
+        return
+    table = Table(show_header=True, header_style="bold")
+    # The key is what a reader greps for, so it is never cut or wrapped: it
+    # keeps its full width and the other columns fold when the terminal is
+    # narrow.
+    table.add_column("key", no_wrap=True, min_width=max(len(row["key"]) for row in rows))
+    for column in ("owner", "run", "bead", "date", "age", "flags"):
+        table.add_column(column, overflow="fold")
+    for row in rows:
+        table.add_row(
+            row["key"], row["owner"], row["run_id"] or "-", row["bead_id"] or "-",
+            row["date"] or "-",
+            str(row["age_days"]) if row["age_days"] is not None else "-",
+            ", ".join(row["flags"]) or "-",
         )
     console.print(table)
 
