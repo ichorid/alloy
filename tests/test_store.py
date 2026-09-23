@@ -631,3 +631,119 @@ def test_orphaned_runs_omits_child_while_parent_still_running(store: Store):
     store.update_run("parent", pid=dead_pid())
     orphan_ids = {run["run_id"] for run in store.orphaned_runs()}
     assert "child" in orphan_ids
+
+
+# -- prefix_hash schema (alloy-4ef.6) -----------------------------------------
+
+
+def test_agent_calls_has_a_nullable_prefix_hash_column(store: Store):
+    with store.connect() as conn:
+        info = {row["name"]: row for row in conn.execute("PRAGMA table_info(agent_calls)")}
+    assert "prefix_hash" in info
+    assert info["prefix_hash"]["notnull"] == 0
+
+
+def test_opening_store_migrates_legacy_db_and_records_prefix_hash_on_new_calls(
+    tmp_path: Path,
+):
+    """An alloy.db from the previous schema gains prefix_hash; new calls populate it."""
+    import sqlite3
+
+    db_path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE runs (
+            run_id         TEXT PRIMARY KEY,
+            bead_id        TEXT NOT NULL,
+            thread_id      TEXT NOT NULL,
+            recipe         TEXT NOT NULL,
+            repo           TEXT NOT NULL,
+            worktree       TEXT,
+            branch         TEXT,
+            status         TEXT NOT NULL,
+            stage          TEXT,
+            iteration      INTEGER NOT NULL DEFAULT 0,
+            consiliums     INTEGER NOT NULL DEFAULT 0,
+            agent_calls    INTEGER NOT NULL DEFAULT 0,
+            tests_summary  TEXT,
+            started_at     TEXT NOT NULL,
+            updated_at     TEXT NOT NULL,
+            ended_at       TEXT,
+            outcome        TEXT,
+            outcome_reason TEXT,
+            log_dir        TEXT,
+            pid            INTEGER
+        );
+        CREATE TABLE agent_calls (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id       TEXT NOT NULL,
+            bead_id      TEXT NOT NULL,
+            role         TEXT NOT NULL,
+            runner       TEXT NOT NULL,
+            model        TEXT,
+            prompt_hash  TEXT NOT NULL,
+            started_at   TEXT NOT NULL,
+            ended_at     TEXT NOT NULL,
+            duration_s   REAL NOT NULL,
+            exit_code    INTEGER NOT NULL,
+            ok           INTEGER NOT NULL,
+            usage_json   TEXT NOT NULL DEFAULT '{}',
+            log_path     TEXT,
+            iteration    INTEGER NOT NULL DEFAULT 0
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(db_path)
+    _make_run(store, "r1", repo=tmp_path)
+    _insert_inflight(store, "call-1", "r1", role="implement")
+    store.finish_call(
+        "call-1",
+        run_id="r1",
+        bead_id="bead-r1",
+        role="implement",
+        iteration=0,
+        result=_agent_result(),
+    )
+
+    row = store.agent_calls("r1")[0]
+    assert row["prefix_hash"]
+
+
+async def test_logs_json_includes_prefix_hash_for_agent_calls(
+    beads_project, alloy_home, fake_harnesses, monkeypatch,
+):
+    """`alloy logs --json` surfaces prefix_hash recorded in the ledger."""
+    from typer.testing import CliRunner
+
+    from alloy.cli import app
+    from alloy.engine import Engine
+    from conftest import bd_create, context_entry, implement_entry, judge_entry, write_tests_entry
+    from support import load_config
+
+    def script():
+        return {
+            "context": context_entry(),
+            "tests": write_tests_entry(),
+            "implement": [implement_entry(succeed=True)],
+            "judge": [judge_entry("done")],
+        }
+
+    engine = Engine.open(beads_project, alloy_home)
+    monkeypatch.setattr(engine, "load_config", lambda name: load_config())
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    await engine.run(bead_id)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["logs", bead_id, "--json", "--repo", str(beads_project), "--root", str(alloy_home)],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["calls"]
+    assert all(call.get("prefix_hash") for call in payload["calls"])

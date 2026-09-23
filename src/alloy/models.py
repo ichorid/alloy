@@ -83,6 +83,8 @@ class AgentResult(BaseModel):
     usage: dict[str, Any] = Field(default_factory=dict)
     log_path: str | None = None
     prompt_hash: str = ""
+    prefix_hash: str = ""
+    """sha256 of the prompt's static, project and run layers (see alloy.prompts)."""
     error: str | None = None
     session_id: str | None = None
     retry_at: datetime | None = None
@@ -293,7 +295,9 @@ class CheckResult(BaseModel):
 
     def headline(self) -> str:
         if self.timed_out:
-            return f"timed out after {self.duration_s:.0f}s"
+            # No duration: headlines land in prompts, where a clock value
+            # would differ between otherwise identical renderings.
+            return "timed out"
         if self.exit_code == 127:
             return "command not found"
         if self.passed is None and self.failed is None:
@@ -484,6 +488,7 @@ class AgentCallRecord(BaseModel):
     runner: str
     model: str | None
     prompt_hash: str
+    prefix_hash: str
     started_at: datetime
     ended_at: datetime
     duration_s: float

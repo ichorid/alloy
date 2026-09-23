@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS agent_calls (
     runner       TEXT NOT NULL,
     model        TEXT,
     prompt_hash  TEXT NOT NULL,
+    prefix_hash  TEXT,
     started_at   TEXT NOT NULL,
     ended_at     TEXT NOT NULL,
     duration_s   REAL NOT NULL,
@@ -102,6 +103,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     },
     "agent_calls": {
         "structured_json": "TEXT",                 # the raw structured output, e.g. the judge's verdict
+        "prefix_hash": "TEXT",                     # sha256 of the prompt's stable layers (alloy-4ef.6)
     },
     "inflight_calls": {
         "pid": "INTEGER",                          # the harness process group, so a dead run's orphan can be killed
@@ -339,6 +341,9 @@ class Store:
             runner=result.runner,
             model=result.model,
             prompt_hash=result.prompt_hash,
+            # A prompt without layers (a probe, a hand-built result) has no
+            # stable prefix apart from itself: its whole-prompt hash stands in.
+            prefix_hash=result.prefix_hash or result.prompt_hash,
             started_at=result.started_at,
             ended_at=result.ended_at,
             duration_s=result.duration_s,
@@ -352,11 +357,12 @@ class Store:
             conn.execute("DELETE FROM inflight_calls WHERE call_id = ?", (call_id,))
             conn.execute(
                 "INSERT INTO agent_calls (run_id, bead_id, role, runner, model, prompt_hash,"
-                " started_at, ended_at, duration_s, exit_code, ok, usage_json, log_path, iteration,"
-                " structured_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " prefix_hash, started_at, ended_at, duration_s, exit_code, ok, usage_json,"
+                " log_path, iteration, structured_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     record.run_id, record.bead_id, record.role, record.runner, record.model,
-                    record.prompt_hash, _iso(record.started_at), _iso(record.ended_at),
+                    record.prompt_hash, record.prefix_hash,
+                    _iso(record.started_at), _iso(record.ended_at),
                     record.duration_s, record.exit_code, int(record.ok),
                     record.usage_json, record.log_path, record.iteration,
                     json.dumps(result.structured) if result.structured is not None else None,

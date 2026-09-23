@@ -13,6 +13,7 @@ import sys
 from dataclasses import replace
 
 from alloy.config import Limits, RoleSpec, VerificationSpec
+from alloy.store import Store
 from alloy.recipes.tdd_loop import tests_prompt, verifier_prompt
 from conftest import (
     acceptance_entry,
@@ -26,7 +27,7 @@ from conftest import (
     verifier_stop_entry,
     write_tests_entry,
 )
-from support import load_config, make_harness
+from support import load_config, make_bead, make_harness
 
 
 def script(**overrides):
@@ -1296,3 +1297,69 @@ async def test_verifier_worktree_mutation_parks_at_human_gate(
     assert "__interrupt__" in final
     reason = final["__interrupt__"][0].value["reason"]
     assert "verifier modified the worktree" in reason
+
+
+# -- prefix_hash ledger (alloy-4ef.6) ----------------------------------------
+
+
+def _prefix_hashes(store, run_id: str, role: str) -> list[str]:
+    return [row["prefix_hash"] for row in store.agent_calls(run_id) if row["role"] == role]
+
+
+async def test_implement_and_judge_calls_share_prefix_hash_within_one_run(
+    project, alloy_home, fake_harnesses
+):
+    """Every implement and judge call in one run records the same prefix_hash."""
+    fake_harnesses.configure(
+        script(
+            implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
+            judge=[judge_entry("retry", "still failing"), judge_entry("done")],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        await harness.start()
+    finally:
+        harness.close()
+
+    implement_hashes = _prefix_hashes(harness.store, harness.run_id, "implement")
+    judge_hashes = _prefix_hashes(harness.store, harness.run_id, "judge")
+    assert len(implement_hashes) >= 2
+    assert len(judge_hashes) >= 2
+    assert len(set(implement_hashes)) == 1
+    assert len(set(judge_hashes)) == 1
+
+
+async def test_implement_prefix_hash_matches_across_runs_with_different_bead_briefs(
+    project, alloy_home, fake_harnesses
+):
+    """Two runs on the same repo with different task briefs share implement prefix_hash."""
+    db_path = alloy_home / "alloy.db"
+    bead_a = make_bead(
+        "bead-a",
+        description="Add slugify() to mypkg.",
+        acceptance_criteria="slugify('Hello World') == 'hello-world'",
+    )
+    bead_b = make_bead(
+        "bead-b",
+        description="Add titlecase() to mypkg.",
+        acceptance_criteria="titlecase('hello world') == 'Hello World'",
+    )
+    fake_harnesses.configure(script())
+
+    harness_a = make_harness(project, alloy_home, bead=bead_a, store=Store(db_path), run_id="run-a")
+    try:
+        await harness_a.start()
+    finally:
+        harness_a.close()
+
+    fake_harnesses.reset_calls()
+    harness_b = make_harness(project, alloy_home, bead=bead_b, store=Store(db_path), run_id="run-b")
+    try:
+        await harness_b.start()
+    finally:
+        harness_b.close()
+
+    hash_a = _prefix_hashes(harness_a.store, "run-a", "implement")[0]
+    hash_b = _prefix_hashes(harness_b.store, "run-b", "implement")[0]
+    assert hash_a == hash_b
