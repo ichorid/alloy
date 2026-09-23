@@ -205,6 +205,29 @@ def _judge(judge: dict[str, Any] | None) -> str:
     return _text(effective if effective is not None else raw)
 
 
+_METADATA_PREFIXES = ("bead:", "worktree:", "branch:", "logs:")
+
+
+def format_detail(run: dict[str, Any], width: int, log_dir: str | None = None) -> str:
+    """Render detail pane text: two columns at comfortable width, stacked below."""
+    lines = detail_lines(run, log_dir)
+    if width < COMFORTABLE_WIDTH:
+        return "\n".join(lines)
+    activity = [line for line in lines if not line.startswith(_METADATA_PREFIXES)]
+    metadata = [line for line in lines if line.startswith(_METADATA_PREFIXES)]
+    left_width = max((len(line) for line in activity), default=0)
+    row_count = max(len(activity), len(metadata))
+    rows: list[str] = []
+    for index in range(row_count):
+        left = activity[index] if index < len(activity) else ""
+        right = metadata[index] if index < len(metadata) else ""
+        if right:
+            rows.append(f"{left:<{left_width}}  {right}" if left_width else right)
+        else:
+            rows.append(left)
+    return "\n".join(rows)
+
+
 def detail_lines(run: dict[str, Any], log_dir: str | None = None) -> list[str]:
     """Selected-run detail pane: in-flight calls, raw vs effective judge, per-role tokens, paths.
 

@@ -18,7 +18,7 @@ from textual.widgets import DataTable, Footer, Header, Static
 
 from alloy.monitor.render import (
     COLUMNS,
-    detail_lines,
+    format_detail,
     header_line,
     limits_lines,
     run_rows,
@@ -129,7 +129,7 @@ class MonitorApp(App[None]):
             table.move_cursor(row=target)
         self.query_one("#stats", Static).update(header_line(snapshot))
         self._refresh_limits_widget()
-        self._refresh_detail()
+        self._refresh_detail(width=table_width)
 
     @work(thread=True, exclusive=True, group="limits")
     def refresh_limits(self) -> None:
@@ -195,7 +195,7 @@ class MonitorApp(App[None]):
             return None
         return next((run for run in self._snapshot.get("runs") or [] if run["run_id"] == run_id), None)
 
-    def _refresh_detail(self) -> None:
+    def _refresh_detail(self, *, width: int | None = None) -> None:
         """Re-render the detail pane for the run under the cursor; hide it when there is none."""
         detail = self.query_one("#detail", Static)
         if not detail.display:
@@ -206,7 +206,7 @@ class MonitorApp(App[None]):
             return
         root = (self._snapshot or {}).get("root")
         log_dir = None if root is None else f"{root}/logs/{run['run_id']}"
-        detail.update("\n".join(detail_lines(run, log_dir)))
+        detail.update(format_detail(run, width if width is not None else self.size.width, log_dir))
 
     def action_cursor_down(self) -> None:
         self.query_one("#runs", DataTable).action_cursor_down()
