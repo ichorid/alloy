@@ -74,8 +74,18 @@ def test_fake_cli_estimate_emits_valid_complexity_estimate_without_config_entry(
     assert estimate.complexity in COMPLEXITY_LEVELS
 
 
+def _tdd_loop_run(engine: Engine, bead_id: str) -> dict:
+    """The bead's tdd-loop run: a successful tick also auto-lands the bead
+    (tdd-loop ships landing.mode auto), so the latest run is the land run."""
+    return next(
+        record
+        for record in engine.store.all_runs(limit=1000)
+        if record["bead_id"] == bead_id and record["recipe"] == "tdd-loop"
+    )
+
+
 def _estimate_calls(engine: Engine, bead_id: str) -> list[dict]:
-    run = engine.store.latest_run_for_bead(bead_id)
+    run = _tdd_loop_run(engine, bead_id)
     return [c for c in engine.store.agent_calls(run["run_id"]) if c["role"] == "estimate"]
 
 
@@ -107,7 +117,7 @@ async def test_scheduler_tick_without_estimate_script_records_valid_estimate(
     engine = scheduler.engine
     bead = engine.beads.show(bead_id)
     notes = _bead_notes(engine, bead_id)
-    run = engine.store.latest_run_for_bead(bead_id)
+    run = _tdd_loop_run(engine, bead_id)
     estimate_calls = _estimate_calls(engine, bead_id)
 
     assert estimate_calls, "estimate role should run during a scheduler tick"
