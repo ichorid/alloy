@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from alloy.limits.retry import DEFAULT_RATE_LIMIT_WAIT, parse_retry_at
@@ -117,6 +118,44 @@ def read_cache(paths: AlloyPaths) -> dict[str, dict[str, Any]]:
     return data if isinstance(data, dict) else {}
 
 
+def _probe_harness(harness: str, home: Path, fetch: Any) -> dict[str, Any]:
+    """Run one harness probe; codex ignores ``fetch``."""
+    if harness == "claude":
+        from alloy.limits import claude
+
+        resolved = fetch if fetch is not None else claude.default_fetch
+        return claude.probe(home, resolved)
+    if harness == "codex":
+        from alloy.limits import codex
+
+        return codex.probe(home)
+    if harness == "cursor":
+        from alloy.limits import cursor
+
+        resolved = fetch if fetch is not None else cursor.default_fetch
+        return cursor.probe(home, resolved)
+    raise ValueError(f"unknown harness: {harness}")
+
+
+def probe_all(
+    paths: AlloyPaths,
+    registry: RunnerRegistry,
+    *,
+    fetch: Any = None,
+    home: Path | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Probe every installed harness, refresh ``limits.json``, return the mapping."""
+    resolved_home = home or Path.home()
+    result: dict[str, dict[str, Any]] = {}
+    for harness in installed_harnesses(registry):
+        try:
+            result[harness] = _probe_harness(harness, resolved_home, fetch)
+        except Exception as exc:
+            result[harness] = unavailable(harness, f"{type(exc).__name__}: {exc}")
+    write_cache(paths, result)
+    return result
+
+
 __all__ = [
     "DEFAULT_RATE_LIMIT_WAIT",
     "HARNESSES",
@@ -126,6 +165,7 @@ __all__ = [
     "harness_for_runner",
     "installed_harnesses",
     "parse_retry_at",
+    "probe_all",
     "read_cache",
     "unavailable",
     "window",

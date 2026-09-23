@@ -67,6 +67,7 @@ what to do next, and loops — up to the limits in the recipe.
 alloy status --json         # machine-readable, for humans and manager agents
 alloy monitor               # live view: runs, current agent, tokens, judge verdicts
 alloy monitor --once --json # the same as one snapshot, for scripts
+alloy limits [--json]       # probe installed harness usage limits; refresh limits.json
 alloy logs t-a3f            # every agent call, with the path to its transcript
 alloy resume t-a3f -m "use NFKD"
 alloy cancel t-a3f
