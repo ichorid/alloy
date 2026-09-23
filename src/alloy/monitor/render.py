@@ -7,6 +7,7 @@ they are unit-testable and shared by the live view and `alloy monitor --once`.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,7 @@ from alloy.limits import HARNESSES
 from alloy.monitor.icons import icon
 from alloy.verify import parse_counts
 
-COLUMNS = ("parent", "bead", "recipe", "status", "stage", "iter", "cons", "tests", "elapsed", "now",
+COLUMNS = ("bead", "recipe", "status", "stage", "iter", "cons", "tests", "elapsed", "now",
            "tokens", "judge", "complexity")
 
 RIGHT_ALIGNED = frozenset({"iter", "cons", "tests", "elapsed", "tokens"})
@@ -26,7 +27,7 @@ RIGHT_ALIGNED = frozenset({"iter", "cons", "tests", "elapsed", "tokens"})
 COMFORTABLE_WIDTH = 80
 WIDE_WIDTH = 100
 
-_WIDE_ONLY_COLUMNS = frozenset({"parent", "stage", "cons", "complexity"})
+_WIDE_ONLY_COLUMNS = frozenset({"stage", "cons", "complexity", "now"})
 _COMFORTABLE_ONLY_COLUMNS = frozenset({"recipe"})
 _COLUMN_TIERS: dict[str, str] = {
     **{name: "wide" for name in _WIDE_ONLY_COLUMNS},
@@ -38,6 +39,7 @@ LIMITS_HARNESS_WIDTH = max(len(name) for name in HARNESSES)
 # Account-wide window labels (5h, weekly, cycle, ...); pad so bars line up per column.
 LIMITS_WINDOW_LABEL_WIDTH = max(len(label) for label in ("5h", "cycle", "weekly"))
 LIMITS_ALIGNED_WINDOW_COUNT = 2
+_QUEUE_READY_CAP = 50
 _COLOR_GREEN = "#7ee787"
 _COLOR_YELLOW = "#e3b341"
 _COLOR_RED = "#f85149"
@@ -195,6 +197,219 @@ def run_rows(snapshot: dict[str, Any], mode: str | None = None) -> list[tuple[st
     return [_row(run, mode) for run in snapshot.get("runs") or []]
 
 
+@dataclass(frozen=True)
+class TreeRow:
+    """One row in the monitor task tree (QUEUE, epics, runs, queue children)."""
+
+    key: str
+    kind: str
+    depth: int
+    cells: dict[str, str | Text]
+
+
+def task_tree_rows(
+    snapshot: dict[str, Any],
+    expanded: set[str],
+    width: int,
+    *,
+    mode: str | None = None,
+) -> list[TreeRow]:
+    """Build collapsible task-tree rows from a monitor snapshot."""
+    _ = width  # column filtering is applied by the view; cells always carry all keys
+    rows: list[TreeRow] = []
+    queue = snapshot.get("queue") or {}
+    ready = queue.get("ready") or []
+    blocked = queue.get("blocked") or []
+    ready_total = int(queue.get("ready_total") or 0)
+    runs = snapshot.get("runs") or []
+
+    queue_open = "queue" in expanded
+    show_queue = queue_open or ready_total > 0 or bool(blocked)
+    if show_queue:
+        toggle = "▾" if queue_open else "▸"
+        next_id = ready[0]["bead_id"] if ready else "-"
+        rows.append(
+            TreeRow(
+                key="queue",
+                kind="queue",
+                depth=0,
+                cells=_blank_cells(
+                    bead=_queue_bead_label(toggle, mode),
+                    status=f"{ready_total} ready · {len(blocked)} blocked · next: {next_id}",
+                ),
+            )
+        )
+    if queue_open:
+        for index, bead in enumerate(ready, start=1):
+            rows.append(_queued_row(bead, queue_index=index, depth=1, mode=mode))
+        if ready_total > _QUEUE_READY_CAP:
+            more = ready_total - _QUEUE_READY_CAP
+            rows.append(
+                TreeRow(
+                    key="queue/more",
+                    kind="more",
+                    depth=1,
+                    cells=_blank_cells(status=f"… {more} more"),
+                )
+            )
+        for bead in blocked:
+            rows.append(_blocked_row(bead, depth=1))
+
+    for epic in snapshot.get("epics") or []:
+        epic_id = epic["epic_id"]
+        epic_key = f"epic/{epic_id}"
+        epic_open = epic_key in expanded
+        epic_toggle = "▾" if epic_open else "▸"
+        cells = _blank_cells(
+            bead=_epic_bead_label(epic, epic_toggle, mode),
+            status=(
+                f"{epic.get('running', 0)} running · {epic.get('judge', 0)} judge · "
+                f"{epic.get('done', 0)}/{epic.get('total', 0)} done"
+            ),
+        )
+        if mode == "nerd":
+            cells["iter"] = f"{epic.get('done', 0)}/{epic.get('total', 0)}"
+        rows.append(
+            TreeRow(
+                key=epic_key,
+                kind="epic",
+                depth=0,
+                cells=cells,
+            )
+        )
+        if epic_open:
+            children: list[TreeRow] = []
+            for run in runs:
+                if run.get("epic_id") == epic_id:
+                    children.append(_run_tree_row(run, depth=1, mode=mode))
+            for bead in ready:
+                if bead.get("epic_id") == epic_id:
+                    children.append(_queued_row(bead, depth=1, mode=mode))
+            if epic.get("done", 0):
+                children.append(_done_fold_row(epic, depth=1))
+            rows.extend(_prefix_tree_children(children))
+
+    for run in runs:
+        if run.get("epic_id") is None:
+            rows.append(_run_tree_row(run, depth=0, mode=mode))
+
+    return rows
+
+
+def _blank_cells(**overrides: str | Text) -> dict[str, str | Text]:
+    cells: dict[str, str | Text] = {name: "-" for name in COLUMNS}
+    cells.update(overrides)
+    return cells
+
+
+def _queue_bead_label(toggle: str, mode: str | None) -> str | Text:
+    if mode != "nerd":
+        return f"{toggle} QUEUE"
+    label = Text()
+    label.append(f"{toggle} ")
+    label.append(icon("queue", "nerd"))
+    label.append(" QUEUE")
+    return label
+
+
+def _epic_bead_label(epic: dict[str, Any], toggle: str, mode: str | None) -> str | Text:
+    epic_id = epic["epic_id"]
+    title = epic.get("title", "")
+    if mode != "nerd":
+        return f"{toggle} {epic_id}  {title}"
+    label = Text()
+    label.append(f"{toggle} ")
+    label.append(icon("folder", "nerd"), style=_COLOR_CYAN)
+    label.append(" ")
+    label.append(epic_id, style=f"bold {_COLOR_CYAN}")
+    if title:
+        label.append(f"  {title}", style=_COLOR_DIM)
+    return label
+
+
+def _cells_from_run(run: dict[str, Any], mode: str | None = None) -> dict[str, str | Text]:
+    return dict(zip(COLUMNS, _row(run, mode)))
+
+
+def _prefix_tree_children(children: list[TreeRow]) -> list[TreeRow]:
+    if not children:
+        return []
+    glyphs = ["├─"] * (len(children) - 1) + ["└─"]
+    prefixed: list[TreeRow] = []
+    for glyph, child in zip(glyphs, children):
+        cells = dict(child.cells)
+        bead = cells["bead"]
+        if isinstance(bead, Text):
+            marked = Text(f"{glyph} ")
+            marked.append_text(bead)
+            cells["bead"] = marked
+        else:
+            cells["bead"] = f"{glyph} {bead}"
+        prefixed.append(
+            TreeRow(key=child.key, kind=child.kind, depth=child.depth, cells=cells)
+        )
+    return prefixed
+
+
+def _run_tree_row(run: dict[str, Any], depth: int, mode: str | None = None) -> TreeRow:
+    return TreeRow(
+        key=f"run/{run['run_id']}",
+        kind="run",
+        depth=depth,
+        cells=_cells_from_run(run, mode),
+    )
+
+
+def _queued_row(
+    bead: dict[str, Any],
+    *,
+    queue_index: int | None = None,
+    depth: int,
+    mode: str | None = None,
+) -> TreeRow:
+    bead_id = bead["bead_id"]
+    tests = f"queued #{queue_index}" if queue_index is not None else "-"
+    return TreeRow(
+        key=f"queue/{bead_id}",
+        kind="queued",
+        depth=depth,
+        cells=_blank_cells(
+            bead=bead_id,
+            recipe=_text(bead.get("recipe")),
+            status="ready",
+            tests=tests,
+            complexity=_complexity(bead.get("complexity"), mode),
+        ),
+    )
+
+
+def _blocked_row(bead: dict[str, Any], depth: int) -> TreeRow:
+    blockers = ", ".join(bead.get("blocked_by") or [])
+    return TreeRow(
+        key=f"queue/{bead['bead_id']}",
+        kind="blocked",
+        depth=depth,
+        cells=_blank_cells(
+            bead=f"⊘ {bead['bead_id']}",
+            status=f"by {blockers}",
+        ),
+    )
+
+
+def _done_fold_row(epic: dict[str, Any], depth: int) -> TreeRow:
+    epic_id = epic["epic_id"]
+    done_ids = " ".join(epic.get("done_ids") or [])
+    summary = f"✓ {epic.get('done', 0)} done"
+    if done_ids:
+        summary = f"{summary}  ({done_ids})"
+    return TreeRow(
+        key=f"epic/{epic_id}/done",
+        kind="done_fold",
+        depth=depth,
+        cells=_blank_cells(bead=summary),
+    )
+
+
 def status_color(status: str) -> str:
     """Map a run status label to its DataTable badge color."""
     return {
@@ -291,7 +506,6 @@ def _limits_window_segment(win: dict[str, Any], *, align_bar: bool = False) -> s
 
 def _row(run: dict[str, Any], mode: str | None = None) -> tuple[str, ...]:
     return (
-        _text(run.get("parent_bead_id")),
         _text(run.get("bead_id")),
         _text(run.get("recipe")),
         _text(run.get("status")),

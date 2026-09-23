@@ -12,9 +12,77 @@ from alloy.monitor.icons import icon
 from alloy.monitor.render import COLUMNS, header_line, run_rows
 
 EMPTY_TOKENS = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
+WIDE_WIDTH = 100
 
 
-def _snapshot(*, runs=(), scheduler=None, ready_count=0, lifetime=None) -> dict:
+def _empty_queue() -> dict:
+    return {"ready": [], "ready_total": 0, "blocked": []}
+
+
+def _ready_bead(
+    bead_id: str,
+    *,
+    title: str = "",
+    recipe: str = "tdd-loop",
+    priority: int = 2,
+    complexity: str | None = None,
+    epic_id: str | None = None,
+) -> dict:
+    return {
+        "bead_id": bead_id,
+        "title": title or bead_id,
+        "recipe": recipe,
+        "priority": priority,
+        "complexity": complexity,
+        "epic_id": epic_id,
+    }
+
+
+def _blocked_bead(
+    bead_id: str,
+    blocked_by: list[str],
+    *,
+    title: str = "",
+    epic_id: str | None = None,
+) -> dict:
+    return {
+        "bead_id": bead_id,
+        "title": title or bead_id,
+        "blocked_by": list(blocked_by),
+        "epic_id": epic_id,
+    }
+
+
+def _epic(
+    epic_id: str,
+    *,
+    title: str = "",
+    total: int = 0,
+    done: int = 0,
+    done_ids: tuple[str, ...] = (),
+    running: int = 0,
+    judge: int = 0,
+) -> dict:
+    return {
+        "epic_id": epic_id,
+        "title": title or epic_id,
+        "total": total,
+        "done": done,
+        "done_ids": list(done_ids),
+        "running": running,
+        "judge": judge,
+    }
+
+
+def _snapshot(
+    *,
+    runs=(),
+    scheduler=None,
+    ready_count=0,
+    lifetime=None,
+    queue=None,
+    epics=(),
+) -> dict:
     return {
         "root": "/home/vader/.alloy",
         "repo": "/home/vader/MY_SRC/alloy",
@@ -23,6 +91,8 @@ def _snapshot(*, runs=(), scheduler=None, ready_count=0, lifetime=None) -> dict:
         "ready_capped_at": 1000,
         "lifetime": lifetime or {"done": 0, "failed": 0, "cancelled": 0},
         "runs": list(runs),
+        "queue": queue if queue is not None else _empty_queue(),
+        "epics": list(epics),
     }
 
 
@@ -48,6 +118,7 @@ def _run(
     parent_run_id=None,
     parent_bead_id=None,
     complexity=None,
+    epic_id=None,
 ) -> dict:
     return {
         "bead_id": bead_id,
@@ -70,6 +141,7 @@ def _run(
         "parent_run_id": parent_run_id,
         "parent_bead_id": parent_bead_id,
         "complexity": complexity,
+        "epic_id": epic_id,
     }
 
 
@@ -94,7 +166,7 @@ def _judge(raw_decision="retry", raw_confidence=0.61, effective_decision="retry"
     }
 
 
-COLUMN_COUNT = 13  # parent, bead, recipe, status, stage, i/max, c/max, tests, elapsed, now, tokens, judge, complexity
+COLUMN_COUNT = 12  # bead, recipe, status, stage, i/max, c/max, tests, elapsed, now, tokens, judge, complexity
 
 
 # -- run_rows -----------------------------------------------------------------
@@ -122,10 +194,10 @@ def test_row_identifies_bead_recipe_status_and_stage():
 
     row = run_rows(snapshot)[0]
 
-    assert row[1] == "alloy-a1b2"
-    assert row[2] == "tdd-loop-jev"
-    assert row[3] == "running"
-    assert row[4] == "implement"
+    assert row[0] == "alloy-a1b2"
+    assert row[1] == "tdd-loop-jev"
+    assert row[2] == "running"
+    assert row[3] == "implement"
 
 
 def test_row_formats_iteration_and_consilium_progress_as_i_over_max():
@@ -133,8 +205,8 @@ def test_row_formats_iteration_and_consilium_progress_as_i_over_max():
 
     row = run_rows(snapshot)[0]
 
-    assert row[5] == "2/5"
-    assert row[6] == "1/3"
+    assert row[4] == "2/5"
+    assert row[5] == "1/3"
 
 
 def test_row_with_no_current_calls_shows_a_dash_in_the_now_column():
@@ -142,7 +214,7 @@ def test_row_with_no_current_calls_shows_a_dash_in_the_now_column():
 
     row = run_rows(snapshot)[0]
 
-    assert row[9] == "-"
+    assert row[8] == "-"
 
 
 def test_row_with_two_current_calls_joins_them_with_a_plus_in_the_now_column():
@@ -154,11 +226,11 @@ def test_row_with_two_current_calls_joins_them_with_a_plus_in_the_now_column():
 
     row = run_rows(snapshot)[0]
 
-    assert " + " in row[9]
-    assert "implement" in row[9]
-    assert "codex" in row[9]
-    assert "critic" in row[9]
-    assert "claude" in row[9]
+    assert " + " in row[8]
+    assert "implement" in row[8]
+    assert "codex" in row[8]
+    assert "critic" in row[8]
+    assert "claude" in row[8]
 
 
 def test_row_with_null_judge_shows_a_dash_in_the_judge_column():
@@ -166,7 +238,7 @@ def test_row_with_null_judge_shows_a_dash_in_the_judge_column():
 
     row = run_rows(snapshot)[0]
 
-    assert row[11] == "-"
+    assert row[10] == "-"
 
 
 def test_row_with_matching_judge_shows_only_the_single_decision():
@@ -176,8 +248,8 @@ def test_row_with_matching_judge_shows_only_the_single_decision():
 
     row = run_rows(snapshot)[0]
 
-    assert "done" in row[11]
-    assert "→" not in row[11]
+    assert "done" in row[10]
+    assert "→" not in row[10]
 
 
 def test_row_with_differing_raw_and_effective_judge_shows_both_decisions():
@@ -187,10 +259,10 @@ def test_row_with_differing_raw_and_effective_judge_shows_both_decisions():
 
     row = run_rows(snapshot)[0]
 
-    assert "done" in row[11]
-    assert "retry" in row[11]
-    assert row[11] != "done"
-    assert row[11] != "retry"
+    assert "done" in row[10]
+    assert "retry" in row[10]
+    assert row[10] != "done"
+    assert row[10] != "retry"
 
 
 def test_row_carries_the_tests_summary_verbatim():
@@ -198,7 +270,7 @@ def test_row_carries_the_tests_summary_verbatim():
 
     row = run_rows(snapshot)[0]
 
-    assert row[7] == "3 passed, 1 failed"
+    assert row[6] == "3 passed, 1 failed"
 
 
 def test_row_elapsed_column_reflects_elapsed_minutes():
@@ -206,7 +278,7 @@ def test_row_elapsed_column_reflects_elapsed_minutes():
 
     row = run_rows(snapshot)[0]
 
-    assert "7" in row[8]
+    assert "7" in row[7]
 
 
 def test_row_tokens_column_reflects_total_tokens_when_no_split_is_available():
@@ -216,7 +288,7 @@ def test_row_tokens_column_reflects_total_tokens_when_no_split_is_available():
 
     row = run_rows(snapshot)[0]
 
-    assert "8635" in row[10]
+    assert "8635" in row[9]
 
 
 # -- header_line ----------------------------------------------------------
@@ -886,3 +958,145 @@ def test_status_badge_includes_every_status_word_in_all_modes():
         for mode in _ICON_MODES:
             badge = status_badge(status, mode)
             assert status in badge.plain
+
+
+# -- alloy-3g0.8: epic/QUEUE tree styling, drop parent column -----------------
+
+
+def _task_tree_rows(snapshot, expanded=(), width=WIDE_WIDTH, mode=None):
+    from alloy.monitor.render import task_tree_rows
+
+    kwargs = {"mode": mode} if mode is not None else {}
+    return task_tree_rows(snapshot, set(expanded), width, **kwargs)
+
+
+def _cell_plain(value) -> str:
+    if hasattr(value, "plain"):
+        return value.plain
+    return str(value)
+
+
+def _tree_row_by_key(rows, key: str):
+    return next(row for row in rows if row.key == key)
+
+
+def _tree_styling_fixture() -> dict:
+    return _snapshot(
+        queue={
+            "ready": [_ready_bead("alloy-x", title="next up")],
+            "ready_total": 7,
+            "blocked": [
+                _blocked_bead("blocked-1", ["a"]),
+                _blocked_bead("blocked-2", ["b"]),
+                _blocked_bead("blocked-3", ["c"]),
+            ],
+        },
+        epics=[_epic("E", title="Monitor epic", total=9, done=4, running=2, judge=1)],
+        runs=[_run(run_id="run-under-e", bead_id="running-under-e", epic_id="E", status="running")],
+    )
+
+
+def test_parent_column_removed_from_columns():
+    assert "parent" not in COLUMNS
+
+
+def test_visible_columns_at_wide_width_includes_now_without_parent():
+    from alloy.monitor.render import visible_columns
+
+    cols = visible_columns(WIDE_WIDTH)
+
+    assert "now" in cols
+    assert "parent" not in cols
+
+
+def test_visible_columns_below_wide_width_hides_now_stage_and_cons():
+    from alloy.monitor.render import visible_columns
+
+    cols_99 = visible_columns(WIDE_WIDTH - 1)
+
+    assert "now" not in cols_99
+    assert "stage" not in cols_99
+    assert "cons" not in cols_99
+
+
+def test_task_tree_nerd_epic_row_bead_cell_has_folder_icon_and_epic_id():
+    rows = _task_tree_rows(_tree_styling_fixture(), expanded=(), mode="nerd")
+    epic = _tree_row_by_key(rows, "epic/E")
+    bead = _cell_plain(epic.cells["bead"])
+
+    assert "\uf07b" in bead
+    assert "E" in bead
+
+
+def test_task_tree_nerd_epic_row_progress_in_right_aligned_iter_cell():
+    from alloy.monitor.render import column_align
+
+    rows = _task_tree_rows(_tree_styling_fixture(), expanded=(), mode="nerd")
+    epic = _tree_row_by_key(rows, "epic/E")
+
+    assert column_align("iter") == "right"
+    assert epic.cells["iter"] == "4/9"
+
+
+def test_task_tree_nerd_queue_row_has_ready_queue_icon():
+    rows = _task_tree_rows(_tree_styling_fixture(), expanded=(), mode="nerd")
+    queue = _tree_row_by_key(rows, "queue")
+    bead = _cell_plain(queue.cells["bead"])
+
+    assert "\uf0ae" in bead
+
+
+def _children_after(rows, parent_key: str) -> list:
+    idx = next(i for i, row in enumerate(rows) if row.key == parent_key)
+    parent_depth = rows[idx].depth
+    children = []
+    for row in rows[idx + 1 :]:
+        if row.depth <= parent_depth:
+            break
+        children.append(row)
+    return children
+
+
+def test_task_tree_ascii_mode_matches_byo4_expectations():
+    snap = _snapshot(
+        queue={
+            "ready": [_ready_bead("alloy-x", title="next up", epic_id="E")],
+            "ready_total": 7,
+            "blocked": [_blocked_bead("blocked-1", ["blocker-a"])],
+        },
+        epics=[
+            _epic(
+                "E",
+                title="Epic E",
+                total=4,
+                done=1,
+                done_ids=("done-1",),
+                running=1,
+                judge=0,
+            ),
+        ],
+        runs=[_run(run_id="run-under-e", bead_id="running-under-e", epic_id="E", status="running")],
+    )
+
+    rows = _task_tree_rows(snap, expanded={"queue", "epic/E"}, mode="ascii")
+
+    queue = _tree_row_by_key(rows, "queue")
+    assert queue.cells["bead"] == "▾ QUEUE"
+    assert queue.cells["status"] == "7 ready · 1 blocked · next: alloy-x"
+
+    epic = _tree_row_by_key(rows, "epic/E")
+    assert epic.cells["bead"] == "▾ E  Epic E"
+    assert epic.cells["status"] == "1 running · 0 judge · 1/4 done"
+
+    queue_children = _children_after(rows, "queue")
+    assert [child.kind for child in queue_children] == ["queued", "blocked"]
+    assert queue_children[0].cells["bead"] == "alloy-x"
+    assert queue_children[0].cells["tests"] == "queued #1"
+    assert queue_children[1].cells["bead"] == "⊘ blocked-1"
+    assert queue_children[1].cells["status"] == "by blocker-a"
+
+    epic_children = _children_after(rows, "epic/E")
+    assert [child.kind for child in epic_children] == ["run", "queued", "done_fold"]
+    assert epic_children[0].cells["bead"] == "├─ running-under-e"
+    assert epic_children[1].cells["bead"] == "├─ alloy-x"
+    assert epic_children[2].cells["bead"] == "└─ ✓ 1 done  (done-1)"
