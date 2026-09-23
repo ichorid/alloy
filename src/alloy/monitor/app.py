@@ -13,7 +13,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.widgets import DataTable, Footer, Header, Static
 
-from alloy.monitor.render import COLUMNS, detail_lines, header_line, run_rows
+from alloy.monitor.render import COLUMNS, detail_lines, header_line, limits_lines, run_rows
 
 
 class MonitorApp(App[None]):
@@ -27,15 +27,27 @@ class MonitorApp(App[None]):
         ("q", "quit", "Quit"),
     ]
 
-    def __init__(self, snapshot_source: Callable[[], dict[str, Any]], interval: float = 1.0) -> None:
+    def __init__(
+        self,
+        snapshot_source: Callable[[], dict[str, Any]],
+        interval: float = 1.0,
+        limits_source: Callable[[], dict[str, Any]] | None = None,
+        limits_interval: float = 60.0,
+    ) -> None:
         super().__init__()
         self.snapshot_source = snapshot_source
         self.interval = interval
+        self.limits_source = limits_source
+        self.limits_interval = limits_interval
         self._snapshot: dict[str, Any] | None = None
+        self._probed_limits: dict[str, Any] | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("loading…", id="stats")
+        limits = Static("", id="limits")
+        limits.display = False
+        yield limits
         yield DataTable(id="runs", cursor_type="row")
         detail = Static("", id="detail")
         detail.display = False
@@ -48,6 +60,9 @@ class MonitorApp(App[None]):
             table.add_column(column, key=column)
         self.refresh_snapshot()
         self.set_interval(self.interval, self.refresh_snapshot)
+        if self.limits_source is not None:
+            self.refresh_limits()
+            self.set_interval(self.limits_interval, self.refresh_limits)
 
     @work(thread=True, exclusive=True)
     def refresh_snapshot(self) -> None:
@@ -78,7 +93,41 @@ class MonitorApp(App[None]):
                 target = len(run_ids) - 1
             table.move_cursor(row=target)
         self.query_one("#stats", Static).update(header_line(snapshot))
+        self._refresh_limits_widget()
         self._refresh_detail()
+
+    @work(thread=True, exclusive=True, group="limits")
+    def refresh_limits(self) -> None:
+        """Fetch limits off the event loop and apply them; keep the last good ones on failure."""
+        if self.limits_source is None:
+            return
+        try:
+            limits = self.limits_source()
+        except Exception as exc:  # noqa: BLE001 - any failure must leave the view alive
+            self.log(f"limits refresh failed: {exc!r}")
+            return
+        self.call_from_thread(self.apply_limits, limits)
+
+    def apply_limits(self, limits: dict[str, Any]) -> None:
+        """Merge probed limits into the displayed snapshot limits."""
+        self._probed_limits = limits
+        self._refresh_limits_widget()
+
+    def _refresh_limits_widget(self) -> None:
+        limits_widget = self.query_one("#limits", Static)
+        snapshot_limits = (self._snapshot or {}).get("limits") or {}
+        if not snapshot_limits:
+            limits_widget.display = False
+            return
+        effective = dict(snapshot_limits)
+        if self._probed_limits:
+            effective.update(self._probed_limits)
+        lines = limits_lines({"limits": effective})
+        if not lines:
+            limits_widget.display = False
+            return
+        limits_widget.display = True
+        limits_widget.update("\n".join(lines))
 
     def _show_failure(self, exc_type: str) -> None:
         text = header_line(self._snapshot) if self._snapshot is not None else ""

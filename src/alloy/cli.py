@@ -409,6 +409,10 @@ def monitor(
     once: bool = typer.Option(False, "--once", help="Take one snapshot and exit"),
     json: bool = typer.Option(False, "--json", help="Machine-readable output"),
     interval: float = typer.Option(1.0, "--interval", help="Refresh interval in seconds"),
+    limits_interval: float = typer.Option(
+        60.0, "--limits-interval", help="Limits probe interval in seconds",
+    ),
+    no_limits: bool = typer.Option(False, "--no-limits", help="Skip limits probing"),
 ) -> None:
     """Live view of the scheduler, the queue and every active run.
 
@@ -431,7 +435,15 @@ def monitor(
             table.add_row(*row)
         console.print(table)
         return
-    MonitorApp(snapshot_source=lambda: build_snapshot(engine), interval=interval).run()
+    limits_source = None
+    if not no_limits:
+        limits_source = lambda: probe_all(engine.paths, RunnerRegistry(), home=Path.home())
+    MonitorApp(
+        snapshot_source=lambda: build_snapshot(engine),
+        interval=interval,
+        limits_source=limits_source,
+        limits_interval=limits_interval,
+    ).run()
 
 
 @app.command()

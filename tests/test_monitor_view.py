@@ -18,14 +18,16 @@ from textual.widgets import DataTable, Static
 from typer.testing import CliRunner
 
 from alloy.cli import app as cli_app
+from alloy.limits import window
 from alloy.monitor.app import MonitorApp
+from alloy.monitor.render import COLUMNS
 
 DISABLED_INTERVAL = 1000.0
 EMPTY_TOKENS = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
 
 
-def _snapshot(*, runs=()) -> dict:
-    return {
+def _snapshot(*, runs=(), limits: dict | None = None) -> dict:
+    snap = {
         "root": "/home/vader/.alloy",
         "repo": "/home/vader/MY_SRC/alloy",
         "scheduler": {"running": False, "pid": None},
@@ -33,6 +35,25 @@ def _snapshot(*, runs=()) -> dict:
         "ready_capped_at": 1000,
         "lifetime": {"done": 0, "failed": 0, "cancelled": 0},
         "runs": list(runs),
+    }
+    if limits is not None:
+        snap["limits"] = limits
+    return snap
+
+
+def _claude_limits(used_percent: float) -> dict:
+    return {
+        "claude": {
+            "harness": "claude",
+            "installed": True,
+            "available": True,
+            "fetched_at": "2026-09-23T10:00:00+00:00",
+            "as_of": "2026-09-23T10:00:00+00:00",
+            "source": "oauth-usage-api",
+            "error": None,
+            "status": None,
+            "windows": [window("five_hour", "5h", used_percent, None)],
+        },
     }
 
 
@@ -58,12 +79,37 @@ def _run(run_id: str, bead_id: str | None = None) -> dict:
     }
 
 
+def _done_run(run_id: str, bead_id: str | None = None) -> dict:
+    run = _run(run_id, bead_id=bead_id)
+    run["status"] = "done"
+    run["stage"] = "finished"
+    run["current_calls"] = []
+    return run
+
+
 ZERO_RUNS = _snapshot(runs=[])
 TWO_RUNS = _snapshot(runs=[_run("run-1"), _run("run-2")])
 THREE_RUNS = _snapshot(runs=[_run("run-1"), _run("run-2"), _run("run-3")])
+RUNNING_AND_DONE = _snapshot(
+    runs=[_run("run-active", bead_id="bead-active"), _done_run("run-finished", bead_id="bead-done")],
+)
 
 
 class FlakySource:
+    """Returns `good` once, then raises on every subsequent call."""
+
+    def __init__(self, good: dict) -> None:
+        self.good = good
+        self.calls = 0
+
+    def __call__(self) -> dict:
+        self.calls += 1
+        if self.calls > 1:
+            raise RuntimeError("boom")
+        return self.good
+
+
+class FlakyLimitsSource:
     """Returns `good` once, then raises on every subsequent call."""
 
     def __init__(self, good: dict) -> None:
@@ -85,6 +131,11 @@ def _stats_text(app: MonitorApp) -> str:
     static = app.query_one("#stats", Static)
     # Static has no public renderable getter; the mangled attribute is the
     # only way to read back what update() stored, short of full screen render.
+    return str(getattr(static, "_Static__content", ""))
+
+
+def _limits_text(app: MonitorApp) -> str:
+    static = app.query_one("#limits", Static)
     return str(getattr(static, "_Static__content", ""))
 
 
@@ -310,6 +361,83 @@ async def test_selected_run_disappearing_hides_the_detail_pane_instead_of_raisin
         assert _detail(app).display is False
 
 
+async def test_done_run_row_is_selectable_and_detail_shows_bead_id():
+    app = MonitorApp(snapshot_source=lambda: RUNNING_AND_DONE, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = _runs_table(app)
+
+        await pilot.press("j")
+        await pilot.pause()
+        assert table.cursor_row == 1
+        status_col = COLUMNS.index("status")
+        assert table.get_cell_at(Coordinate(row=table.cursor_row, column=status_col)) == "done"
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert _detail(app).display is True
+        assert "bead-done" in _detail_text(app)
+
+
+# -- limits section (alloy-w9d.11) ---------------------------------------------
+
+
+async def test_limits_widget_shows_probed_percent_after_mount():
+    cached = _claude_limits(42.0)
+    probed = _claude_limits(77.0)
+    snapshot = _snapshot(limits=cached)
+    app = MonitorApp(
+        snapshot_source=lambda: snapshot,
+        limits_source=lambda: probed,
+        interval=DISABLED_INTERVAL,
+        limits_interval=DISABLED_INTERVAL,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "77%" in _limits_text(app)
+        assert "42%" not in _limits_text(app)
+        assert app.query_one("#limits", Static).display is True
+
+
+async def test_limits_widget_is_hidden_when_snapshot_limits_is_empty():
+    snapshot = _snapshot(limits={})
+    app = MonitorApp(
+        snapshot_source=lambda: snapshot,
+        limits_source=lambda: {},
+        interval=DISABLED_INTERVAL,
+        limits_interval=DISABLED_INTERVAL,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#limits", Static).display is False
+
+
+async def test_a_raising_limits_source_leaves_the_previous_limits_text_unchanged():
+    cached = _claude_limits(42.0)
+    probed = _claude_limits(55.0)
+    limits_source = FlakyLimitsSource(probed)
+    snapshot = _snapshot(limits=cached, runs=[_run("run-1")])
+    refreshed = _snapshot(limits=cached, runs=[_run("run-1"), _run("run-2")])
+    app = MonitorApp(
+        snapshot_source=lambda: snapshot,
+        limits_source=limits_source,
+        interval=DISABLED_INTERVAL,
+        limits_interval=DISABLED_INTERVAL,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "55%" in _limits_text(app)
+
+        worker = app.refresh_limits()
+        await worker.wait()
+        await pilot.pause()
+        assert "55%" in _limits_text(app)
+
+        app.apply_snapshot(refreshed)
+        await pilot.pause()
+        assert _runs_table(app).row_count == 2
+
+
 # -- CLI: `alloy monitor --once` (plain text, no --json) -----------------------
 
 
@@ -388,3 +516,37 @@ def test_cli_monitor_once_plain_text_prints_limits_lines_before_table_rows(
     assert limits_pos != -1
     assert bead_pos != -1
     assert limits_pos < bead_pos
+
+
+def test_cli_monitor_help_lists_limits_interval_and_no_limits():
+    runner = CliRunner()
+    result = runner.invoke(cli_app, ["monitor", "--help"])
+
+    assert result.exit_code == 0
+    assert "--limits-interval" in result.stdout
+    assert "--no-limits" in result.stdout
+
+
+def test_cli_monitor_once_no_limits_skips_probe_all(
+    beads_project: Path, alloy_home: Path, monkeypatch: pytest.MonkeyPatch
+):
+    def _raise(*_args, **_kwargs):
+        raise AssertionError("probe_all must not be called with --no-limits")
+
+    monkeypatch.setattr("alloy.cli.probe_all", _raise)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_app,
+        [
+            "monitor",
+            "--once",
+            "--no-limits",
+            "--repo",
+            str(beads_project),
+            "--root",
+            str(alloy_home),
+        ],
+    )
+
+    assert result.exit_code == 0
