@@ -19,11 +19,13 @@ from typing import Any, Coroutine, Optional, TypeVar
 import typer
 from rich.console import Console
 from rich.table import Table
+from typer.core import TyperCommand
 
 from alloy import beads as bd
 from alloy import recipes
 from alloy.config import ConfigError, RecipeConfig, RoleSpec, discover_recipes, load_recipe
 from alloy.engine import Engine, EngineError
+from alloy.models import utcnow, with_provenance
 from alloy.monitor import build_snapshot
 from alloy.monitor.app import MonitorApp
 from alloy.monitor.render import COLUMNS, header_line, run_rows
@@ -189,10 +191,32 @@ def run(
         raise typer.Exit(1)
 
 
-@app.command()
+class _OptionalValueCommand(TyperCommand):
+    """Typer has no optional-value options. Let ``--remember`` stand alone by
+    rewriting a bare flag (followed by another option or nothing) to
+    ``--remember=`` before Click parses it."""
+
+    optional_value_opts = ("--remember",)
+
+    def parse_args(self, ctx, args):
+        fixed = []
+        for i, arg in enumerate(args):
+            nxt = args[i + 1] if i + 1 < len(args) else None
+            if arg in self.optional_value_opts and (nxt is None or nxt.startswith("-")):
+                arg = f"{arg}="
+            fixed.append(arg)
+        return super().parse_args(ctx, fixed)
+
+
+@app.command(cls=_OptionalValueCommand)
 def resume(
     bead_id: str = typer.Argument(...),
     message: str = typer.Option("", "--message", "-m", help="Guidance for the human gate"),
+    remember: Optional[str] = typer.Option(
+        None, "--remember", metavar="[KEY]",
+        help="Store the -m message in project memory before resuming; "
+             "optional KEY overrides the default alloy:human:<bead-id>",
+    ),
     repo: Optional[Path] = RepoOption,
     root: Optional[Path] = RootOption,
     json: bool = typer.Option(False, "--json"),
@@ -201,6 +225,8 @@ def resume(
     _setup_logging(verbose=not json)
     engine = _engine(repo, root)
     try:
+        if remember is not None:
+            _remember_human_note(engine, bead_id, message, remember)
         result = _run_async(engine.resume(bead_id, message))
     except (EngineError, ConfigError, bd.BeadsError) as exc:
         _fail(str(exc))
@@ -214,6 +240,19 @@ def resume(
         _emit(payload, True)
         return
     console.print(f"{result.outcome} {result.bead_id} -- {result.reason}")
+
+
+def _remember_human_note(engine: Engine, bead_id: str, message: str, key: str) -> None:
+    """Persist the resume guidance as a provenance-stamped project memory."""
+    if not message.strip():
+        raise EngineError("--remember needs a -m/--message to store")
+    record = engine.store.latest_run_for_bead(bead_id)
+    if record is None:
+        raise EngineError(f"no run found for {bead_id}")
+    engine.beads.remember(
+        key or f"alloy:human:{bead_id}",
+        with_provenance(message.strip(), record["run_id"], bead_id, utcnow().date()),
+    )
 
 
 @app.command()
