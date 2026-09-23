@@ -100,7 +100,15 @@ async def test_jev_requires_a_schema_with_an_enum_field():
         )
 
 
-def test_jev_unavailable_without_a_key():
+def test_jev_available_when_typesafe_api_key_in_environment(monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "host-key")
+    monkeypatch.delenv("ALLOY_FAKE_CONFIG", raising=False)
+    assert JevRunner().available()
+
+
+def test_jev_unavailable_without_a_key(monkeypatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("ALLOY_FAKE_CONFIG", raising=False)
     runner = JevRunner()
     assert not runner.available()
 
