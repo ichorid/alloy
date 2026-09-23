@@ -29,6 +29,7 @@ from conftest import (
     acceptance_entry,
     context_entry,
     critic_entry,
+    estimate_entry,
     harvest_entry,
     implement_empty_diff_entry,
     implement_entry,
@@ -1613,6 +1614,89 @@ async def test_verifier_prompt_lists_remembered_check_hints_before_autodetect(
     autodetect_pos = hints.index(AUTODETECT_PYTEST)
     assert targeted_pos < autodetect_pos
     assert regression_pos < autodetect_pos
+
+
+# -- alloy:calibration persistence (alloy-4ef.12) -----------------------------
+
+
+def _calibration_imports():
+    from alloy.models import (
+        CALIBRATION_KEY,
+        format_calibration,
+        update_calibration,
+    )
+
+    return CALIBRATION_KEY, format_calibration, update_calibration
+
+
+def _calibration_remember_calls(fake_workflow: FakeWorkflow) -> list[dict]:
+    calibration_key, _, _ = _calibration_imports()
+    return [
+        call
+        for call in _bd_remember_calls(fake_workflow)
+        if calibration_key in call.get("argv", [])
+    ]
+
+
+def _medium_calibration_body() -> str:
+    _, _, update_calibration = _calibration_imports()
+    body = update_calibration("", level="medium", iterations=3, agent_calls=7, overrun=False)
+    return update_calibration(body, level="medium", iterations=3, agent_calls=7, overrun=False)
+
+
+def _calibration_done_script(**overrides):
+    base = script(estimate=estimate_entry(complexity="medium"))
+    base.update(overrides)
+    return base
+
+
+async def test_finish_remembers_calibration_as_alloy_calibration(
+    project, alloy_home, fake_workflow
+):
+    """Finish writes alloy:calibration once with per-level aggregate JSON."""
+    calibration_key, _, _ = _calibration_imports()
+    fake_workflow.configure(_calibration_done_script())
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    remembers = _calibration_remember_calls(fake_workflow)
+    assert len(remembers) == 1
+
+    key, stored = _remember_key_and_body(remembers[0])
+    assert key == calibration_key
+    body, run_id, bead_id, at = parse_provenance(stored)
+    assert run_id == harness.run_id
+    assert bead_id == harness.bead.id
+    assert at is not None
+    assert json.loads(body)["medium"]["runs"] == 1
+
+
+async def test_estimate_prompt_shows_calibration_from_memory(
+    project, alloy_home, fake_workflow
+):
+    """Stored alloy:calibration renders as one line in the estimate project layer."""
+    calibration_key, format_calibration, _ = _calibration_imports()
+    seeded = _medium_calibration_body()
+    line = format_calibration(seeded)
+    fake_workflow.configure(
+        _calibration_done_script(),
+        memories={calibration_key: seeded},
+    )
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    try:
+        await harness.start()
+    finally:
+        harness.close()
+
+    estimate_prompt_text = fake_workflow.calls_for("estimate")[0]["prompt"]
+    assert estimate_prompt_text.count("calibration:") == 1
+    assert line in estimate_prompt_text
 
 
 # -- harvest lesson persistence (alloy-4ef.10) --------------------------------
