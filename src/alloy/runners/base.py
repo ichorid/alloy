@@ -245,6 +245,7 @@ class CLIRunner:
             command = self.build_command(effective_prompt, **build_kwargs)
         argv = [binary_path, *command]
         digest = prompt_hash(effective_prompt)
+        prefix = getattr(prompt, "prefix_hash", "")  # set by alloy.prompts.assemble
         started = utcnow()
         clock = time.monotonic()
 
@@ -294,7 +295,7 @@ class CLIRunner:
             return AgentResult(
                 runner=self.name, model=model, ok=False, exit_code=exit_code,
                 text="", structured=None, started_at=started, ended_at=utcnow(),
-                duration_s=duration, log_path=log_path, prompt_hash=digest,
+                duration_s=duration, log_path=log_path, prompt_hash=digest, prefix_hash=prefix,
                 error=f"timed out after {limit_s:.0f}s",
             )
 
@@ -316,7 +317,7 @@ class CLIRunner:
             duration_s=duration,
             usage=usage,
             log_path=log_path,
-            prompt_hash=digest,
+            prompt_hash=digest, prefix_hash=prefix,
             error=None if ok else _failure_message(text, stderr, exit_code),
             session_id=session_id,
         )

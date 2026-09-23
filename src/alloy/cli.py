@@ -411,13 +411,15 @@ def logs(
         return
     console.print(f"[bold]run[/bold] {record['run_id']}   [bold]logs[/bold] {record['log_dir']}")
     table = Table(show_header=True, header_style="bold")
-    for column in ("#", "bead", "role", "runner", "model", "iter", "secs", "exit", "artifact"):
+    for column in ("#", "bead", "role", "runner", "model", "iter", "secs", "exit", "prefix",
+                   "artifact"):
         table.add_column(column)
     for index, call in enumerate(calls, 1):
         table.add_row(
             str(index), call["bead_id"], call["role"], call["runner"], call["model"] or "-",
             str(call["iteration"]), f"{call['duration_s']:.1f}",
-            str(call["exit_code"]), call["log_path"] or "-",
+            str(call["exit_code"]), (call.get("prefix_hash") or "-")[:12],
+            call["log_path"] or "-",
         )
     console.print(table)
     if not checks:

@@ -196,7 +196,7 @@ Produce a context packet:
 
 
 def context_prompt(brief: str, acceptance: str) -> str:
-    return assemble(CONTEXT_STATIC, "", "", _task_layer(brief, acceptance), "")
+    return assemble(CONTEXT_STATIC, "", "", _task_layer(brief, acceptance), "").text
 
 
 ESTIMATE_STATIC = """You are estimating how hard this task is
@@ -211,7 +211,7 @@ Return complexity, reason and confidence in the required structured output."""
 def estimate_prompt(brief: str, acceptance: str, context: dict[str, Any]) -> str:
     return assemble(
         ESTIMATE_STATIC, "", _run_layer(context), _task_layer(brief, acceptance), ""
-    )
+    ).text
 
 
 TESTS_STATIC = f"""Write failing tests for this task. Do not implement the behavior itself.
@@ -262,7 +262,7 @@ def tests_prompt(
         "" if resumed else _run_layer(context),
         "" if resumed else _task_layer(brief, acceptance),
         "\n\n".join(volatile),
-    )
+    ).text
 
 
 tests_prompt.__test__ = False  # This prompt helper may be imported by pytest modules.
@@ -322,7 +322,7 @@ def implement_prompt(
         volatile.append(f"## Required changes this iteration\n{instructions}")
     return assemble(
         IMPLEMENT_STATIC, "", _run_layer(context), "\n\n".join(task), "\n\n".join(volatile)
-    )
+    ).text
 
 
 def triage_prompt(
@@ -564,7 +564,7 @@ def judge_prompt(
 iteration {iteration}; {limits_note}"""
     return assemble(
         JUDGE_STATIC, "", _run_layer(context), _task_layer(brief, acceptance), volatile
-    )
+    ).text
 
 
 ACCEPTANCE_STATIC = """You are deciding whether there is enough evidence to call a coding task complete.
@@ -597,7 +597,7 @@ def acceptance_prompt(
 
 ## Check evidence (this iteration)
 {_render_results(checks_this_iteration, verifier_stop)}"""
-    return assemble(ACCEPTANCE_STATIC, "", "", task, volatile)
+    return assemble(ACCEPTANCE_STATIC, "", "", task, volatile).text
 
 
 VERIFIER_STATIC = """You are choosing the next verification check for a coding task. You are read-only:
@@ -688,7 +688,7 @@ iteration {iteration}; {checks_left_iteration} more check(s) allowed this iterat
 {checks_left_run} more in this run"""
     if resumed:
         volatile = f"{VERIFIER_RESUMED}\n\n{volatile}"
-    return assemble(VERIFIER_STATIC, "", run, task, volatile)
+    return assemble(VERIFIER_STATIC, "", run, task, volatile).text
 
 
 CRITIC_STATIC = """You are one of several independent critics reviewing a stuck coding task.
@@ -701,7 +701,7 @@ the implementation, say that explicitly."""
 
 
 def critic_prompt(evidence: str) -> str:
-    return assemble(CRITIC_STATIC, "", "", "", evidence)
+    return assemble(CRITIC_STATIC, "", "", "", evidence).text
 
 
 SYNTHESIZE_STATIC = """Several independent critics reviewed a stuck coding task. Reconcile their
@@ -723,7 +723,7 @@ def synthesize_prompt(evidence: str, critiques: list[dict[str, Any]]) -> str:
         for index, item in enumerate(critiques)
     )
     volatile = f"{evidence}\n\n## Independent opinions\n{rendered}"
-    return assemble(SYNTHESIZE_STATIC, "", "", "", volatile)
+    return assemble(SYNTHESIZE_STATIC, "", "", "", volatile).text
 
 
 # --------------------------------------------------------------------------
@@ -804,6 +804,8 @@ def _render_history(history: list[dict[str, Any]]) -> str:
 
 
 def _evidence_packet(state: TddState, ctx: RunContext, diff: str) -> str:
+    """A plain `str`: the packet is graph state (see CriticInput) and a layer
+    of the critic and synthesize prompts, not a prompt of its own."""
     volatile = "\n\n".join(
         [
             f"## Current diff\n```diff\n{clip_diff(diff)}\n```",
@@ -812,12 +814,14 @@ def _evidence_packet(state: TddState, ctx: RunContext, diff: str) -> str:
             f"## Attempt history\n{_render_history(state.get('attempts', [])) or '(none)'}",
         ]
     )
-    return assemble(
-        "",
-        "",
-        _run_layer(state.get("context")),
-        _task_layer(ctx.bead.task_brief(), ctx.bead.acceptance_criteria),
-        volatile,
+    return str(
+        assemble(
+            "",
+            "",
+            _run_layer(state.get("context")),
+            _task_layer(ctx.bead.task_brief(), ctx.bead.acceptance_criteria),
+            volatile,
+        ).text
     )
 
 

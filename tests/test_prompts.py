@@ -7,15 +7,25 @@ prompt builder onto it. They are expected to fail until the implementation lands
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 from pathlib import Path
 
 import pytest
 
+from alloy.prompts import LAYER_SEPARATOR, assemble
 from alloy.recipes.tdd_loop import (
     BUG_PROTOCOL,
+    IMPLEMENT_STATIC,
+    JUDGE_STATIC,
+    VERIFIER_STATIC,
     _evidence_packet,
+    _render_check_hints,
+    _render_checks,
     _render_context,
+    _render_results,
+    _run_layer,
+    _task_layer,
     acceptance_prompt,
     context_prompt,
     critic_prompt,
@@ -38,7 +48,11 @@ def _load_fake_module():
 ROLE_MARKERS = _load_fake_module().ROLE_MARKERS
 
 GOLDEN_DIR = Path(__file__).parent / "golden" / "prompts"
-LAYER_SEPARATOR = "\n\n---\n\n"
+
+# Distinctive markers for volatile-layer isolation tests (alloy-4ef.6).
+MARKER_WORKTREE = "/tmp/alloy-volatile-wt-marker-4ef6"
+MARKER_RUN_ID = "run-volatile-marker-4ef6"
+MARKER_ITERATION = 77
 
 # Fixed fixture bead shared by every golden comparison.
 BRIEF = "# alloy-fixture: Add slugify()\n\nAdd a slugify() helper to mypkg."
@@ -526,19 +540,19 @@ def _verifier_prompt_check_two() -> str:
 def test_assemble_module_exports_join_helper():
     from alloy.prompts import assemble
 
-    assert assemble("alpha", "", "beta", "", "gamma") == f"alpha{LAYER_SEPARATOR}beta{LAYER_SEPARATOR}gamma"
+    assert assemble("alpha", "", "beta", "", "gamma").text == f"alpha{LAYER_SEPARATOR}beta{LAYER_SEPARATOR}gamma"
 
 
 def test_assemble_skips_empty_layers():
     from alloy.prompts import assemble
 
-    assert assemble("", "project", "", "task", "") == f"project{LAYER_SEPARATOR}task"
+    assert assemble("", "project", "", "task", "").text == f"project{LAYER_SEPARATOR}task"
 
 
 def test_assemble_returns_empty_string_when_all_layers_empty():
     from alloy.prompts import assemble
 
-    assert assemble("", "", "", "", "") == ""
+    assert assemble("", "", "", "", "").text == ""
 
 
 def test_assemble_layer_separator_matches_test_contract():
@@ -647,6 +661,143 @@ def test_role_marker_matches_prompt_first_line(role: str, marker: str):
     prompt = _fixture_prompt(role)
     first_line = prompt.splitlines()[0]
     assert marker in first_line
+
+
+# ---------------------------------------------------------------------------
+# alloy-4ef.6: prefix_hash and volatile-layer isolation
+# ---------------------------------------------------------------------------
+
+
+def test_assemble_returns_prefix_hash_over_static_project_run_layers():
+    """prefix_hash is sha256 over the joined static, project and run layers."""
+    static, project, run = "static-body", "project-body", "run-body"
+    task, volatile = "task-body", "volatile-body"
+
+    text, prefix_hash = assemble(static, project, run, task, volatile)
+
+    joined = LAYER_SEPARATOR.join((static, project, run))
+    assert prefix_hash == hashlib.sha256(joined.encode("utf-8")).hexdigest()
+    assert text == LAYER_SEPARATOR.join((static, project, run, task, volatile))
+
+
+def _implement_stable_layers(brief: str, acceptance: str, baseline_checks: list[dict]) -> str:
+    task_parts = [_task_layer(brief, acceptance)]
+    if baseline_checks:
+        rendered = _render_checks(baseline_checks)
+        if rendered:
+            task_parts.append(f"## Checks that must go green\n{rendered}")
+    return assemble(IMPLEMENT_STATIC, "", _run_layer(CONTEXT), "\n\n".join(task_parts), "").text
+
+
+def _assert_markers_absent_from_stable_prefix(stable: str) -> None:
+    for marker in (MARKER_WORKTREE, MARKER_RUN_ID, str(MARKER_ITERATION)):
+        assert marker not in stable
+
+
+def test_judge_prompt_excludes_volatile_markers_from_stable_layers():
+    check_with_markers = {
+        **CHECK_RESULT,
+        "iteration": MARKER_ITERATION,
+        "duration_s": 123.4,
+        "timed_out": True,
+        "log_path": f"/logs/{MARKER_RUN_ID}/check-1.log",
+        "output_tail": f"failure rooted at {MARKER_WORKTREE}",
+    }
+    stable = assemble(
+        JUDGE_STATIC, "", _run_layer(CONTEXT), _task_layer(BRIEF, ACCEPTANCE), ""
+    ).text
+    prompt = judge_prompt(
+        BRIEF,
+        ACCEPTANCE,
+        CONTEXT,
+        DIFF,
+        [check_with_markers],
+        ATTEMPT_HISTORY,
+        MARKER_ITERATION,
+        LIMITS_NOTE,
+    )
+
+    assert prompt.startswith(stable + LAYER_SEPARATOR)
+    _assert_markers_absent_from_stable_prefix(stable)
+
+
+def test_verifier_prompt_excludes_volatile_markers_from_stable_layers():
+    check_with_markers = {
+        **CHECK_RESULT,
+        "iteration": MARKER_ITERATION,
+        "duration_s": 456.7,
+        "timed_out": True,
+        "log_path": f"/logs/{MARKER_RUN_ID}/verifier-check.log",
+        "output_tail": f"stderr mentions {MARKER_WORKTREE}",
+    }
+    hints = f"## Hints from the repository (not yet verified)\n{_render_check_hints(CONTEXT)}"
+    baseline = (
+        "## Baseline commands (the tests role's targeted checks; red before implementation)\n"
+        f"{_render_checks(BASELINE_CHECKS)}"
+    )
+    stable = assemble(
+        VERIFIER_STATIC,
+        "",
+        f"{_run_layer(CONTEXT)}\n\n{hints}",
+        f"{_task_layer(BRIEF, ACCEPTANCE)}\n\n{baseline}",
+        "",
+    ).text
+    prompt = verifier_prompt(
+        brief=BRIEF,
+        acceptance=ACCEPTANCE,
+        context=CONTEXT,
+        diff=DIFF,
+        changed_files=[f"mypkg/__init__.py", MARKER_WORKTREE],
+        checks_this_run=[check_with_markers],
+        iteration=MARKER_ITERATION,
+        checks_left_iteration=2,
+        checks_left_run=4,
+        history=ATTEMPT_HISTORY,
+        baseline_checks=BASELINE_CHECKS,
+    )
+
+    assert prompt.startswith(stable + LAYER_SEPARATOR)
+    _assert_markers_absent_from_stable_prefix(stable)
+
+
+def test_render_results_omits_log_paths_and_durations_from_check_lines():
+    """Check headlines rendered for prompts must not embed log paths or durations."""
+    check_with_markers = {
+        **CHECK_RESULT,
+        "duration_s": 123.4,
+        "timed_out": True,
+        "log_path": f"/logs/{MARKER_RUN_ID}/check-1.log",
+    }
+    rendered = _render_results([check_with_markers], None)
+
+    assert MARKER_RUN_ID not in rendered
+    assert "123" not in rendered
+    assert "duration" not in rendered.lower()
+
+
+def test_implement_repair_prompt_excludes_volatile_markers_from_stable_layers():
+    failed_check = {
+        **CHECK_RESULT,
+        "iteration": MARKER_ITERATION,
+        "duration_s": 89.1,
+        "log_path": f"/logs/{MARKER_RUN_ID}/repair.log",
+        "output_tail": f"trace references {MARKER_WORKTREE}",
+    }
+    stable = _implement_stable_layers(BRIEF, ACCEPTANCE, BASELINE_CHECKS)
+    prompt = implement_prompt(
+        BRIEF,
+        ACCEPTANCE,
+        CONTEXT,
+        f"repair using run {MARKER_RUN_ID}",
+        ATTEMPT_HISTORY,
+        failed_check,
+        BASELINE_CHECKS,
+        diff=DIFF,
+        previous_instructions=f"inspect {MARKER_WORKTREE}",
+    )
+
+    assert prompt.startswith(stable + LAYER_SEPARATOR)
+    _assert_markers_absent_from_stable_prefix(stable)
 
 
 def test_evidence_packet_matches_layer_joined_golden():

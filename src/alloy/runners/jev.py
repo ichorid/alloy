@@ -108,6 +108,7 @@ class JevRunner:
 
         effective_model = model or self.default_model
         digest = prompt_hash(prompt)
+        prefix = getattr(prompt, "prefix_hash", "")  # set by alloy.prompts.assemble
         started = utcnow()
         clock = time.monotonic()
         payload = {
@@ -136,7 +137,7 @@ class JevRunner:
             return AgentResult(
                 runner=self.name, model=effective_model, ok=False, exit_code=-1,
                 text="", structured=None, started_at=started, ended_at=utcnow(),
-                duration_s=time.monotonic() - clock, prompt_hash=digest,
+                duration_s=time.monotonic() - clock, prompt_hash=digest, prefix_hash=prefix,
                 error=f"jev request failed: {exc}",
             )
 
@@ -182,7 +183,7 @@ class JevRunner:
             duration_s=duration,
             usage=usage,
             log_path=log_path,
-            prompt_hash=digest,
+            prompt_hash=digest, prefix_hash=prefix,
             error=None if ok else f"jev http {response.status_code}: {body_text[:500]}",
         )
 
