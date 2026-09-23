@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import signal
@@ -27,6 +28,7 @@ from alloy.memory_schedule import (
     review_bead_for_note, review_due, review_plan, review_run_id,
 )
 from alloy.models import DEFAULT_RECIPE_KEY, EMBED_STALE_KEY, ProjectMemory, utcnow
+from alloy.paths import AlloyPaths
 from alloy.store import RUN_RUNNING, RUN_WAITING_HUMAN
 
 DEFAULT_POLL_SECONDS = 15.0
@@ -56,6 +58,7 @@ class Scheduler:
 
     async def serve(self) -> None:
         self._write_pidfile()
+        self._write_session()
         self._install_signal_handlers()
         log.info("scheduler up (pid %d, poll %.0fs, repo %s)",
                  os.getpid(), self.poll_seconds, self.engine.repo)
@@ -68,6 +71,7 @@ class Scheduler:
                 if not started:
                     await self._sleep(self.poll_seconds)
         finally:
+            self._finish_session()
             self._remove_pidfile()
             log.info("scheduler down")
 
@@ -289,6 +293,38 @@ class Scheduler:
         with contextlib.suppress(FileNotFoundError):
             if read_pid(self.pidfile) == os.getpid():
                 self.pidfile.unlink()
+
+    def _write_session(self) -> None:
+        path = self.engine.paths.scheduler_session
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "pid": os.getpid(),
+            "started_at": self.clock().isoformat(),
+            "ended_at": None,
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def _finish_session(self) -> None:
+        path = self.engine.paths.scheduler_session
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return
+        if not isinstance(data, dict) or data.get("pid") != os.getpid():
+            return
+        data["ended_at"] = self.clock().isoformat()
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def read_session(paths: AlloyPaths) -> dict | None:
+    """Scheduler session metadata from scheduler.json, or None if absent/unreadable."""
+    try:
+        data = json.loads(paths.scheduler_session.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict) or set(data.keys()) != {"pid", "started_at", "ended_at"}:
+        return None
+    return data
 
 
 def _parse_day(value: str | None) -> date | None:
