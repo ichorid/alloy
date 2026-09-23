@@ -21,6 +21,8 @@ import logging
 import operator
 import re
 from dataclasses import replace
+from datetime import date
+from pathlib import Path
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -32,6 +34,7 @@ from alloy.models import (
     CALIBRATION_KEY,
     CHECK_HINTS_KEY,
     CONTRADICTION_KEY_PREFIX,
+    MEMORY_RENDER_HEADER,
     LESSON_KEY_PREFIX,
     AcceptanceVerdict,
     AgentResult,
@@ -49,6 +52,8 @@ from alloy.models import (
     utcnow,
     ProjectMemory,
     ProjectSnapshot,
+    ReviewPlan,
+    ReviewVerdicts,
     ScopeVerdict,
     TestsOutput,
     VerifierAction,
@@ -56,6 +61,8 @@ from alloy.models import (
     extract_bug_reports,
     format_calibration,
     format_check_hints,
+    memory_hygiene,
+    merge_review_plan,
     next_level,
     parse_check_hints,
     update_calibration,
@@ -811,6 +818,132 @@ def harvest_prompt(
         + f"## Existing repository lessons\n{lessons or '(none)'}"
     )
     return assemble(HARVEST_STATIC, "", "", "", volatile).text
+
+
+MEMORY_REVIEW_STATIC = """You are reviewing project memory for a repository.
+You are read-only: do not modify any file and do not run bd.
+
+Every stored memory is listed below with its owner (alloy or human) and, for
+alloy-owned entries, the run, bead and date that wrote it. Some carry a
+contradiction flag recorded by an earlier run. Deterministic hygiene has
+already decided the keys listed under "Already planned"; do not repeat them.
+
+Return one verdict per remaining key:
+- "keep" -- still accurate and worth its place in every prompt
+- "update" -- keep, but with new_content replacing the body
+- "forget" -- stale, wrong, duplicated, or too task-specific to keep
+- "embed" -- durable enough to live in the repository's instruction files
+
+Give a one-sentence reason for each. Do not invent keys."""
+
+TREE_SUMMARY_LIMIT = 200
+_TREE_SKIP_DIRS = frozenset({".git", "__pycache__", "node_modules", ".venv", "venv",
+                             ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox"})
+
+
+def repo_tree_summary(root: Path, *, limit: int = TREE_SUMMARY_LIMIT) -> str:
+    """A bounded, sorted listing of the repository's directories and files
+    (relative paths, directories with a trailing slash), skipping VCS and
+    tool caches. Stops after ``limit`` entries with a truncation marker."""
+
+    lines: list[str] = []
+    stack = [root]
+    while stack and len(lines) < limit:
+        current = stack.pop()
+        try:
+            children = sorted(current.iterdir(), key=lambda p: (not p.is_dir(), p.name))
+        except OSError:
+            continue
+        pending: list[Path] = []
+        for child in children:
+            if child.name in _TREE_SKIP_DIRS or child.name.startswith("."):
+                continue
+            rel = child.relative_to(root).as_posix()
+            if child.is_dir():
+                lines.append(rel + "/")
+                pending.append(child)
+            else:
+                lines.append(rel)
+            if len(lines) >= limit:
+                lines.append("... (truncated)")
+                break
+        stack.extend(reversed(pending))
+    return "\n".join(lines)
+
+
+def embedded_memory_block(root: Path, instruction_files: list[str]) -> str:
+    """The ``## Project memory`` section already embedded in one of the
+    repository's instruction files, or "" when none carries one."""
+
+    for name in instruction_files:
+        path = root / name
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            if line.strip() != MEMORY_RENDER_HEADER:
+                continue
+            section = [line]
+            for rest in lines[index + 1:]:
+                if rest.startswith("## "):
+                    break
+                section.append(rest)
+            return "\n".join(section).strip()
+    return ""
+
+
+def memory_review_prompt(
+    memory: ProjectMemory,
+    planned: ReviewPlan,
+    *,
+    embedded_block: str,
+    tree_summary: str,
+) -> str:
+    entries = memory.entries
+    rows: list[str] = []
+    for key in sorted(entries):
+        entry = entries[key]
+        if entry.owner == "alloy":
+            provenance = (f"run={entry.run_id or '-'} bead={entry.bead_id or '-'} "
+                          f"at={entry.date.isoformat() if entry.date else '-'}")
+        else:
+            provenance = "human-written"
+        flag = " [contradiction flagged]" if CONTRADICTION_KEY_PREFIX + key in entries else ""
+        rows.append(f"### {key}\nowner: {entry.owner}; {provenance}{flag}\n{entry.body}")
+    already = "\n".join(f"- {item.key}: {item.action} -- {item.reason}" for item in planned.items)
+    volatile = (
+        f"## Memories\n{chr(10).join(rows) or '(none)'}\n\n"
+        f"## Already planned\n{already or '(none)'}\n\n"
+        f"## Embedded block\n{embedded_block or '(none)'}\n\n"
+        f"## Repository tree\n{tree_summary or '(empty)'}"
+    )
+    return assemble(MEMORY_REVIEW_STATIC, "", "", "", clip(volatile, 12000)).text
+
+
+async def review_memory(ctx: RunContext, memory: ProjectMemory, *, today: date) -> ReviewPlan:
+    """Plan a memory review: deterministic hygiene, then the memory_reviewer
+    role's verdicts on the remaining known keys. Never writes to bd."""
+
+    spec = ctx.recipe.memory
+    hygiene = memory_hygiene(memory, spec.ttl_days, today)
+    planned = ReviewPlan(items=hygiene)
+    prompt = memory_review_prompt(
+        memory, planned,
+        embedded_block=embedded_memory_block(ctx.worktree.path, spec.instruction_files),
+        tree_summary=repo_tree_summary(ctx.worktree.path),
+    )
+    default = ReviewVerdicts(verdicts=[])
+    answer = await classify(
+        ctx, "memory_reviewer", ctx.recipe.role("memory_reviewer"), prompt,
+        model_cls=ReviewVerdicts, default=default,
+    )
+    if answer is default:
+        log.warning("memory_reviewer: %s; plan is hygiene only", default.reason)
+        return merge_review_plan(hygiene, None, set(memory.entries),
+                                 reviewer_reason=default.reason)
+    return merge_review_plan(hygiene, answer, set(memory.entries))
 
 
 def existing_lessons(memory: ProjectMemory | None) -> dict[str, str]:
