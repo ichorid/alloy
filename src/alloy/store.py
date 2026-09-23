@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
+from alloy.limits import harness_for_runner
 from alloy.models import AgentCallRecord, AgentResult, utcnow
 from alloy.usage import normalize
 
@@ -438,6 +439,61 @@ class Store:
         return _sum_usage(
             normalize(json.loads(call["usage_json"])) for call in self.agent_calls(run_id)
         )
+
+    def models_used(self, run_id: str) -> list[dict[str, Any]]:
+        """One entry per distinct (runner, model) across finished and inflight calls."""
+        groups: dict[tuple[str, str | None], dict[str, Any]] = {}
+        with self.connect() as conn:
+            finished = conn.execute(
+                "SELECT runner, model, started_at, usage_json FROM agent_calls WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+            inflight = conn.execute(
+                "SELECT runner, model, started_at FROM inflight_calls WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+
+        for row in finished:
+            key = (row["runner"], row["model"])
+            group = groups.setdefault(
+                key, {"first_at": row["started_at"], "usages": [], "calls": 0}
+            )
+            if row["started_at"] < group["first_at"]:
+                group["first_at"] = row["started_at"]
+            group["calls"] += 1
+            group["usages"].append(normalize(json.loads(row["usage_json"])))
+
+        for row in inflight:
+            key = (row["runner"], row["model"])
+            group = groups.setdefault(
+                key, {"first_at": row["started_at"], "usages": [], "calls": 0}
+            )
+            if row["started_at"] < group["first_at"]:
+                group["first_at"] = row["started_at"]
+
+        entries: list[dict[str, Any]] = []
+        for (runner, model), group in sorted(groups.items(), key=lambda item: item[1]["first_at"]):
+            entry = {
+                "runner": runner,
+                "model": model,
+                "harness": harness_for_runner(runner),
+                "calls": group["calls"],
+                **_sum_usage(group["usages"]),
+            }
+            entries.append(entry)
+        return entries
+
+    def finished_runs_since(self, since: str, repo: Path | str) -> list[dict[str, Any]]:
+        """Terminal runs for `repo` whose `ended_at` is at or after `since`, ascending."""
+        statuses = tuple(TERMINAL_RUN_STATUSES)
+        placeholders = ",".join("?" * len(statuses))
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM runs WHERE status IN ({placeholders})"
+                " AND ended_at >= ? AND repo = ? ORDER BY ended_at",
+                (*statuses, since, str(repo)),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def token_totals_by_role(self, run_id: str) -> dict[str, dict]:
         by_role: dict[str, list[dict]] = {}
