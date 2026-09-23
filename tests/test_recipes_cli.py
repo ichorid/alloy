@@ -89,7 +89,7 @@ def test_recipes_json_exports_complexity_tiers(project, alloy_home, fake_harness
     entry = _tdd_loop_recipe(payload)
     complexity = entry["complexity"]
 
-    assert complexity["routing"] == "shadow"
+    assert complexity["routing"] == "live"
     assert complexity["escalate_after_retries"] == 2
 
     simple = complexity["tiers"]["simple"]
@@ -123,7 +123,7 @@ def test_recipes_table_lists_routing_tiers_models_and_effort(project, alloy_home
     assert result.exit_code == 0
     output = result.stdout
     for needle in (
-        "shadow",
+        "live",
         "simple",
         "medium",
         "complex",
@@ -196,7 +196,7 @@ def test_recipes_probe_nonzero_exit_when_codex_missing(project, alloy_home, fake
 # -- alloy status --json complexity ------------------------------------------
 
 
-async def test_status_json_shows_complexity_and_null_dispatch_tier_in_shadow_mode(
+async def test_status_json_shows_complexity_and_dispatch_tier_in_live_mode(
     beads_project, alloy_home, fake_harnesses
 ):
     from alloy.engine import Engine
@@ -213,7 +213,7 @@ async def test_status_json_shows_complexity_and_null_dispatch_tier_in_shadow_mod
     row = payload["beads"][0]
     assert row["bead"] == bead_id
     assert row["complexity"] == "simple"
-    assert row["dispatch_tier"] is None
+    assert row["dispatch_tier"] == "simple"
 
 
 def test_status_json_null_complexity_when_estimate_never_ran(beads_project, alloy_home):

@@ -1,7 +1,7 @@
 name: tdd-loop
 
 complexity:
-  routing: shadow  # shadow keeps role runners; live selects tiers for tiered roles
+  routing: live  # live selects tiers for tiered roles; shadow would estimate and record only
   escalate_after_retries: 2
   # A tier is a priority-ordered runner list: the first is primary, the rest fallbacks.
   # `effort` is per entry (claude --effort, codex model_reasoning_effort); cursor has
@@ -25,8 +25,8 @@ roles:
     runner: claude
     model: sonnet
   memory_reviewer:
-    runner: claude
-    model: sonnet
+    runner: cursor
+    model: composer-2.5
   context:
     runner: cursor-plan          # read-only: gathers understanding, changes nothing
     timeout_minutes: 10
@@ -36,8 +36,8 @@ roles:
     model: jev-latest
     timeout_minutes: 5
     fallback:
-      runner: claude
-      model: sonnet
+      runner: cursor
+      model: composer-2.5
       timeout_minutes: 5
 
   triage:
@@ -46,8 +46,8 @@ roles:
     model: jev-latest
     timeout_minutes: 5
     fallback:
-      runner: claude
-      model: sonnet
+      runner: cursor
+      model: composer-2.5
       timeout_minutes: 5
 
   scope:
@@ -57,8 +57,8 @@ roles:
     model: jev-latest
     timeout_minutes: 5
     fallback:
-      runner: claude
-      model: sonnet
+      runner: cursor
+      model: composer-2.5
       timeout_minutes: 5
 
   tests:
@@ -142,3 +142,7 @@ limits:
 
 on_success_status: review-ready
 cleanup_worktree_on_success: false
+
+runners:
+  jev:
+    api_key_file: ~/MY_SRC/jev.key   # never commit the raw key; TYPESAFE_API_KEY env var also works

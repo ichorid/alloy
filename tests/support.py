@@ -26,11 +26,11 @@ BASE_RECIPE = Path(__file__).parents[1] / "src" / "alloy" / "recipes" / "tdd-loo
 
 
 def scope_config(**overrides: Any) -> RecipeConfig:
-    """Recipe config with a scope role (jev primary, claude fallback)."""
+    """Recipe config with a scope role (jev primary, cursor fallback)."""
     config = load_config()
     roles = dict(config.roles)
     fallback = overrides.pop(
-        "fallback", RoleSpec(runner="claude", model="sonnet", timeout_minutes=5),
+        "fallback", RoleSpec(runner="cursor", model="composer-2.5", timeout_minutes=5),
     )
     roles["scope"] = RoleSpec(
         runner=overrides.pop("runner", "jev"),

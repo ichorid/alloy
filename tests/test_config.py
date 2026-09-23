@@ -47,7 +47,7 @@ def test_next_level_complex_stays_complex():
 @pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
 def test_builtin_recipe_complexity_defaults(recipe_name):
     config = load_recipe(recipe_name)
-    assert config.complexity.routing == "shadow"
+    assert config.complexity.routing == "live"
     assert config.complexity.escalate_after_retries == 2
 
 
@@ -96,14 +96,14 @@ def test_builtin_recipe_medium_tier_chain(recipe_name):
 
 
 @pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
-def test_builtin_recipe_estimate_role_uses_jev_with_claude_fallback(recipe_name):
+def test_builtin_recipe_estimate_role_uses_jev_with_cursor_fallback(recipe_name):
     config = load_recipe(recipe_name)
     estimate = config.roles["estimate"]
     assert estimate.runner == "jev"
     assert estimate.model == "jev-latest"
     assert estimate.fallback is not None
-    assert estimate.fallback.runner == "claude"
-    assert estimate.fallback.model == "sonnet"
+    assert estimate.fallback.runner == "cursor"
+    assert estimate.fallback.model == "composer-2.5"
 
 
 @pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
@@ -151,14 +151,14 @@ def test_builtin_recipe_tests_role_is_pinned_not_tiered(recipe_name):
 
 
 @pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
-def test_builtin_recipe_scope_role_uses_jev_with_claude_fallback(recipe_name):
+def test_builtin_recipe_scope_role_uses_jev_with_cursor_fallback(recipe_name):
     config = load_recipe(recipe_name)
     scope = config.roles["scope"]
     assert scope.runner == "jev"
     assert scope.model == "jev-latest"
     assert scope.fallback is not None
-    assert scope.fallback.runner == "claude"
-    assert scope.fallback.model == "sonnet"
+    assert scope.fallback.runner == "cursor"
+    assert scope.fallback.model == "composer-2.5"
 
 
 @pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
@@ -186,7 +186,10 @@ def test_builtin_recipe_context_and_judge_unchanged(recipe_name):
 
 
 def test_resolve_role_shadow_routing_ignores_tiers():
-    config = load_recipe("tdd-loop")
+    config = replace(
+        load_recipe("tdd-loop"),
+        complexity=replace(load_recipe("tdd-loop").complexity, routing="shadow"),
+    )
     assert config.complexity.routing == "shadow"
     resolved = config.resolve_role("implement", "simple")
     assert resolved == config.roles["implement"]
@@ -447,5 +450,5 @@ def test_builtin_recipe_harvest_role(recipe_name):
 def test_builtin_recipe_memory_reviewer_role(recipe_name):
     config = load_recipe(recipe_name)
     reviewer = config.role("memory_reviewer")
-    assert reviewer.runner == "claude"
-    assert reviewer.model == "sonnet"
+    assert reviewer.runner == "cursor"
+    assert reviewer.model == "composer-2.5"

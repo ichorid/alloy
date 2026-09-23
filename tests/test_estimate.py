@@ -59,8 +59,8 @@ async def test_estimate_records_simple_complexity_in_state_store_and_ledger(
     assert roles.index("estimate") < roles.index("tests")
 
     implement_row = next(c for c in calls if c["role"] == "implement")
-    assert harness.recipe_config.role("implement").runner == "astra"
-    assert implement_row["runner"] == "codex"  # astra's resolved runner is recorded
+    assert implement_row["runner"] == "cursor"
+    assert implement_row["model"] == "composer-2.5"
 
 
 async def test_alloy_complexity_metadata_skips_estimate_agent_call(

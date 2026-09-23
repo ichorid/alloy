@@ -36,10 +36,12 @@ def script(**overrides):
 
 
 def triage_config(**overrides) -> object:
-    """Recipe config with a triage role (jev primary, claude fallback)."""
+    """Recipe config with a triage role (jev primary, cursor fallback)."""
     config = load_config()
     roles = dict(config.roles)
-    fallback = overrides.pop("fallback", RoleSpec(runner="claude", model="sonnet", timeout_minutes=5))
+    fallback = overrides.pop(
+        "fallback", RoleSpec(runner="cursor", model="composer-2.5", timeout_minutes=5),
+    )
     roles["triage"] = RoleSpec(
         runner=overrides.pop("runner", "jev"),
         model=overrides.pop("model", "jev-latest"),

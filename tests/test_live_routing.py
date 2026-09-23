@@ -31,8 +31,12 @@ def workflow_script(**overrides):
 
 
 def live_config():
+    return load_config()
+
+
+def shadow_config():
     config = load_config()
-    return replace(config, complexity=replace(config.complexity, routing="live"))
+    return replace(config, complexity=replace(config.complexity, routing="shadow"))
 
 
 def bead_with_complexity(level: str) -> Bead:
@@ -172,7 +176,7 @@ async def test_shadow_routing_keeps_astra_implement_and_no_dispatch_tier(
     harness = make_harness(
         project,
         alloy_home,
-        config=load_config(),
+        config=shadow_config(),
         bead=bead_with_complexity("simple"),
     )
     try:
@@ -182,7 +186,7 @@ async def test_shadow_routing_keeps_astra_implement_and_no_dispatch_tier(
 
     assert final["outcome"] == "done"
     row = _first_role_row(harness, "implement")
-    # Shadow mode is unchanged: implement still runs the recipe's `astra` role,
+    # Shadow mode: implement still runs the recipe's `astra` role,
     # and the ledger records astra's resolved runner, as in test_estimate.py.
     assert row["runner"] == "codex"
 
@@ -354,7 +358,7 @@ async def test_shadow_routing_never_escalates_on_judge_retries(
     harness = make_harness(
         project,
         alloy_home,
-        config=load_config(),
+        config=shadow_config(),
         bead=bead_with_complexity("simple"),
     )
     try:
