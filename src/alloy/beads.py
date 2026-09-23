@@ -75,6 +75,7 @@ class Bead(BaseModel):
     priority: int = 2
     issue_type: str = "task"
     labels: list[str] = Field(default_factory=list)
+    blocked_by: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @property
@@ -176,6 +177,35 @@ class BeadsClient:
         rows = self._json(["list", "--all", "--limit", "0", "--flat",
                            "--has-metadata-key", META_RECIPE])
         return [Bead.model_validate(row) for row in rows]
+
+    def blocked(self) -> list[Bead]:
+        rows = self._json(["blocked"])
+        return [Bead.model_validate(row) for row in rows]
+
+    def children(self, parent_id: str) -> list[Bead]:
+        rows = self._json([
+            "list", "--parent", parent_id, "--all", "--limit", "0", "--flat",
+        ])
+        return [Bead.model_validate(row) for row in rows]
+
+    def epic_for(self, bead_id: str, *, max_depth: int = 3) -> str | None:
+        """Return the nearest epic ancestor's id, or None when there isn't one."""
+        current = bead_id
+        for _ in range(max_depth):
+            rows = self._json(["show", current])
+            if not rows:
+                break
+            parent_id = _parent_id(rows[0])
+            if not parent_id:
+                break
+            parent_rows = self._json(["show", parent_id])
+            if not parent_rows:
+                break
+            parent = parent_rows[0]
+            if parent.get("issue_type") == "epic":
+                return str(parent.get("id") or "")
+            current = parent_id
+        return None
 
     # -- project memory ---------------------------------------------------
 

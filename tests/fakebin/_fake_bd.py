@@ -141,18 +141,49 @@ def _cmd_create(config: dict, argv: list[str]) -> int:
 
 
 def _cmd_list(config: dict, argv: list[str]) -> int:
+    _record("list", argv)
     beads = list(config.get("beads") or [])
     label = _parse_flag_value(argv, "--label")
     status = _parse_flag_value(argv, "--status")
+    parent = _parse_flag_value(argv, "--parent")
     if label:
         beads = [bead for bead in beads if label in (bead.get("labels") or [])]
     if status:
         beads = [bead for bead in beads if bead.get("status") == status]
+    if parent:
+        beads = [bead for bead in beads if bead.get("parent") == parent]
     if "--json" in argv:
         print(json.dumps(beads))
     else:
         for bead in beads:
             print(f"{bead.get('id')}: {bead.get('title')} [{bead.get('status')}]")
+    return 0
+
+
+def _cmd_blocked(config: dict, argv: list[str]) -> int:
+    rows = list(config.get("blocked") or [])
+    if "--json" in argv:
+        print(json.dumps(rows))
+    else:
+        for row in rows:
+            print(f"{row.get('id')}: {row.get('title')} [{row.get('status')}]")
+    return 0
+
+
+def _cmd_show(config: dict, argv: list[str]) -> int:
+    if len(argv) < 2:
+        sys.stderr.write("show requires a bead id\n")
+        return 1
+    bead_id = argv[1]
+    shows = config.get("shows") or {}
+    bead = shows.get(bead_id)
+    if bead is None:
+        sys.stderr.write(f"bead {bead_id} not found\n")
+        return 1
+    if "--json" in argv:
+        print(json.dumps(bead))
+    else:
+        print(f"{bead.get('id')}: {bead.get('title')} [{bead.get('status')}]")
     return 0
 
 
@@ -171,6 +202,8 @@ def main() -> int:
         "forget": _cmd_forget,
         "create": _cmd_create,
         "list": _cmd_list,
+        "blocked": _cmd_blocked,
+        "show": _cmd_show,
     }
     handler = handlers.get(command)
     if handler is None:
