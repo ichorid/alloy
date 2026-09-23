@@ -100,7 +100,8 @@ async def test_jev_requires_a_schema_with_an_enum_field():
         )
 
 
-def test_jev_unavailable_without_a_key():
+def test_jev_unavailable_without_a_key(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     runner = JevRunner()
     assert not runner.available()
 
