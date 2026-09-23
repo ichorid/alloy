@@ -1,0 +1,53 @@
+name: land
+
+# Landing re-verifies the bead branch after a trial merge of the target into
+# it; it never implements. Engine.land / `alloy land` (alloy-vrh.8) invoke it
+# -- never `alloy_recipe` metadata.
+landing:
+  mode: auto
+  target: main
+
+roles:
+  verifier:
+    # Proposes one verification check at a time against the merged tree;
+    # Alloy runs it as-is and shows the result back. Read-only by contract.
+    runner: cursor
+    model: composer-2.5
+    timeout_minutes: 10
+    fallback:
+      runner: claude-write
+      model: sonnet
+      timeout_minutes: 10
+
+  acceptance:
+    # Decides, after the verifier stops, whether the evidence is enough to
+    # call the merged tree good (accept / verify_more / repair / escalate).
+    runner: jev
+    model: jev-latest
+    timeout_minutes: 5
+    fallback:
+      runner: claude
+      model: sonnet
+      timeout_minutes: 5
+
+  judge:
+    runner: claude
+    model: sonnet
+    timeout_minutes: 10
+
+# Same check-loop budgets as tdd-loop; there is no fixed test command here
+# either -- the verifier names each check.
+verification:
+  max_checks_per_iteration: 5        # checks Alloy will run before the acceptance gate
+  max_total_checks: 20               # hard cap on checks across the whole run
+  max_command_timeout_minutes: 15    # any single check is killed after this long
+  min_acceptance_confidence: 0.6     # below this, acceptance escalates instead of passing
+
+limits:
+  max_iterations: 1                  # no implementer: there is nothing to retry with
+  max_wall_time_minutes: 30
+  max_agent_calls: 12
+
+runners:
+  jev:
+    api_key_file: ~/MY_SRC/jev.key   # never commit the raw key; TYPESAFE_API_KEY env var also works

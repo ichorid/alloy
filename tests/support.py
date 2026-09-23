@@ -12,7 +12,7 @@ from typing import Any, Awaitable, Callable
 import yaml
 
 from alloy.checkpoints import open_checkpointer
-from alloy.config import RecipeConfig, RoleSpec
+from alloy.config import RecipeConfig, RoleSpec, load_recipe
 from alloy.beads import Bead
 from alloy.engine import RunResult
 from alloy.models import utcnow
@@ -23,6 +23,7 @@ from alloy.store import Store
 from alloy.worktree import WorktreeManager
 
 BASE_RECIPE = Path(__file__).parents[1] / "src" / "alloy" / "recipes" / "tdd-loop.yaml"
+LAND_RECIPE_NAME = "land"
 
 
 def scope_config(**overrides: Any) -> RecipeConfig:
@@ -65,6 +66,22 @@ def load_config(**overrides: Any) -> RecipeConfig:
             fallback=None,
         )
         config = replace(config, roles=roles)
+    return replace(config, **overrides) if overrides else config
+
+
+def load_land_config(**overrides: Any) -> RecipeConfig:
+    """Load the land recipe YAML with jev roles swapped to claude for harness tests."""
+    config = load_recipe(LAND_RECIPE_NAME)
+    roles = dict(config.roles)
+    for role_name, spec in list(roles.items()):
+        if spec.runner == "jev":
+            roles[role_name] = replace(
+                spec,
+                runner="claude",
+                model=spec.model,
+                fallback=None,
+            )
+    config = replace(config, roles=roles)
     return replace(config, **overrides) if overrides else config
 
 
@@ -165,9 +182,11 @@ class Harness:
         beads: Any = None,
         initial_state_overrides: dict[str, Any] | None = None,
         remediator: Callable[[str], Awaitable[RunResult]] | None = None,
+        recipe_name: str = "tdd-loop",
     ) -> None:
         self.bead = bead
         self.recipe_config = config
+        self.recipe_name = recipe_name
         self.run_id = run_id
         self.store = store
         self.project = Path(project)
@@ -203,8 +222,11 @@ class Harness:
     async def start(self) -> dict:
         async with open_checkpointer(self.alloy_home / "workflows.db") as checkpointer:
             ctx = self.context(checkpointer)
-            graph = tdd_loop.build_graph(ctx)
-            state = tdd_loop.initial_state(ctx)
+            from alloy import recipes
+
+            recipe = recipes.get(self.recipe_name)
+            graph = recipe.build_graph(ctx)
+            state = recipe.initial_state(ctx)
             if self.initial_state_overrides:
                 state = {**state, **self.initial_state_overrides}
             return await graph.ainvoke(state, self.config)
@@ -212,7 +234,10 @@ class Harness:
     async def resume(self, payload: Any = None) -> dict:
         async with open_checkpointer(self.alloy_home / "workflows.db") as checkpointer:
             ctx = self.context(checkpointer)
-            graph = tdd_loop.build_graph(ctx)
+            from alloy import recipes
+
+            recipe = recipes.get(self.recipe_name)
+            graph = recipe.build_graph(ctx)
             return await graph.ainvoke(payload, self.config)
 
     async def snapshot(self) -> dict | None:
@@ -236,9 +261,11 @@ def make_harness(
     initial_state_overrides: dict[str, Any] | None = None,
     remediator: Callable[[str], Awaitable[RunResult]] | None = None,
     parent_run_id: str | None = None,
+    recipe_name: str = "tdd-loop",
 ) -> Harness:
     bead = bead or make_bead()
-    config = config or load_config()
+    if config is None:
+        config = load_land_config() if recipe_name == LAND_RECIPE_NAME else load_config()
     run_id = run_id or uuid.uuid4().hex
     store = store or Store(alloy_home / "alloy.db")
 
@@ -263,6 +290,7 @@ def make_harness(
         beads=beads,
         initial_state_overrides=initial_state_overrides,
         remediator=remediator,
+        recipe_name=recipe_name,
     )
 
 
