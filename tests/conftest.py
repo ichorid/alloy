@@ -466,6 +466,21 @@ def harvest_entry(
     }
 
 
+def memory_reviewer_entry(
+    verdicts: list[dict[str, str]] | None = None,
+    *,
+    malformed: bool = False,
+) -> dict:
+    """Scripted memory_reviewer structured output for review-plan tests."""
+    if malformed:
+        return {"structured": {"unexpected": "not a review verdict list"}}
+    return {
+        "structured": {
+            "verdicts": verdicts if verdicts is not None else [],
+        }
+    }
+
+
 @pytest.fixture
 def happy_path_script() -> dict:
     """Context, tests, one implementation, judge says done."""

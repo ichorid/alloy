@@ -709,6 +709,151 @@ def memory_inventory(memory: ProjectMemory, today: date) -> list[dict[str, Any]]
     return rows
 
 # ---------------------------------------------------------------------------
+# alloy memory review (alloy-4ef.16)
+# ---------------------------------------------------------------------------
+
+REVIEW_ACTIONS: tuple[str, ...] = ("keep", "update", "forget", "embed")
+ReviewAction = Literal["keep", "update", "forget", "embed"]
+
+REVIEW_SOURCES: tuple[str, ...] = ("hygiene", "reviewer")
+ReviewSource = Literal["hygiene", "reviewer"]
+
+
+class ReviewVerdict(BaseModel):
+    """One memory_reviewer verdict: what to do with the memory stored under ``key``."""
+
+    action: ReviewAction
+    key: str
+    reason: str = ""
+    new_content: str | None = None
+
+
+class ReviewVerdicts(BaseModel):
+    """The memory_reviewer role's answer: one verdict per reviewed key."""
+
+    verdicts: list[ReviewVerdict]
+    reason: str = ""
+
+    @classmethod
+    def schema_for_agents(cls) -> dict[str, Any]:
+        # `action` first inside each item: Jev classifies on the first enum-valued property.
+        return {
+            "type": "object",
+            "properties": {
+                "verdicts": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "action": {"type": "string", "enum": list(REVIEW_ACTIONS)},
+                            "key": {"type": "string"},
+                            "reason": {"type": "string"},
+                            "new_content": {"type": "string"},
+                        },
+                        "required": ["action", "key", "reason"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["verdicts"],
+            "additionalProperties": False,
+        }
+
+
+class ReviewPlanItem(BaseModel):
+    """One planned change to project memory and where the plan got it from."""
+
+    key: str
+    action: ReviewAction
+    reason: str
+    source: ReviewSource
+    new_content: str | None = None
+
+
+class ReviewPlan(BaseModel):
+    """What ``alloy memory review`` would do; nothing is written without --apply."""
+
+    items: list[ReviewPlanItem] = Field(default_factory=list)
+    reviewer_ok: bool = False
+    reviewer_reason: str = ""
+
+    def keys(self) -> set[str]:
+        return {item.key for item in self.items}
+
+
+def memory_hygiene(memory: ProjectMemory, ttl_days: int, today: date) -> list[ReviewPlanItem]:
+    """The deterministic review items, one per key, in key order:
+
+    - an alloy-owned memory whose provenance date is older than ``ttl_days``
+      is forgotten;
+    - an ``alloy:review:contradiction:<key>`` flag whose subject is gone is
+      forgotten;
+    - of two or more keys with byte-identical (provenance-stripped) bodies,
+      the oldest is kept and the newer ones are forgotten. Undated entries
+      count as oldest; equal dates tie-break on key order.
+    """
+
+    entries = memory.entries
+    items: dict[str, ReviewPlanItem] = {}
+
+    def forget(key: str, reason: str) -> None:
+        items.setdefault(key, ReviewPlanItem(key=key, action="forget", reason=reason,
+                                             source="hygiene"))
+
+    for key, entry in entries.items():
+        if entry.owner == "alloy" and entry.date is not None:
+            age = (today - entry.date).days
+            if age > ttl_days:
+                forget(key, f"alloy-owned memory is {age} days old (ttl {ttl_days})")
+        if key.startswith(CONTRADICTION_KEY_PREFIX):
+            subject = key[len(CONTRADICTION_KEY_PREFIX):]
+            if subject not in entries:
+                forget(key, f"contradiction flag for missing key {subject!r}")
+
+    by_body: dict[str, list[MemoryEntry]] = {}
+    for entry in entries.values():
+        if entry.body.strip():
+            by_body.setdefault(entry.body, []).append(entry)
+    for group in by_body.values():
+        if len(group) < 2:
+            continue
+        ordered = sorted(
+            group, key=lambda entry: (entry.date is not None, entry.date or date.min, entry.key)
+        )
+        keeper = ordered[0]
+        for entry in ordered[1:]:
+            forget(entry.key, f"byte-identical to older key {keeper.key!r}")
+
+    return [items[key] for key in sorted(items)]
+
+
+def merge_review_plan(
+    hygiene: list[ReviewPlanItem],
+    verdicts: ReviewVerdicts | None,
+    known_keys: set[str],
+    *,
+    reviewer_reason: str = "",
+) -> ReviewPlan:
+    """Hygiene items first, then the reviewer's verdicts on keys the snapshot
+    knows and hygiene has not already decided. ``verdicts`` is None when the
+    reviewer failed or answered malformed: the plan is then hygiene only."""
+
+    items = list(hygiene)
+    taken = {item.key for item in items}
+    if verdicts is not None:
+        for verdict in verdicts.verdicts:
+            if verdict.key not in known_keys or verdict.key in taken:
+                continue
+            taken.add(verdict.key)
+            items.append(ReviewPlanItem(
+                key=verdict.key, action=verdict.action, reason=verdict.reason,
+                source="reviewer", new_content=verdict.new_content,
+            ))
+    return ReviewPlan(items=items, reviewer_ok=verdicts is not None,
+                      reviewer_reason=reviewer_reason)
+
+
+# ---------------------------------------------------------------------------
 # alloy:calibration (alloy-4ef.12)
 # ---------------------------------------------------------------------------
 

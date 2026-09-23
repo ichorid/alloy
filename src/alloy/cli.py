@@ -27,7 +27,7 @@ from alloy.config import (
     ConfigError, MemorySpec, RecipeConfig, RoleSpec, discover_recipes, load_recipe,
 )
 from alloy.engine import Engine, EngineError
-from alloy.models import ProjectMemory, memory_inventory, utcnow, with_provenance
+from alloy.models import ProjectMemory, ReviewPlan, memory_inventory, utcnow, with_provenance
 from alloy.monitor import build_snapshot
 from alloy.monitor.app import MonitorApp
 from alloy.monitor.render import COLUMNS, header_line, run_rows
@@ -518,6 +518,82 @@ def memory_list(
             str(row["age_days"]) if row["age_days"] is not None else "-",
             ", ".join(row["flags"]) or "-",
         )
+    console.print(table)
+
+
+MEMORY_REVIEW_RECIPE = "tdd-loop"
+MEMORY_REVIEW_BEAD = "memory-review"
+
+
+def _review_plan(engine: Engine, recipe_name: str, memory: ProjectMemory) -> ReviewPlan:
+    """Run the read-only memory review under a throwaway RunContext bound to
+    the repository itself (no worktree, no bead, no ledger run row)."""
+    import uuid
+
+    from alloy.recipes.tdd_loop import review_memory
+    from alloy.runtime import RunContext
+    from alloy.worktree import Worktree, WorktreeManager
+
+    config = engine.load_config(recipe_name)
+    if "memory_reviewer" not in config.roles:
+        _fail(f"recipe {recipe_name} has no memory_reviewer role")
+    run_id = f"memory-review-{uuid.uuid4().hex[:12]}"
+    log_dir = engine.paths.logs / "memory-review" / run_id
+    log_dir.mkdir(parents=True, exist_ok=True)
+    ctx = RunContext(
+        bead=bd.Bead(id=MEMORY_REVIEW_BEAD, title="alloy memory review"),
+        recipe=config,
+        run_id=run_id,
+        worktree=Worktree(bead_id=MEMORY_REVIEW_BEAD, path=engine.repo, branch="", base_commit=""),
+        worktrees=WorktreeManager(repo=engine.repo, root=engine.paths.worktrees),
+        registry=RunnerRegistry(config.runners, log_dir=log_dir),
+        store=engine.store,
+        checkpointer=None,
+        log_dir=log_dir,
+        beads=engine.beads,
+    )
+    return _run_async(review_memory(ctx, memory, today=utcnow().date()))
+
+
+@memory_app.command(name="review")
+def memory_review(
+    repo: Optional[Path] = RepoOption,
+    root: Optional[Path] = RootOption,
+    recipe: str = typer.Option(MEMORY_REVIEW_RECIPE, "--recipe",
+                               help="Recipe whose memory settings and memory_reviewer role to use"),
+    json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+) -> None:
+    """Plan a project-memory review: deterministic hygiene (expired alloy
+    memories, orphan contradiction flags, duplicate bodies) plus the
+    memory_reviewer role's keep/update/forget/embed verdicts. Read-only:
+    nothing is written to bd."""
+    engine = _engine(repo, root)
+    try:
+        memories = engine.beads.memories()
+    except bd.BeadsError as exc:
+        _fail(str(exc))
+        return
+    try:
+        config = engine.load_config(recipe)
+    except ConfigError as exc:
+        _fail(str(exc))
+        return
+    memory = ProjectMemory.from_raw(memories, config.memory)
+    plan = _review_plan(engine, recipe, memory)
+    if json:
+        _emit(plan.model_dump(exclude_none=True), True)
+        return
+    if not plan.reviewer_ok:
+        err.print(f"[yellow]memory_reviewer unavailable:[/yellow] {plan.reviewer_reason}")
+    if not plan.items:
+        console.print("nothing to do")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("key", no_wrap=True)
+    for column in ("action", "source", "reason"):
+        table.add_column(column, overflow="fold")
+    for item in plan.items:
+        table.add_row(item.key, item.action, item.source, item.reason)
     console.print(table)
 
 
