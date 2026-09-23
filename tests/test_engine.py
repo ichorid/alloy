@@ -93,7 +93,7 @@ async def test_a_run_is_recorded_with_every_agent_call(
     calls = engine.store.agent_calls(result.run_id)
 
     assert [call["role"] for call in calls] == [
-        "context", "estimate", "tests", "implement", "verifier", "judge"
+        "context", "estimate", "tests", "implement", "verifier", "acceptance", "judge"
     ]
     for call in calls:
         assert call["prompt_hash"]
@@ -101,7 +101,7 @@ async def test_a_run_is_recorded_with_every_agent_call(
         assert call["duration_s"] >= 0
     record = engine.store.get_run(result.run_id)
     assert record["status"] == "done"
-    assert record["agent_calls"] == 6
+    assert record["agent_calls"] == 7
 
 
 async def test_failure_marks_the_bead_failed_and_keeps_the_worktree(
@@ -243,7 +243,7 @@ async def test_rerunning_a_cancelled_bead_starts_from_a_clean_graph(
     assert result.run_id != abandoned.run_id
     assert result.outcome == "done"
     assert [call["role"] for call in fake_harnesses.calls] == [
-        "context", "estimate", "tests", "implement", "verifier", "judge"
+        "context", "estimate", "tests", "implement", "verifier", "acceptance", "judge"
     ]
     assert engine.store.get_run(result.run_id)["iteration"] == 1
 

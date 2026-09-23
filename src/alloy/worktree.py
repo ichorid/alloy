@@ -9,9 +9,20 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 BRANCH_PREFIX = "alloy"
+
+
+def is_test_path(path: str) -> bool:
+    """A path that looks like a test by location or name (tests/, test_*.py, *_test.py)."""
+    parts = PurePosixPath(path)
+    name = parts.name
+    return (
+        any(part in ("tests", "test") for part in parts.parts[:-1])
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+    )
 
 
 class WorktreeError(RuntimeError):

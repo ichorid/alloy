@@ -177,6 +177,32 @@ class ScopeVerdict(BaseModel):
         }
 
 
+ACCEPTANCE_DECISIONS: tuple[str, ...] = ("accept", "verify_more", "repair", "escalate")
+AcceptanceDecision = Literal["accept", "verify_more", "repair", "escalate"]
+
+
+class AcceptanceVerdict(BaseModel):
+    """The acceptance role's answer: is there enough evidence to call the task complete?"""
+
+    decision: AcceptanceDecision
+    reason: str = ""
+    confidence: float = 0.0
+
+    @classmethod
+    def schema_for_agents(cls) -> dict[str, Any]:
+        # `decision` first: Jev classifies on the first enum-valued property.
+        return {
+            "type": "object",
+            "properties": {
+                "decision": {"type": "string", "enum": list(ACCEPTANCE_DECISIONS)},
+                "reason": {"type": "string"},
+                "confidence": {"type": "number"},
+            },
+            "required": ["decision", "reason", "confidence"],
+            "additionalProperties": False,
+        }
+
+
 class ProjectSnapshot(BaseModel):
     """The bead-graph half of the project context packet, already rendered
     one line per bead. Every section is empty when `bd` could not answer."""

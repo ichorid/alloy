@@ -21,6 +21,7 @@ ROLE_MARKERS = [
     ("scope", "You are deciding whether a bug fix is safe to merge"),
     ("implement", "Implement the smallest change"),
     ("verifier", "You are choosing the next verification check"),
+    ("acceptance", "You are deciding whether there is enough evidence"),
     ("judge", "You are judging whether"),
     ("critic", "You are one of several independent critics"),
     ("synthesize", "Several independent critics reviewed"),

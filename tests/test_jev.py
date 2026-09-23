@@ -196,3 +196,49 @@ async def test_jev_classifies_scope_verdict_schema(tmp_path):
     assert set(questions["verdict"]["criteria"]) == {
         "merge", "too-broad", "subverts-task",
     }
+
+
+async def test_jev_classifies_acceptance_verdict_schema(tmp_path):
+    from alloy.models import AcceptanceVerdict
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "model": "jev-1.13.0",
+                "answers": {
+                    "decision": {
+                        "type": "choice",
+                        "choice": "verify_more",
+                        "confidence": 0.76,
+                        "probabilities": {
+                            "accept": 0.08,
+                            "verify_more": 0.76,
+                            "repair": 0.11,
+                            "escalate": 0.05,
+                        },
+                    }
+                },
+                "usage": {"input_tokens": 95, "output_tokens": 3},
+            },
+        )
+
+    schema = AcceptanceVerdict.schema_for_agents()
+    runner = _runner(handler, log_dir=tmp_path / "logs")
+    result = await runner.run(
+        "You are deciding whether there is enough evidence",
+        Path("."),
+        structured_schema=schema,
+    )
+
+    assert result.ok
+    assert result.structured["decision"] == "verify_more"
+    assert result.structured["confidence"] == 0.76
+    questions = captured["payload"]["questions"]
+    assert list(questions.keys()) == ["decision"]
+    assert set(questions["decision"]["criteria"]) == {
+        "accept", "verify_more", "repair", "escalate",
+    }

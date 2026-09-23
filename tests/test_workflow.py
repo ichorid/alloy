@@ -12,8 +12,10 @@ from dataclasses import replace
 
 from alloy.config import Limits, VerificationSpec
 from conftest import (
+    acceptance_entry,
     context_entry,
     critic_entry,
+    implement_empty_diff_entry,
     implement_entry,
     judge_entry,
     synthesize_entry,
@@ -53,7 +55,7 @@ async def test_done_decision_finishes_after_one_iteration(
     assert final["outcome"] == "done"
     assert final["iteration"] == 1
     assert [call["role"] for call in fake_harnesses.calls] == [
-        "context", "estimate", "tests", "implement", "verifier", "judge"
+        "context", "estimate", "tests", "implement", "verifier", "acceptance", "judge"
     ]
 
 
@@ -354,7 +356,8 @@ async def test_failing_tests_role_pauses_for_a_human_before_burning_an_implement
 
     assert final["outcome"] == "done"
     assert [call["role"] for call in fake_harnesses.calls] == [
-        "context", "estimate", "tests", "tests", "tests", "implement", "verifier", "judge"
+        "context", "estimate", "tests", "tests", "tests", "implement", "verifier",
+        "acceptance", "judge",
     ]
     # Cursor and its fallback fail before the gate; resume retries Cursor.
     assert [call["runner"] for call in fake_harnesses.calls_for("tests")] == [
@@ -914,3 +917,190 @@ async def test_unrunnable_verifier_command_surfaces_in_next_prompt(
     assert len(verifier_calls) >= 2
     assert "could not run" in verifier_calls[1]["prompt"]
     assert "definitely-not-a-program" in verifier_calls[1]["prompt"]
+
+
+# -- acceptance_gate (alloy-21u.5) ------------------------------------------
+
+
+def acceptance_script(**overrides):
+    """Verifier stop is followed by the acceptance gate; accept bypasses the judge."""
+    base = verification_script(
+        acceptance=[acceptance_entry("accept", confidence=0.9)],
+        judge=[],
+    )
+    base.update(overrides)
+    return base
+
+
+async def test_verifier_stop_calls_acceptance_before_judge(
+    project, alloy_home, fake_harnesses
+):
+    """(a) After the verifier stops, the acceptance role runs next."""
+    fake_harnesses.configure(acceptance_script())
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    roles = [call["role"] for call in fake_harnesses.calls]
+    last_verifier = max(i for i, role in enumerate(roles) if role == "verifier")
+    assert roles[last_verifier + 1] == "acceptance"
+    assert final["outcome"] == "done"
+    assert fake_harnesses.calls_for("judge") == []
+    assert final["acceptance"]["decision"] == "accept"
+
+
+async def test_acceptance_verify_more_returns_to_verifier_with_reason(
+    project, alloy_home, fake_harnesses
+):
+    """(b) verify_more re-enters the verifier with the gate's reason in its prompt."""
+    gate_reason = "unicode normalization is still unverified"
+    fake_harnesses.configure(
+        acceptance_script(
+            acceptance=[
+                acceptance_entry("verify_more", reason=gate_reason),
+                acceptance_entry("accept", confidence=0.9),
+            ],
+            verifier=[
+                verifier_run_entry(FULL_SUITE, kind="regression"),
+                verifier_stop_entry("first stop"),
+                verifier_run_entry(FULL_SUITE, kind="regression"),
+                verifier_stop_entry("second stop after verify_more"),
+            ],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        await harness.start()
+    finally:
+        harness.close()
+
+    roles = [call["role"] for call in fake_harnesses.calls]
+    first_acceptance = roles.index("acceptance")
+    second_verifier = roles.index("verifier", first_acceptance + 1)
+    assert roles[first_acceptance + 1 : second_verifier] == []
+    assert gate_reason in fake_harnesses.calls[second_verifier]["prompt"]
+
+
+async def test_acceptance_repair_routes_to_implement_with_gate_reason(
+    project, alloy_home, fake_harnesses
+):
+    """(c) repair sends the implementer back with the acceptance gate's ask."""
+    repair_reason = "slugify must reject empty input"
+    fake_harnesses.configure(
+        acceptance_script(
+            acceptance=[
+                acceptance_entry("repair", reason=repair_reason),
+                acceptance_entry("accept", confidence=0.9),
+            ],
+            implement=[implement_entry(succeed=True), implement_entry(succeed=True)],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        await harness.start()
+    finally:
+        harness.close()
+
+    roles = [call["role"] for call in fake_harnesses.calls]
+    first_acceptance = roles.index("acceptance")
+    second_implement = roles.index("implement", first_acceptance + 1)
+    assert roles[first_acceptance + 1 : second_implement] == []
+    prompt = fake_harnesses.calls_for("implement")[1]["prompt"]
+    assert "acceptance gate asked for a repair" in prompt
+    assert repair_reason in prompt
+
+
+async def test_low_confidence_accept_escalates_to_judge(
+    project, alloy_home, fake_harnesses
+):
+    """(d) accept below min_acceptance_confidence escalates to the judge."""
+    fake_harnesses.configure(
+        acceptance_script(
+            acceptance=[acceptance_entry("accept", confidence=0.3)],
+            judge=[judge_entry("done")],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        await harness.start()
+    finally:
+        harness.close()
+
+    roles = [call["role"] for call in fake_harnesses.calls]
+    acceptance_idx = roles.index("acceptance")
+    judge_idx = roles.index("judge")
+    assert judge_idx == acceptance_idx + 1
+    assert fake_harnesses.calls_for("judge")
+
+
+async def test_acceptance_escalate_reaches_judge_and_human_gate(
+    project, alloy_home, fake_harnesses
+):
+    """(e) escalate routes to the judge; a human decision still parks the run."""
+    human_reason = "which unicode normalization form?"
+    fake_harnesses.configure(
+        acceptance_script(
+            acceptance=[acceptance_entry("escalate", reason="needs author input")],
+            judge=[judge_entry("human", human_reason)],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    roles = [call["role"] for call in fake_harnesses.calls]
+    acceptance_idx = roles.index("acceptance")
+    assert roles[acceptance_idx + 1] == "judge"
+    assert "__interrupt__" in final
+    assert final["__interrupt__"][0].value["reason"] == human_reason
+
+
+async def test_acceptance_accept_with_empty_diff_is_overridden_to_retry(
+    project, alloy_home, fake_harnesses
+):
+    """(f) accept cannot finish on an empty diff; guard overrides to retry."""
+    fake_harnesses.configure(
+        acceptance_script(
+            implement=[implement_empty_diff_entry(), implement_entry(succeed=True)],
+            verifier=[
+                verifier_run_entry('sh -c "exit 0"', kind="custom"),
+                verifier_stop_entry("custom check green"),
+            ],
+            judge=[judge_entry("done")],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    assert any(
+        "overridden by Alloy" in attempt.get("reason", "")
+        for attempt in final["attempts"]
+    )
+
+
+async def test_failed_acceptance_call_escalates_with_default_verdict(
+    project, alloy_home, fake_harnesses
+):
+    """(g) A non-zero acceptance harness exit routes to the judge as escalate."""
+    fake_harnesses.configure(
+        acceptance_script(
+            acceptance=[{"exit": 1, "stderr": "acceptance harness crashed\n"}],
+            judge=[judge_entry("done")],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert fake_harnesses.calls_for("judge")
+    assert final["acceptance"]["decision"] == "escalate"

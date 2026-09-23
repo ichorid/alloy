@@ -233,6 +233,29 @@ def verifier_run_entry(
     }
 
 
+def acceptance_entry(
+    decision: str,
+    reason: str = "",
+    confidence: float = 0.9,
+) -> dict:
+    return {
+        "structured": {
+            "decision": decision,
+            "reason": reason or f"acceptance classified as {decision}",
+            "confidence": confidence,
+        }
+    }
+
+
+def implement_empty_diff_entry() -> dict:
+    """Revert the worktree to match the base commit (no diff)."""
+    return {
+        "text": "Reverted all changes from the base commit.",
+        "write": [{"path": "mypkg/__init__.py", "content": ""}],
+        "delete": ["tests/test_slugify.py"],
+    }
+
+
 def verifier_stop_entry(
     reason: str = "verification evidence is sufficient",
     *,
