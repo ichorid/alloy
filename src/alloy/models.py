@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 from enum import Enum
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator
+
+if TYPE_CHECKING:  # pragma: no cover - config imports models; avoid the cycle at runtime
+    from alloy.config import MemorySpec
 
 MAX_EMBEDDED_TEXT = 4000
 """Hard cap on any agent text copied into graph state."""
@@ -488,3 +492,133 @@ class AgentCallRecord(BaseModel):
     usage_json: str
     log_path: str | None
     iteration: int
+
+
+# ---------------------------------------------------------------------------
+# Project memory (alloy-4ef.3)
+# ---------------------------------------------------------------------------
+
+MEMORY_OWNER_PREFIX = "alloy:"
+"""Keys with this prefix are alloy-owned; every other key is human-owned."""
+
+MEMORY_RENDER_HEADER = "## Project memory"
+
+_MEMORY_EXCLUDED_PREFIXES = ("alloy:meta:", "alloy:review:")
+_MEMORY_EXCLUDED_KEYS = frozenset({"alloy:calibration"})
+_MEMORY_LESSON_PREFIX = "alloy:lesson"
+
+_PROVENANCE_RE = re.compile(
+    r"(?P<body>.*) \[alloy run=(?P<run>\S+) bead=(?P<bead>\S+) at=(?P<at>\d{4}-\d{2}-\d{2})\]",
+    re.DOTALL,
+)
+
+
+def with_provenance(text: str, run_id: str, bead_id: str, at: date) -> str:
+    """Append the provenance trailer writers stamp on alloy-owned memories."""
+
+    return f"{text} [alloy run={run_id} bead={bead_id} at={at.isoformat()}]"
+
+
+def parse_provenance(content: str) -> tuple[str, str | None, str | None, date | None]:
+    """Split ``content`` into (body, run_id, bead_id, date). Only a trailer at
+    the very end counts; anything else is left in the body untouched."""
+
+    match = _PROVENANCE_RE.fullmatch(content)
+    if match is None:
+        return content, None, None, None
+    try:
+        at = date.fromisoformat(match.group("at"))
+    except ValueError:
+        return content, None, None, None
+    return match.group("body"), match.group("run"), match.group("bead"), at
+
+
+@dataclass(frozen=True)
+class MemoryEntry:
+    """One project memory: who owns it, its prompt-visible body and, for
+    alloy-owned entries, the provenance parsed off the trailer."""
+
+    key: str
+    body: str
+    owner: Literal["alloy", "human"]
+    run_id: str | None = None
+    bead_id: str | None = None
+    date: date | None = None
+
+    @property
+    def included(self) -> bool:
+        """Whether this entry may appear in the prompt block at all."""
+
+        return not (
+            self.key in _MEMORY_EXCLUDED_KEYS or self.key.startswith(_MEMORY_EXCLUDED_PREFIXES)
+        )
+
+    @property
+    def cap_group(self) -> int:
+        """Cap priority: human first, then alloy:lesson*, then other alloy keys."""
+
+        if self.owner == "human":
+            return 0
+        if self.key.startswith(_MEMORY_LESSON_PREFIX):
+            return 1
+        return 2
+
+
+@dataclass(frozen=True)
+class ProjectMemory:
+    """Project memories parsed from ``bd memories`` plus the recipe's caps.
+
+    ``render()`` is a pure function of (memories, spec): input order never
+    matters and the block carries no dates, ids or counts.
+    """
+
+    entries: dict[str, MemoryEntry]
+    max_items: int
+    max_chars: int
+    _rendered: str = field(init=False, repr=False, compare=False, default="")
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_rendered", self._render())
+
+    @classmethod
+    def from_raw(cls, memories: dict[str, str], spec: MemorySpec) -> ProjectMemory:
+        entries: dict[str, MemoryEntry] = {}
+        for key in sorted(memories):
+            content = memories[key]
+            if key.startswith(MEMORY_OWNER_PREFIX):
+                body, run_id, bead_id, at = parse_provenance(content)
+                entries[key] = MemoryEntry(key, body, "alloy", run_id, bead_id, at)
+            else:
+                entries[key] = MemoryEntry(key, content, "human")
+        return cls(entries=entries, max_items=spec.max_items, max_chars=spec.max_chars)
+
+    def selected(self) -> list[MemoryEntry]:
+        """Entries that survive the caps, in cap priority order."""
+
+        candidates = sorted(
+            (entry for entry in self.entries.values() if entry.included),
+            key=lambda entry: (entry.cap_group, entry.key),
+        )[: max(self.max_items, 0)]
+        chosen: list[MemoryEntry] = []
+        for entry in candidates:
+            if len(_render_block(chosen + [entry])) > self.max_chars:
+                break
+            chosen.append(entry)
+        return chosen
+
+    def _render(self) -> str:
+        return _render_block(self.selected())
+
+    def render(self) -> str:
+        """Fixed-format prompt block sorted by key; empty when nothing fits."""
+
+        return self._rendered
+
+
+def _render_block(entries: list[MemoryEntry]) -> str:
+    if not entries:
+        return ""
+    lines = [MEMORY_RENDER_HEADER, ""]
+    for entry in sorted(entries, key=lambda entry: entry.key):
+        lines.extend((f"### {entry.key}", entry.body, ""))
+    return "\n".join(lines).rstrip("\n")
