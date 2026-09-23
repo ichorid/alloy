@@ -343,3 +343,48 @@ def test_cli_monitor_once_plain_text_with_no_runs_prints_header_without_raising(
 
     assert result.exit_code == 0
     assert result.stdout.strip() != ""
+
+
+def test_cli_monitor_once_plain_text_prints_limits_lines_before_table_rows(
+    beads_project: Path, alloy_home: Path, fake_harnesses, monkeypatch: pytest.MonkeyPatch
+):
+    from alloy.limits import window, write_cache
+    from alloy.paths import AlloyPaths
+    from alloy.store import Store
+    from support import make_harness
+
+    fake_harnesses.remove("cursor-agent")
+    paths = AlloyPaths.resolve(alloy_home).ensure()
+    write_cache(
+        paths,
+        {
+            "claude": {
+                "harness": "claude",
+                "installed": True,
+                "available": True,
+                "fetched_at": "2026-09-23T10:00:00+00:00",
+                "as_of": "2026-09-23T10:00:00+00:00",
+                "source": "oauth-usage-api",
+                "error": None,
+                "status": None,
+                "windows": [window("five_hour", "5h", 42.0, None)],
+            },
+        },
+    )
+
+    harness = make_harness(beads_project, alloy_home, store=Store(alloy_home / "alloy.db"))
+    bead_id = harness.bead.id
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli_app,
+        ["monitor", "--once", "--repo", str(beads_project), "--root", str(alloy_home)],
+    )
+
+    assert result.exit_code == 0
+    output = result.stdout
+    limits_pos = output.find("5h 42%")
+    bead_pos = output.find(bead_id)
+    assert limits_pos != -1
+    assert bead_pos != -1
+    assert limits_pos < bead_pos
