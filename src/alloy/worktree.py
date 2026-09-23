@@ -180,6 +180,10 @@ class WorktreeManager:
     def has_changes(self, worktree: Worktree) -> bool:
         return bool(self.changed_files(worktree))
 
+    def head(self, path: Path) -> str:
+        """The worktree's current HEAD commit."""
+        return self._head(path)
+
     def fingerprints(self, worktree: Worktree, paths: list[str]) -> dict[str, str]:
         """sha256 of each path's current contents; paths absent on disk are omitted."""
         result: dict[str, str] = {}

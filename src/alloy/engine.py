@@ -331,11 +331,28 @@ class Engine:
     def build_context(
         self, bead: Bead, recipe_name: str, *, run_id: str, checkpointer: Any,
         worktree: Worktree | None = None,
+        base_commit: str | None = None,
     ) -> RunContext:
         config = self.load_config(recipe_name)
         worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
         if worktree is None:
-            worktree = worktrees.ensure(bead.id)
+            owner_id = (
+                bead.metadata.get(bd.META_WORKTREE_OWNER)
+                or self.beads.epic_root(bead.id)
+                or bead.id
+            )
+            worktree = worktrees.ensure(owner_id)
+            if base_commit:
+                # Resume: the run recorded where this bead's work starts;
+                # later commits on a shared branch must not move it.
+                worktree = Worktree(worktree.bead_id, worktree.path, worktree.branch, base_commit)
+            elif owner_id != bead.id:
+                # A shared (epic or owner) worktree: this bead's diff starts at
+                # the owner branch's HEAD right now, after any siblings' commits.
+                worktree = Worktree(
+                    worktree.bead_id, worktree.path, worktree.branch,
+                    worktrees.head(worktree.path),
+                )
         log_dir = self.paths.run_logs(run_id)
         log_dir.mkdir(parents=True, exist_ok=True)
         ctx = RunContext(
@@ -383,10 +400,14 @@ class Engine:
         thread_id = thread_id or run_id
 
         async with open_checkpointer(self.paths.workflows_db) as checkpointer:
+            recorded_base = None
+            if not fresh:
+                prior = self.store.get_run(run_id)
+                recorded_base = prior.get("base_commit") if prior else None
             try:
                 ctx = self.build_context(
                     bead, recipe_name, run_id=run_id, checkpointer=checkpointer,
-                    worktree=worktree,
+                    worktree=worktree, base_commit=recorded_base,
                 )
             except (ConfigError, KeyError, WorktreeError) as exc:
                 raise EngineError(str(exc)) from exc
@@ -396,6 +417,7 @@ class Engine:
                     run_id=run_id, bead_id=bead.id, thread_id=thread_id, recipe=recipe_name,
                     repo=self.repo, worktree=ctx.worktree.path, branch=ctx.worktree.branch,
                     log_dir=ctx.log_dir, parent_run_id=parent_run_id,
+                    base_commit=ctx.worktree.base_commit,
                 )
                 log.info("%s: run %s started (%s) in %s",
                          bead.id, run_id, recipe_name, ctx.worktree.path)

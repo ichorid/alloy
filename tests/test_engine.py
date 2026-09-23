@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -15,7 +16,9 @@ from alloy.checkpoints import open_checkpointer
 from alloy.cli import app
 from alloy.engine import Engine, EngineError
 from alloy.models import parse_provenance
+from alloy.worktree import Worktree, WorktreeManager, branch_name
 from support import load_config
+from test_beads import _create_child, _create_epic
 from conftest import (
     bd_create,
     context_entry,
@@ -447,3 +450,258 @@ async def test_unmerged_remediation_remembers_alloy_regression_prefix(
     assert run_id == result.run_id
     assert bead_id == bug_id
     assert at is not None
+
+
+# -- epic shared worktrees (alloy-vrh.4) ------------------------------------
+
+
+def _git(worktree_path: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=str(worktree_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _tag_recipe(beads: bd.BeadsClient, bead_id: str, recipe: str = "tdd-loop") -> None:
+    beads.set_metadata(bead_id, {bd.META_RECIPE: recipe})
+
+
+def _epic_child(beads: bd.BeadsClient, epic_id: str, title: str) -> str:
+    child_id = _create_child(beads, title, epic_id)
+    _tag_recipe(beads, child_id)
+    return child_id
+
+
+def _implement_write(path: str, content: str) -> dict:
+    return {
+        "text": f"Wrote {path}",
+        "write": [{"path": path, "content": content}],
+    }
+
+
+def _commit_all(worktree_path: Path, message: str) -> str:
+    _git(worktree_path, "add", "-A")
+    _git(worktree_path, "commit", "-q", "--no-verify", "-m", message)
+    proc = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(worktree_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout.strip()
+
+
+def _worktree_from_run(
+    engine: Engine,
+    run_id: str,
+    *,
+    owner_id: str,
+) -> Worktree:
+    record = engine.store.get_run(run_id)
+    assert record is not None
+    assert record.get("base_commit"), "run record must persist base_commit at child start"
+    return Worktree(
+        bead_id=owner_id,
+        path=Path(record["worktree"]),
+        branch=record["branch"],
+        base_commit=record["base_commit"],
+    )
+
+
+async def test_epic_child_runs_in_shared_epic_worktree(
+    engine, beads_project, fake_harnesses,
+):
+    """A child under an epic uses <worktrees>/<epic-id> on branch alloy/<epic-id>."""
+    epic_id = _create_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
+    child_id = _epic_child(engine.beads, epic_id, "add token endpoint")
+
+    fake_harnesses.configure(script())
+    result = await engine.run(child_id)
+
+    epic_worktree = engine.paths.worktree_for(epic_id)
+    bead = engine.beads.show(child_id)
+
+    assert result.outcome == "done"
+    assert Path(result.worktree) == epic_worktree
+    assert bead.metadata[bd.META_WORKTREE] == str(epic_worktree)
+    assert bead.metadata[bd.META_BRANCH] == branch_name(epic_id)
+
+
+async def test_epic_child_base_commit_starts_after_sibling_commit(
+    engine, beads_project, fake_harnesses,
+):
+    """After sibling Y commits on alloy/<epic>, child X's base_commit is Y's HEAD."""
+    epic_id = _create_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
+    child_y = _epic_child(engine.beads, epic_id, "wire callback route")
+    child_x = _epic_child(engine.beads, epic_id, "add token endpoint")
+
+    fake_harnesses.configure(
+        script(implement=[_implement_write("mypkg/y_marker.py", "Y = 1\n")])
+    )
+    await engine.run(child_y)
+
+    epic_worktree = engine.paths.worktree_for(epic_id)
+    sibling_head = _commit_all(epic_worktree, f"{child_y}: y marker")
+
+    fake_harnesses.reset_calls()
+    fake_harnesses.configure(
+        script(implement=[_implement_write("mypkg/x_marker.py", "X = 1\n")])
+    )
+    x_result = await engine.run(child_x)
+
+    record = engine.store.get_run(x_result.run_id)
+    assert record is not None
+    assert record.get("base_commit") == sibling_head
+
+
+async def test_epic_child_judge_diff_lists_only_this_childs_files(
+    engine, beads_project, fake_harnesses,
+):
+    """Sibling files already on alloy/<epic> must not appear in X's changed_files/diff."""
+    epic_id = _create_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
+    child_y = _epic_child(engine.beads, epic_id, "wire callback route")
+    child_x = _epic_child(engine.beads, epic_id, "add token endpoint")
+
+    fake_harnesses.configure(
+        script(implement=[_implement_write("mypkg/y_marker.py", "Y = 1\n")])
+    )
+    await engine.run(child_y)
+    _commit_all(engine.paths.worktree_for(epic_id), f"{child_y}: y marker")
+
+    fake_harnesses.reset_calls()
+    fake_harnesses.configure(
+        script(implement=[_implement_write("mypkg/x_marker.py", "X = 1\n")])
+    )
+    x_result = await engine.run(child_x)
+
+    manager = WorktreeManager(repo=engine.repo, root=engine.paths.worktrees)
+    worktree = _worktree_from_run(engine, x_result.run_id, owner_id=epic_id)
+
+    changed = manager.changed_files(worktree)
+    diff = manager.diff(worktree)
+
+    assert changed == ["mypkg/x_marker.py"]
+    assert "y_marker" not in diff
+
+
+async def test_worktree_owner_metadata_runs_in_owner_worktree(
+    engine, beads_project, fake_harnesses,
+):
+    """A bead with alloy_worktree_owner=<id> runs in <worktrees>/<id>."""
+    owner_id = bd_create(beads_project, "landed feature", alloy_recipe="tdd-loop")
+    fake_harnesses.configure(script())
+    await engine.run(owner_id)
+
+    owner_worktree = engine.paths.worktree_for(owner_id)
+    repair_id = bd_create(
+        beads_project,
+        "fix landing conflict",
+        alloy_recipe="tdd-loop",
+        alloy_worktree_owner=owner_id,
+    )
+
+    fake_harnesses.reset_calls()
+    # The owner's slugify implementation is still in the shared worktree, so the
+    # default script's baseline (slugify tests) would be green and prove_red
+    # would park the run at the human gate. The repair bead needs its own red
+    # baseline: a new failing test its implement step then turns green.
+    repair_tests = write_tests_entry(
+        baseline_checks=[
+            {
+                "command": f"{sys.executable} -m pytest -q tests/test_shout.py",
+                "purpose": "Confirm shout tests fail before implementation",
+            }
+        ],
+    )
+    repair_tests["write"].append(
+        {
+            "path": "tests/test_shout.py",
+            "content": "from mypkg.shout import shout\n\n\n"
+            "def test_shout():\n    assert shout('hi') == 'HI!'\n",
+        }
+    )
+    fake_harnesses.configure(
+        script(
+            tests=repair_tests,
+            implement=[
+                _implement_write(
+                    "mypkg/shout.py",
+                    "def shout(text: str) -> str:\n    return text.upper() + '!'\n",
+                )
+            ],
+        )
+    )
+    result = await engine.run(repair_id)
+
+    assert result.outcome == "done"
+    assert Path(result.worktree) == owner_worktree
+    assert engine.beads.show(repair_id).metadata[bd.META_WORKTREE] == str(owner_worktree)
+
+
+async def test_standalone_bead_keeps_per_bead_worktree_path(
+    engine, beads_project, fake_harnesses,
+):
+    """Beads without an epic ancestor still use <worktrees>/<own-id>."""
+    bead_id = bd_create(beads_project, "standalone task", alloy_recipe="tdd-loop")
+
+    fake_harnesses.configure(script())
+    result = await engine.run(bead_id)
+
+    assert result.outcome == "done"
+    assert Path(result.worktree) == engine.paths.worktree_for(bead_id)
+    assert engine.beads.show(bead_id).metadata[bd.META_BRANCH] == branch_name(bead_id)
+
+
+async def test_epic_child_resume_restores_recorded_base_commit(
+    engine, beads_project, fake_harnesses,
+):
+    """Resume must not recompute base via merge-base after more commits land on alloy/<epic>."""
+    epic_id = _create_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
+    child_y = _epic_child(engine.beads, epic_id, "wire callback route")
+    child_x = _epic_child(engine.beads, epic_id, "add token endpoint")
+
+    fake_harnesses.configure(
+        script(implement=[_implement_write("mypkg/y_marker.py", "Y = 1\n")])
+    )
+    await engine.run(child_y)
+    sibling_head = _commit_all(engine.paths.worktree_for(epic_id), f"{child_y}: y marker")
+
+    fake_harnesses.reset_calls()
+    fake_harnesses.configure(
+        script(
+            implement=[
+                _implement_write("mypkg/x_marker.py", "X = 1\n"),
+                _implement_write("mypkg/x_marker.py", "X = 2\n"),
+            ],
+            judge=[judge_entry("human", "confirm approach"), judge_entry("done")],
+        )
+    )
+    paused = await engine.run(child_x)
+    assert paused.outcome == "waiting-human"
+
+    recorded_base = engine.store.get_run(paused.run_id).get("base_commit")
+    assert recorded_base == sibling_head
+
+    _commit_all(engine.paths.worktree_for(epic_id), "rogue commit while paused")
+
+    fake_harnesses.reset_calls()
+    # Resuming from the human gate routes back to the implementer; keep its
+    # rewrite on the child's own file so the diff stays exactly this child's.
+    fake_harnesses.configure(
+        script(implement=[_implement_write("mypkg/x_marker.py", "X = 3\n")])
+    )
+    resumed = await engine.resume(child_x, "proceed")
+
+    assert resumed.outcome == "done"
+    assert resumed.run_id == paused.run_id
+
+    run_record = engine.store.get_run(paused.run_id)
+    assert run_record.get("base_commit") == recorded_base
+
+    manager = WorktreeManager(repo=engine.repo, root=engine.paths.worktrees)
+    worktree = _worktree_from_run(engine, paused.run_id, owner_id=epic_id)
+    assert manager.changed_files(worktree) == ["mypkg/x_marker.py"]
