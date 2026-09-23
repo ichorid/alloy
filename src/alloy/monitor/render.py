@@ -15,6 +15,11 @@ from alloy.limits import HARNESSES
 COLUMNS = ("parent", "bead", "recipe", "status", "stage", "iter", "cons", "tests", "elapsed", "now",
            "tokens", "judge", "complexity")
 
+_USAGE_BAR_WIDTH = 16
+_COLOR_GREEN = "#7ee787"
+_COLOR_YELLOW = "#e3b341"
+_COLOR_RED = "#f85149"
+
 
 def header_line(snapshot: dict[str, Any]) -> str:
     """One-line stats summary: scheduler, ready queue and lifetime totals."""
@@ -50,18 +55,15 @@ def limits_lines(snapshot: dict[str, Any]) -> list[str]:
 
 def _limits_line(harness: str, sample: dict[str, Any]) -> str:
     if not sample.get("available"):
-        line = f"{harness}    unavailable: {_text(sample.get('error'))}"
+        error = _text(sample.get("error"))
+        line = f"{harness}    [{_COLOR_RED}]unavailable: {error}[/]"
         status = sample.get("status")
         if status:
             line += f" [{status}]"
         return line
     parts = [harness]
     for win in sample.get("windows") or []:
-        segment = f"{win['label']} {int(win['used_percent'])}%"
-        resets = _resets_hhmm(win.get("resets_at"))
-        if resets:
-            segment += f" (resets {resets})"
-        parts.append(segment)
+        parts.append(_limits_window_segment(win))
     line = "  ".join(parts)
     stale = _stale_as_of(sample.get("as_of"))
     if stale:
@@ -70,6 +72,31 @@ def _limits_line(harness: str, sample: dict[str, Any]) -> str:
     if status:
         line += f" [{status}]"
     return line
+
+
+def _usage_color(percent: int) -> str:
+    if percent >= 80:
+        return _COLOR_RED
+    if percent >= 50:
+        return _COLOR_YELLOW
+    return _COLOR_GREEN
+
+
+def _usage_bar(percent: int) -> str:
+    filled = max(0, min(_USAGE_BAR_WIDTH, round(percent * _USAGE_BAR_WIDTH / 100)))
+    return f"[{'█' * filled}{'░' * (_USAGE_BAR_WIDTH - filled)}]"
+
+
+def _limits_window_segment(win: dict[str, Any]) -> str:
+    percent = int(win["used_percent"])
+    color = _usage_color(percent)
+    segment = f"[{color}]{win['label']} {percent}% {_usage_bar(percent)}[/]"
+    resets = _resets_hhmm(win.get("resets_at"))
+    if resets:
+        segment += f" (resets {resets})"
+    if win.get("stale"):
+        segment += f" [{_COLOR_YELLOW}][stale][/]"
+    return segment
 
 
 def _row(run: dict[str, Any]) -> tuple[str, ...]:
