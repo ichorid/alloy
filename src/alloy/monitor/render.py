@@ -8,12 +8,19 @@ they are unit-testable and shared by the live view and `alloy monitor --once`.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
+from rich.cells import cell_len
+
 from alloy.limits import HARNESSES
+from alloy.monitor.icons import icon
+from alloy.verify import parse_counts
 
 COLUMNS = ("parent", "bead", "recipe", "status", "stage", "iter", "cons", "tests", "elapsed", "now",
            "tokens", "judge", "complexity")
+
+RIGHT_ALIGNED = frozenset({"iter", "cons", "tests", "elapsed", "tokens"})
 
 COMFORTABLE_WIDTH = 80
 WIDE_WIDTH = 100
@@ -43,6 +50,11 @@ def column_tier(name: str) -> str:
     return _COLUMN_TIERS.get(name, "always")
 
 
+def column_align(name: str) -> str:
+    """Horizontal alignment for a runs-table column key."""
+    return "right" if name in RIGHT_ALIGNED else "left"
+
+
 def visible_columns(width: int) -> tuple[str, ...]:
     """Column keys shown in DataTable#runs at the given terminal width."""
     if width >= WIDE_WIDTH:
@@ -53,8 +65,16 @@ def visible_columns(width: int) -> tuple[str, ...]:
     return tuple(name for name in COLUMNS if name not in hidden)
 
 
-def header_line(snapshot: dict[str, Any]) -> str:
+def header_line(snapshot: dict[str, Any], mode: str | None = None) -> str:
     """One-line stats summary: scheduler, ready queue and lifetime totals."""
+    if mode is None or mode == "ascii":
+        return _header_line_ascii(snapshot)
+    if mode == "nerd":
+        return _header_line_styled(snapshot, "nerd")
+    return _header_line_styled(snapshot, "unicode")
+
+
+def _header_line_ascii(snapshot: dict[str, Any]) -> str:
     scheduler = snapshot.get("scheduler") or {}
     if scheduler.get("running"):
         sched = f"scheduler running (pid {scheduler.get('pid')})"
@@ -72,9 +92,105 @@ def header_line(snapshot: dict[str, Any]) -> str:
     return line
 
 
-def run_rows(snapshot: dict[str, Any]) -> list[tuple[str, ...]]:
+def _header_line_styled(snapshot: dict[str, Any], mode: str) -> str:
+    scheduler = snapshot.get("scheduler") or {}
+    lifetime = snapshot.get("lifetime") or {}
+    arrow = icon("arrow", mode)
+    if scheduler.get("running"):
+        sched = f" {icon('scheduler', mode)} scheduler pid {scheduler.get('pid')}"
+    else:
+        sched = f" {icon('scheduler', mode)} scheduler stopped"
+    ready = f" {icon('queue', mode)} ready {snapshot.get('ready_count', 0)}"
+    totals = (
+        f"  {icon('done', mode)} {lifetime.get('done', 0)}"
+        f"  {icon('test_fail', mode)} {lifetime.get('failed', 0)}"
+        f"  {icon('blocked', mode)} {lifetime.get('cancelled', 0)}"
+    )
+    line = f"{sched}{arrow}{ready}{arrow}{totals}"
+    if "session_totals" in snapshot:
+        session = snapshot["session_totals"] or {}
+        line += (
+            f"   {icon('arrow_thin', mode)} session "
+            f"done {session.get('done', 0)} failed {session.get('failed', 0)}"
+            f" cancelled {session.get('cancelled', 0)}"
+        )
+    return line
+
+
+_PANEL_TITLES_ASCII: dict[str, str] = {
+    "stats": "STATS",
+    "limits": "LIMITS",
+    "runs": "RUNS",
+    "detail": "DETAIL",
+}
+_PANEL_ICON_ROLES: dict[str, str] = {
+    "stats": "alloy",
+    "limits": "limits",
+    "runs": "runs",
+    "detail": "detail",
+}
+
+
+def panel_border_title(panel_id: str, mode: str) -> str:
+    """Left segment of a panel's top border: plain uppercase titles in ascii."""
+    if mode == "ascii":
+        return _PANEL_TITLES_ASCII[panel_id]
+    role = _PANEL_ICON_ROLES[panel_id]
+    return f"{icon(role, mode)} {panel_id}"
+
+
+def panel_border_subtitle(
+    panel_id: str, snapshot: dict[str, Any], *, mode: str
+) -> str | None:
+    """Right segment of a panel's top border when a count or status applies."""
+    if panel_id == "runs":
+        count = len(snapshot.get("runs") or [])
+        noun = "run" if count == 1 else "runs"
+        return f"{count} {noun}"
+    return None
+
+
+def title_line(snapshot: dict[str, Any], width: int, mode: str) -> str:
+    """Powerline title row: alloy branding, monitor label, repo path."""
+    arrow = icon("arrow", mode)
+    repo = _display_repo(snapshot.get("repo"))
+    left = f" {icon('alloy', mode)} alloy {arrow} monitor {arrow} {icon('folder', mode)} {repo} {arrow}"
+    now = datetime.now().astimezone().strftime("%H:%M:%S")
+    right = (
+        f"{icon('arrow_left', mode)} {icon('refresh', mode)} 1s "
+        f"{icon('arrow_left', mode)} {icon('clock', mode)} {now} "
+    )
+    budget = max(0, width - cell_len(right))
+    return _fit_cell_width(left, budget) + right
+
+
+def _display_repo(repo: Any) -> str:
+    if not repo:
+        return "-"
+    text = str(repo)
+    home = Path.home()
+    try:
+        return "~" + str(Path(text).relative_to(home))
+    except ValueError:
+        return text
+
+
+def _fit_cell_width(text: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    if cell_len(text) <= width:
+        return text + " " * (width - cell_len(text))
+    out = ""
+    for ch in text:
+        if cell_len(out + ch) > width - 1:
+            break
+        out += ch
+    return out + "\u2026" + " " * max(0, width - cell_len(out + "\u2026"))
+
+
+def run_rows(snapshot: dict[str, Any], mode: str | None = None) -> list[tuple[str, ...]]:
     """One tuple per `runs[]` entry, in `COLUMNS` order."""
-    return [_row(run) for run in snapshot.get("runs") or []]
+    return [_row(run, mode) for run in snapshot.get("runs") or []]
 
 
 def status_color(status: str) -> str:
@@ -156,7 +272,7 @@ def _limits_window_segment(win: dict[str, Any], *, align_bar: bool = False) -> s
     return segment
 
 
-def _row(run: dict[str, Any]) -> tuple[str, ...]:
+def _row(run: dict[str, Any], mode: str | None = None) -> tuple[str, ...]:
     return (
         _text(run.get("parent_bead_id")),
         _text(run.get("bead_id")),
@@ -165,12 +281,12 @@ def _row(run: dict[str, Any]) -> tuple[str, ...]:
         _text(run.get("stage")),
         f"{_text(run.get('iteration'))}/{_text(run.get('max_iterations'))}",
         f"{_text(run.get('consiliums'))}/{_text(run.get('max_consiliums'))}",
-        _tests(run),
+        _tests(run, mode),
         _elapsed(run.get("elapsed_minutes")),
         _now(run.get("current_calls") or []),
         _tokens(run.get("tokens") or {}),
         _judge(run.get("judge")),
-        _text(run.get("complexity")),
+        _complexity(run.get("complexity"), mode),
     )
 
 
@@ -178,13 +294,46 @@ def _text(value: Any) -> str:
     return "-" if value is None else str(value)
 
 
-def _tests(run: dict[str, Any]) -> str:
+_COMPLEXITY_BARS = {
+    "simple": "▂",
+    "medium": "▂▄",
+    "complex": "▂▄▆",
+}
+
+
+def _complexity(value: Any, mode: str | None = None) -> str:
+    if mode is None or mode == "ascii":
+        return _text(value)
+    if value is None:
+        return "-"
+    return _COMPLEXITY_BARS.get(str(value), "-")
+
+
+def _tests(run: dict[str, Any], mode: str | None = None) -> str:
     """`n checks` once the verification loop has run anything, else the ledger's
-    tests summary verbatim."""
+    tests summary verbatim (ascii), or tick/cross glyphs in nerd/unicode."""
     checks = run.get("checks")
     if isinstance(checks, dict) and checks.get("total") is not None:
-        return f"{checks['total']} checks"
-    return _text(run.get("tests_summary"))
+        if mode is None or mode == "ascii":
+            return f"{checks['total']} checks"
+        total = checks["total"]
+        last = checks.get("last") or {}
+        glyph = "test_ok" if last.get("exit_code") == 0 else "test_fail"
+        return f"{icon(glyph, mode)}{total}"
+    summary = run.get("tests_summary")
+    if mode is None or mode == "ascii":
+        return _text(summary)
+    if summary is None:
+        return "-"
+    passed, failed = parse_counts(str(summary))
+    if passed is None and failed is None:
+        return str(summary)
+    parts: list[str] = []
+    if passed is not None:
+        parts.append(f"{icon('test_ok', mode)}{passed}")
+    if failed is not None:
+        parts.append(f"{icon('test_fail', mode)}{failed}")
+    return " ".join(parts)
 
 
 def _elapsed(minutes: Any) -> str:

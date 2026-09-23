@@ -4,25 +4,25 @@ Screen {
 
 #stats {
     background: #12161d;
-    border: heavy #2a3038;
+    border: round #2a3038;
     border-title-color: #79c0ff;
 }
 
 #limits {
     background: #12161d;
-    border: heavy #2a3038;
+    border: round #2a3038;
     border-title-color: #79c0ff;
 }
 
 #runs {
     background: #12161d;
-    border: heavy #2a3038;
+    border: round #2a3038;
     border-title-color: #79c0ff;
 }
 
 #detail {
     background: #12161d;
-    border: heavy #2a3038;
+    border: round #2a3038;
     border-title-color: #79c0ff;
 }
 

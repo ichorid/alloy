@@ -556,3 +556,9 @@ def simulate_stalled_aiosqlite_connect(monkeypatch: pytest.MonkeyPatch) -> None:
         raise RuntimeError("stalled_connect should not complete in tests")
 
     monkeypatch.setattr(aiosqlite, "connect", stalled_connect)
+
+
+@pytest.fixture(autouse=True)
+def alloy_monitor_icons_ascii(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep existing monitor tests on plain ascii output until icons are wired."""
+    monkeypatch.setenv("ALLOY_MONITOR_ICONS", "ascii")

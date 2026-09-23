@@ -722,3 +722,22 @@ async def test_runs_table_columns_update_when_terminal_is_resized():
         await pilot.resize_terminal(79, 24)
         await pilot.pause()
         assert _table_column_keys(table) == list(_expected_visible_column_keys(79))
+
+
+# -- alloy-3g0.5: right-aligned numeric columns in runs table -----------------
+
+
+async def test_iter_column_header_and_first_row_cell_are_right_aligned():
+    app = MonitorApp(snapshot_source=lambda: TWO_RUNS, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = _runs_table(app)
+        iter_col = table.get_column_index("iter")
+        iter_column = next(col for col in table.ordered_columns if col.key.value == "iter")
+        header = iter_column.label
+        cell = table.get_cell_at(Coordinate(row=0, column=iter_col))
+
+        assert isinstance(header, Text)
+        assert header.justify == "right"
+        assert isinstance(cell, Text)
+        assert cell.justify == "right"

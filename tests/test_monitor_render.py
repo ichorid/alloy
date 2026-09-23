@@ -8,6 +8,7 @@ No Textual involved -- see tests/test_monitor_view.py for the pilot tests.
 
 from __future__ import annotations
 
+from alloy.monitor.icons import icon
 from alloy.monitor.render import COLUMNS, header_line, run_rows
 
 EMPTY_TOKENS = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
@@ -669,3 +670,178 @@ def test_visible_columns_below_comfortable_width_also_omits_recipe():
         name for name in COLUMNS if name not in {"parent", "stage", "cons", "complexity", "recipe"}
     )
     assert visible_columns(79) == expected
+
+
+# -- alloy-3g0.2: Powerline title and stats lines -----------------------------
+
+
+_PRIVATE_USE_MIN = 0xE000
+_PRIVATE_USE_MAX = 0xF8FF
+
+
+def _powerline_acceptance_snapshot() -> dict:
+    return _snapshot(
+        scheduler={"running": True, "pid": 48213},
+        ready_count=4,
+        lifetime={"done": 128, "failed": 3, "cancelled": 1},
+    )
+
+
+def _contains_private_use_area(text: str) -> bool:
+    return any(_PRIVATE_USE_MIN <= ord(ch) <= _PRIVATE_USE_MAX for ch in text)
+
+
+def test_header_line_ascii_matches_legacy_format_for_acceptance_fixture():
+    snap = _powerline_acceptance_snapshot()
+    expected = (
+        "scheduler running (pid 48213)  |  ready 4 (capped at 1000)  |  "
+        "done 128  failed 3  cancelled 1"
+    )
+    assert header_line(snap, "ascii") == expected
+
+
+def test_header_line_nerd_uses_powerline_arrow_and_counts_without_pipe_separators():
+    line = header_line(_powerline_acceptance_snapshot(), "nerd")
+    assert "\ue0b0" in line
+    assert "pid 48213" in line
+    assert "ready 4" in line
+    assert "128" in line
+    assert "3" in line
+    assert "1" in line
+    assert "|" not in line
+
+
+def test_header_line_unicode_avoids_private_use_area():
+    line = header_line(_powerline_acceptance_snapshot(), "unicode")
+    assert not _contains_private_use_area(line)
+
+
+def test_title_line_nerd_includes_alloy_glyph_within_width_budget():
+    from rich.cells import cell_len
+
+    from alloy.monitor.render import title_line
+
+    line = title_line(_powerline_acceptance_snapshot(), 100, "nerd")
+    assert "\uf0c3" in line
+    assert cell_len(line) <= 100
+
+
+# -- alloy-3g0.5: column alignment and mode-aware tests cell ------------------
+
+
+def test_right_aligned_columns_constant():
+    from alloy.monitor.render import RIGHT_ALIGNED
+
+    assert RIGHT_ALIGNED == frozenset({"iter", "cons", "tests", "elapsed", "tokens"})
+
+
+def test_column_align_right_for_numeric_columns():
+    from alloy.monitor.render import column_align
+
+    for name in ("iter", "cons", "tests", "elapsed", "tokens"):
+        assert column_align(name) == "right"
+
+
+def test_column_align_left_for_text_columns():
+    from alloy.monitor.render import column_align
+
+    for name in ("bead", "status", "stage", "now"):
+        assert column_align(name) == "left"
+
+
+def test_run_rows_nerd_formats_tests_summary_with_pass_and_fail_counts():
+    ok = icon("test_ok", "nerd")
+    fail = icon("test_fail", "nerd")
+    snapshot = _snapshot(runs=[_run(tests_summary="3 passed, 1 failed")])
+
+    row = run_rows(snapshot, mode="nerd")[0]
+
+    assert row[7] == f"{ok}3 {fail}1"
+
+
+def test_run_rows_nerd_formats_tests_summary_with_pass_only():
+    ok = icon("test_ok", "nerd")
+    snapshot = _snapshot(runs=[_run(tests_summary="3 passed")])
+
+    row = run_rows(snapshot, mode="nerd")[0]
+
+    assert row[7] == f"{ok}3"
+
+
+def test_run_rows_nerd_leaves_unparseable_tests_summary_verbatim():
+    snapshot = _snapshot(runs=[_run(tests_summary="flaky")])
+
+    row = run_rows(snapshot, mode="nerd")[0]
+
+    assert row[7] == "flaky"
+
+
+def test_run_rows_nerd_checks_with_exit_code_zero_shows_ok_glyph_and_total():
+    ok = icon("test_ok", "nerd")
+    run = _run(tests_summary=None)
+    run["checks"] = {"total": 14, "last": {"exit_code": 0}}
+
+    row = run_rows(_snapshot(runs=[run]), mode="nerd")[0]
+
+    assert row[7] == f"{ok}14"
+
+
+def test_run_rows_nerd_checks_with_exit_code_one_shows_fail_glyph_and_total():
+    fail = icon("test_fail", "nerd")
+    run = _run(tests_summary=None)
+    run["checks"] = {"total": 14, "last": {"exit_code": 1}}
+
+    row = run_rows(_snapshot(runs=[run]), mode="nerd")[0]
+
+    assert row[7] == f"{fail}14"
+
+
+def test_run_rows_ascii_checks_still_shows_n_checks():
+    run = _run(tests_summary=None)
+    run["checks"] = {"total": 14, "last": {"exit_code": 0}}
+
+    row = run_rows(_snapshot(runs=[run]))[0]
+
+    assert row[7] == "14 checks"
+
+
+def test_run_rows_ascii_mode_keeps_tests_summary_verbatim():
+    snapshot = _snapshot(runs=[_run(tests_summary="3 passed, 1 failed")])
+
+    row = run_rows(snapshot, mode="ascii")[0]
+
+    assert row[7] == "3 passed, 1 failed"
+
+
+# -- alloy-3g0.6: complexity glyph bar in nerd/ascii modes ---------------------
+
+
+def test_run_rows_nerd_simple_complexity_shows_one_block_glyph():
+    row = run_rows(_snapshot(runs=[_run(complexity="simple")]), mode="nerd")[0]
+
+    assert row[12] == "▂"
+
+
+def test_run_rows_nerd_medium_complexity_shows_two_block_glyph():
+    row = run_rows(_snapshot(runs=[_run(complexity="medium")]), mode="nerd")[0]
+
+    assert row[12] == "▂▄"
+
+
+def test_run_rows_nerd_complex_complexity_shows_three_block_glyph():
+    row = run_rows(_snapshot(runs=[_run(complexity="complex")]), mode="nerd")[0]
+
+    assert row[12] == "▂▄▆"
+
+
+def test_run_rows_nerd_none_complexity_shows_dash():
+    row = run_rows(_snapshot(runs=[_run(complexity=None)]), mode="nerd")[0]
+
+    assert row[12] == "-"
+
+
+def test_run_rows_ascii_mode_keeps_complexity_as_word():
+    for level in ("simple", "medium", "complex"):
+        row = run_rows(_snapshot(runs=[_run(complexity=level)]), mode="ascii")[0]
+
+        assert row[12] == level

@@ -16,15 +16,37 @@ from textual.binding import Binding
 from textual.events import Resize
 from textual.widgets import DataTable, Footer, Header, Static
 
+from alloy.monitor.icons import icon, resolve_mode
 from alloy.monitor.render import (
     COLUMNS,
+    column_align,
     format_detail,
     header_line,
     limits_lines,
+    panel_border_subtitle,
+    panel_border_title,
     run_rows,
     status_color,
+    title_line,
     visible_columns,
 )
+
+
+class MonitorFooter(Footer):
+    """Footer with key chips and a right-aligned ``icons: <mode>`` marker."""
+
+    def render(self) -> Text:
+        line = Text()
+        for child in self.children:
+            rendered = child.render()
+            line.append(getattr(rendered, "plain", str(rendered)))
+        mode = resolve_mode(interactive=True)
+        keyboard = icon("keyboard", mode)
+        if keyboard:
+            line.append(f" {keyboard} icons: {mode} ")
+        else:
+            line.append(f" icons: {mode} ")
+        return line
 
 
 class MonitorApp(App[None]):
@@ -71,7 +93,7 @@ class MonitorApp(App[None]):
         detail.border_title = "DETAIL"
         detail.display = False
         yield detail
-        yield Footer()
+        yield MonitorFooter(show_command_palette=False)
 
     def get_key_display(self, binding: Binding) -> str:
         if binding.action == "cursor_down":
@@ -111,13 +133,16 @@ class MonitorApp(App[None]):
         table.clear()
         run_ids = [run["run_id"] for run in snapshot.get("runs") or []]
         visible = visible_columns(table_width)
-        for run_id, cells in zip(run_ids, run_rows(snapshot)):
+        mode = resolve_mode(interactive=True)
+        for run_id, cells in zip(run_ids, run_rows(snapshot, mode=mode)):
             by_column = dict(zip(COLUMNS, cells))
             row = []
             for column in visible:
                 value = by_column[column]
                 if column == "status":
                     value = Text(value, style=status_color(value))
+                elif column_align(column) == "right":
+                    value = Text(value, justify="right")
                 row.append(value)
             table.add_row(*row, key=run_id)
         if run_ids:
@@ -128,7 +153,9 @@ class MonitorApp(App[None]):
             else:
                 target = len(run_ids) - 1
             table.move_cursor(row=target)
-        self.query_one("#stats", Static).update(header_line(snapshot))
+        self.title = title_line(snapshot, table_width, mode)
+        self.query_one("#stats", Static).update(header_line(snapshot, mode))
+        self._sync_panel_chrome(snapshot, mode)
         self._refresh_limits_widget()
         self._refresh_detail(width=table_width)
 
@@ -160,6 +187,12 @@ class MonitorApp(App[None]):
         self._probed_limits = merged
         self._refresh_limits_widget()
 
+    def _sync_panel_chrome(self, snapshot: dict[str, Any], mode: str) -> None:
+        for panel_id in ("stats", "limits", "runs", "detail"):
+            widget = self.query_one(f"#{panel_id}")
+            widget.border_title = panel_border_title(panel_id, mode)
+            widget.border_subtitle = panel_border_subtitle(panel_id, snapshot, mode=mode)
+
     def _refresh_limits_widget(self) -> None:
         limits_widget = self.query_one("#limits", Static)
         snapshot_limits = (self._snapshot or {}).get("limits") or {}
@@ -177,7 +210,8 @@ class MonitorApp(App[None]):
         limits_widget.update("\n".join(lines))
 
     def _show_failure(self, exc_type: str) -> None:
-        text = header_line(self._snapshot) if self._snapshot is not None else ""
+        mode = resolve_mode(interactive=True)
+        text = header_line(self._snapshot, mode) if self._snapshot is not None else ""
         self.query_one("#stats", Static).update(f"{text}  |  refresh failed: {exc_type}".strip(" |"))
 
     def _sync_runs_table_columns(self, width: int | None = None) -> bool:
@@ -189,7 +223,10 @@ class MonitorApp(App[None]):
             return False
         table.clear(columns=True)
         for column in wanted:
-            table.add_column(column, key=column)
+            label: str | Text = column
+            if column_align(column) == "right":
+                label = Text(column, justify="right")
+            table.add_column(label, key=column)
         return True
 
     @staticmethod
