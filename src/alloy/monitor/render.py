@@ -27,6 +27,9 @@ _COLUMN_TIERS: dict[str, str] = {
 
 _USAGE_BAR_WIDTH = 16
 LIMITS_HARNESS_WIDTH = max(len(name) for name in HARNESSES)
+# Account-wide window labels (5h, weekly, cycle, ...); pad so bars line up per column.
+LIMITS_WINDOW_LABEL_WIDTH = max(len(label) for label in ("5h", "cycle", "weekly"))
+LIMITS_ALIGNED_WINDOW_COUNT = 2
 _COLOR_GREEN = "#7ee787"
 _COLOR_YELLOW = "#e3b341"
 _COLOR_RED = "#f85149"
@@ -108,8 +111,9 @@ def _limits_line(harness: str, sample: dict[str, Any]) -> str:
             line += f" [{status}]"
         return line
     parts = [label]
-    for win in sample.get("windows") or []:
-        parts.append(_limits_window_segment(win))
+    windows = sample.get("windows") or []
+    for index, win in enumerate(windows):
+        parts.append(_limits_window_segment(win, align_bar=index < LIMITS_ALIGNED_WINDOW_COUNT))
     line = "  ".join(parts)
     stale = _stale_as_of(sample.get("as_of"))
     if stale:
@@ -133,10 +137,17 @@ def _usage_bar(percent: int) -> str:
     return f"[{'█' * filled}{'░' * (_USAGE_BAR_WIDTH - filled)}]"
 
 
-def _limits_window_segment(win: dict[str, Any]) -> str:
+def _limits_window_head(label: str, percent: int, *, align_bar: bool) -> str:
+    if align_bar:
+        return f"{label.ljust(LIMITS_WINDOW_LABEL_WIDTH)} {percent:>3}%"
+    return f"{label} {percent}%"
+
+
+def _limits_window_segment(win: dict[str, Any], *, align_bar: bool = False) -> str:
     percent = int(win["used_percent"])
     color = _usage_color(percent)
-    segment = f"[{color}]{win['label']} {percent}% {_usage_bar(percent)}[/]"
+    head = _limits_window_head(win["label"], percent, align_bar=align_bar)
+    segment = f"[{color}]{head} {_usage_bar(percent)}[/]"
     resets = _resets_hhmm(win.get("resets_at"))
     if resets:
         segment += f" (resets {resets})"

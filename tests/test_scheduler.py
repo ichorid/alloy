@@ -255,6 +255,25 @@ async def test_scheduler_tick_auto_resumes_when_retry_at_is_past(
     assert len(fake_harnesses.calls_for("tests")) > tests_calls_before
 
 
+def test_due_human_resume_returns_ready_parked_run_without_retry_at(
+    scheduler, beads_project,
+):
+    bead_id = bd_create(beads_project, "human resume", alloy_recipe="tdd-loop")
+    run_id = "human-resume-1"
+    scheduler.engine.store.create_run(
+        run_id=run_id, bead_id=bead_id, thread_id=run_id, recipe="tdd-loop",
+        repo=beads_project, worktree=str(beads_project), branch=f"alloy/{bead_id}",
+        log_dir=None,
+    )
+    scheduler.engine.store.update_run(run_id, status="waiting-human", stage="waiting-human")
+    scheduler.engine.beads.set_status(bead_id, bd.STATUS_READY)
+
+    due = scheduler.due_human_resume()
+    assert due is not None
+    assert due["bead_id"] == bead_id
+    assert due.get("retry_at") is None
+
+
 async def test_scheduler_tick_leaves_parked_run_when_retry_at_is_future(
     scheduler, beads_project, fake_harnesses
 ):

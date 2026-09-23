@@ -472,6 +472,50 @@ async def test_a_raising_limits_source_leaves_the_previous_limits_text_unchanged
         assert _runs_table(app).row_count == 2
 
 
+async def test_unavailable_limits_probe_keeps_previous_available_sample():
+    cached = _claude_limits(42.0)
+    probed = {
+        "claude": {
+            "harness": "claude",
+            "installed": True,
+            "available": False,
+            "fetched_at": None,
+            "as_of": None,
+            "source": None,
+            "error": "HTTP 429",
+            "status": None,
+            "windows": [],
+        }
+    }
+
+    # First mount probes good limits; second probe returns 429.
+    calls = 0
+
+    def limits_source_fn() -> dict:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return cached
+        return probed
+
+    snapshot = _snapshot(limits=cached, runs=[_run("run-1")])
+    app = MonitorApp(
+        snapshot_source=lambda: snapshot,
+        limits_source=limits_source_fn,
+        interval=DISABLED_INTERVAL,
+        limits_interval=DISABLED_INTERVAL,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "42%" in _limits_text(app)
+
+        worker = app.refresh_limits()
+        await worker.wait()
+        await pilot.pause()
+        assert "42%" in _limits_text(app)
+        assert "unavailable" not in _limits_text(app)
+
+
 async def test_r_key_refreshes_snapshot_and_reprobes_limits():
     cached = _claude_limits(42.0)
     snapshot_calls = 0
@@ -582,7 +626,7 @@ def test_cli_monitor_once_plain_text_prints_limits_lines_before_table_rows(
 
     assert result.exit_code == 0
     output = result.stdout
-    limits_pos = output.find("5h 42%")
+    limits_pos = output.find("42%")
     bead_pos = output.find(bead_id)
     assert limits_pos != -1
     assert bead_pos != -1

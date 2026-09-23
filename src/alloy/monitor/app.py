@@ -146,7 +146,18 @@ class MonitorApp(App[None]):
 
     def apply_limits(self, limits: dict[str, Any]) -> None:
         """Merge probed limits into the displayed snapshot limits."""
-        self._probed_limits = limits
+        snapshot_limits = (self._snapshot or {}).get("limits") or {}
+        prior = self._probed_limits or {}
+        merged = dict(prior)
+        for harness, sample in limits.items():
+            if sample.get("available"):
+                merged[harness] = sample
+                continue
+            previous = prior.get(harness) or snapshot_limits.get(harness)
+            if previous and previous.get("available"):
+                continue
+            merged[harness] = sample
+        self._probed_limits = merged
         self._refresh_limits_widget()
 
     def _refresh_limits_widget(self) -> None:

@@ -88,6 +88,11 @@ def _read_token(home: Path, now: datetime) -> tuple[str | None, str | None]:
     return token, None
 
 
+def _include_window_key(key: str) -> bool:
+    """Only surface account and per-model weekly gauges, not stray API keys."""
+    return key in ("five_hour", "seven_day") or key.startswith("seven_day_")
+
+
 def _label(key: str) -> tuple[str, str | None]:
     """(label, model) for a usage key."""
     if key == "five_hour":
@@ -106,6 +111,8 @@ def _windows(payload: dict[str, Any]) -> list[dict[str, Any]]:
     ordered += [k for k in payload if k not in ("five_hour", "seven_day")]
     windows: list[dict[str, Any]] = []
     for key in ordered:
+        if not _include_window_key(key):
+            continue
         entry = payload[key]
         if not isinstance(entry, dict) or "utilization" not in entry:
             continue

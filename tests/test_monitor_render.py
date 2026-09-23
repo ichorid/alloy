@@ -325,7 +325,8 @@ def test_limits_lines_renders_claude_windows_and_unavailable_codex():
 
     assert len(lines) == 2
     claude_line, codex_line = lines
-    assert claude_line.index("5h 42%") < claude_line.index("weekly 61%")
+    assert claude_line.index("5h") < claude_line.index("weekly 61%")
+    assert claude_line.index("42%") < claude_line.index("weekly 61%")
     assert claude_line.index("weekly 61%") < claude_line.index("weekly fable 12%")
     assert claude_line.index("weekly fable 12%") < claude_line.index("weekly opus 80%")
     assert "unavailable: no local sample" in codex_line
@@ -388,8 +389,74 @@ def test_limits_lines_align_first_window_across_harnesses():
     assert len(lines) == 3
     for line, harness in zip(lines, labels, strict=True):
         assert line.startswith(harness.ljust(LIMITS_HARNESS_WIDTH) + "  ")
-    bar_starts = [line.index("[#7ee787]") for line in lines]
+    bar_starts = [_first_usage_bar_index(line) for line in lines]
     assert bar_starts[0] == bar_starts[1] == bar_starts[2]
+
+
+def _first_usage_bar_index(line: str) -> int:
+    indices = _usage_bar_indices(line)
+    if not indices:
+        raise AssertionError(f"no usage bar in: {line}")
+    return indices[0]
+
+
+def _usage_bar_indices(line: str) -> list[int]:
+    import re
+
+    return [match.start() for match in re.finditer(r"\[[█░]", line)]
+
+
+def test_limits_lines_align_weekly_window_across_harnesses():
+    from alloy.limits import window
+    from alloy.monitor.render import limits_lines
+
+    snapshot = _snapshot()
+    snapshot["limits"] = {
+        "claude": {
+            "harness": "claude",
+            "installed": True,
+            "available": True,
+            "fetched_at": "2026-09-23T10:00:00+00:00",
+            "as_of": "2026-09-23T10:00:00+00:00",
+            "source": "oauth-usage-api",
+            "error": None,
+            "status": None,
+            "windows": [
+                window("five_hour", "5h", 42.0, None),
+                window("seven_day", "weekly", 98.0, None),
+            ],
+        },
+        "codex": {
+            "harness": "codex",
+            "installed": True,
+            "available": True,
+            "fetched_at": "2026-09-23T10:00:00+00:00",
+            "as_of": "2026-09-23T10:00:00+00:00",
+            "source": "session-rollout",
+            "error": None,
+            "status": None,
+            "windows": [
+                window("primary", "5h", 7.0, None),
+                window("secondary", "weekly", 4.0, None),
+            ],
+        },
+        "cursor": {
+            "harness": "cursor",
+            "installed": True,
+            "available": True,
+            "fetched_at": "2026-09-23T10:00:00+00:00",
+            "as_of": "2026-09-23T10:00:00+00:00",
+            "source": "dashboard-api",
+            "error": None,
+            "status": None,
+            "windows": [window("total", "cycle", 30.0, None)],
+        },
+    }
+
+    lines = limits_lines(snapshot)
+    weekly_bars = [_usage_bar_indices(line)[1] for line in lines[:2]]
+    assert weekly_bars[0] == weekly_bars[1]
+    assert "weekly" in lines[0] and "weekly" in lines[1]
 
 
 # -- alloy-o89.2: color-coded threshold bars in limits panel ------------------
@@ -420,7 +487,7 @@ def _claude_limits_line(*windows) -> str:
 
 
 def _assert_bracketed_usage_bar(line: str, percent: int, color: str) -> None:
-    assert f"[{color}]{percent}%" in line or f"[{color}]5h {percent}%" in line
+    assert f"[{color}]" in line and f"{percent}%" in line
     for start in range(len(line)):
         if line[start] != "[":
             continue

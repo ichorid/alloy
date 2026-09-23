@@ -566,8 +566,11 @@ async def scope_merge_gate(ctx: RunContext, bug_bead: Any, diff: str) -> tuple[b
 def bug_acceptance(report: BugReport) -> str:
     return (
         f"The defect no longer reproduces: {report.evidence or report.title}. "
-        "The existing test suite stays green. The change touches only what this defect "
-        "requires -- no refactors, no API or schema changes."
+        "The existing test suite stays green. Production changes are limited to where "
+        "the defect lives. Test-only edits in other files are allowed when they only "
+        "stabilize the suite against ambient environment or routing (for example "
+        "monkeypatching env vars the test should control, or forcing shadow routing in "
+        "harness tests under live complexity routing) and do not weaken assertions."
     )
 
 
@@ -646,7 +649,12 @@ Choose exactly one decision:
 - "escalate"    -- the evidence is ambiguous or the call needs a stronger judge
 
 Give a confidence between 0 and 1. Tests that were weakened, skipped or deleted are
-not evidence; say so and do not accept."""
+not evidence; say so and do not accept.
+
+Scope: accept minor test-only changes beyond the primary defect file when they only
+make other tests honest about ambient configuration (env vars, live routing) and do
+not change production behaviour. Do not reject solely because a second test file was
+touched."""
 
 
 def acceptance_prompt(

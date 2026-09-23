@@ -32,6 +32,7 @@ from alloy.paths import AlloyPaths
 from alloy.store import RUN_RUNNING, RUN_WAITING_HUMAN
 
 DEFAULT_POLL_SECONDS = 15.0
+HUMAN_RESUME_MEMORY_PREFIX = "alloy:human:"
 
 log = logging.getLogger("alloy.scheduler")
 
@@ -99,7 +100,7 @@ class Scheduler:
         """Claim and run at most one ready task. True if work was started."""
         if len(self._running()) >= self.concurrency:
             return False
-        due = self.due_resume()
+        due = self.due_resume() or self.due_human_resume()
         if due is not None:
             return await self._resume_due(due)
         if await self._memory_maintenance():
@@ -125,10 +126,14 @@ class Scheduler:
     async def _resume_due(self, record: dict) -> bool:
         """journal 38: the harness said when it would be back; that time has passed."""
         bead_id = record["bead_id"]
-        log.info("resuming %s (run %s, retry_at %s passed)",
-                 bead_id, record["run_id"], record.get("retry_at"))
+        retry_at = record.get("retry_at")
+        if retry_at:
+            log.info("resuming %s (run %s, retry_at %s passed)", bead_id, record["run_id"], retry_at)
+        else:
+            log.info("resuming %s (run %s, human gate, bead ready)", bead_id, record["run_id"])
+        instructions = self._human_resume_instructions(bead_id) if retry_at is None else ""
         try:
-            await self._run_current(bead_id, resume=True)
+            await self._run_current(bead_id, resume=True, resume_instructions=instructions)
         except asyncio.CancelledError:
             if self._cancel_requested:
                 return False
@@ -142,11 +147,16 @@ class Scheduler:
         return True
 
     async def _run_current(
-        self, bead_id: str, *, resume: bool = False, recipe_name: str | None = None,
+        self,
+        bead_id: str,
+        *,
+        resume: bool = False,
+        recipe_name: str | None = None,
+        resume_instructions: str = "",
     ):
         """Run one bead as a task we can cancel from a signal handler."""
         coro = (
-            self.engine.resume(bead_id, "") if resume
+            self.engine.resume(bead_id, resume_instructions) if resume
             else self.engine.run(bead_id, recipe_name=recipe_name)
         )
         self._current = asyncio.ensure_future(coro)
@@ -250,6 +260,24 @@ class Scheduler:
             if retry_at is not None and retry_at <= now:
                 return run
         return None
+
+    def due_human_resume(self) -> dict | None:
+        """A ready bead whose run is parked at the human gate without a retry_at."""
+        ready_ids = {bead.id for bead in self.engine.beads.ready(limit=1000)}
+        for run in self.engine.store.active_runs():
+            if run["status"] != RUN_WAITING_HUMAN or run.get("retry_at"):
+                continue
+            bead_id = run["bead_id"]
+            if bead_id not in ready_ids:
+                continue
+            bead = self.engine.beads.show(bead_id)
+            if not bead.recipe:
+                continue
+            return run
+        return None
+
+    def _human_resume_instructions(self, bead_id: str) -> str:
+        return self.engine.beads.memories().get(f"{HUMAN_RESUME_MEMORY_PREFIX}{bead_id}", "")
 
     def _running(self) -> list[dict]:
         return [run for run in self.engine.store.active_runs() if run["status"] == RUN_RUNNING]

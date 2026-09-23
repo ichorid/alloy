@@ -328,7 +328,12 @@ Choose exactly one decision:
 - "escalate"    -- the evidence is ambiguous or the call needs a stronger judge
 
 Give a confidence between 0 and 1. Tests that were weakened, skipped or deleted are
-not evidence; say so and do not accept."""
+not evidence; say so and do not accept.
+
+Scope: accept minor test-only changes beyond the primary defect file when they only
+make other tests honest about ambient configuration (env vars, live routing) and do
+not change production behaviour. Do not reject solely because a second test file was
+touched."""
 
 _ACCEPTANCE_TASK = f"""## Acceptance criteria
 {ACCEPTANCE}"""

@@ -157,6 +157,25 @@ def test_probe_expired_token_never_calls_fetch(claude_home: Path):
     assert result["error"] == "token expired"
 
 
+def test_probe_skips_non_account_window_keys_like_nimbus_quill(claude_home: Path):
+    write_credentials(claude_home)
+    payload = {
+        **_usage_payload(),
+        "nimbus_quill": {"utilization": 0, "resets_at": None},
+    }
+    fetch = RecordingFetch(status=200, body=json.dumps(payload))
+
+    result = probe(claude_home, fetch)
+
+    assert result["available"] is True
+    assert [window["key"] for window in result["windows"]] == [
+        "five_hour",
+        "seven_day",
+        "seven_day_opus",
+        "seven_day_fable",
+    ]
+
+
 def test_probe_http_error_keeps_claude_installed(claude_home: Path):
     write_credentials(claude_home)
     fetch = RecordingFetch(status=429, body="")
