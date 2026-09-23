@@ -650,6 +650,65 @@ CONTRADICTION_KEY_PREFIX = "alloy:review:contradiction:"
 """The verifier's runnable check commands from the last DONE run on this repo."""
 
 # ---------------------------------------------------------------------------
+# alloy memory list (alloy-4ef.15)
+# ---------------------------------------------------------------------------
+
+EMBED_KEY = "alloy:meta:embed"
+"""Meta key listing the memory keys already embedded into instruction files."""
+
+PROPOSAL_KEY_PREFIX = "alloy:review:proposal:"
+"""Meta prefix under which a pending review proposal for <key> is stored."""
+
+_META_KEY_PREFIXES = ("alloy:meta:", "alloy:review:")
+
+FLAG_CONTRADICTION = "contradiction"
+FLAG_EMBEDDED = "embedded"
+FLAG_PROPOSAL = "proposal"
+
+
+def _embedded_keys(body: str) -> set[str]:
+    """Keys named by ``alloy:meta:embed``: a JSON list, or whitespace/comma
+    separated text."""
+
+    try:
+        data = json.loads(body)
+    except ValueError:
+        data = None
+    if isinstance(data, list):
+        return {str(item) for item in data}
+    return {token for token in re.split(r"[\s,]+", body) if token}
+
+
+def memory_inventory(memory: ProjectMemory, today: date) -> list[dict[str, Any]]:
+    """One row per non-meta memory: key, owner, provenance, age in days and
+    the flags derived from the ``alloy:meta:*`` / ``alloy:review:*`` keys."""
+
+    entries = memory.entries
+    embedded = _embedded_keys(entries[EMBED_KEY].body) if EMBED_KEY in entries else set()
+    rows: list[dict[str, Any]] = []
+    for key in sorted(entries):
+        if key.startswith(_META_KEY_PREFIXES):
+            continue
+        entry = entries[key]
+        flags: list[str] = []
+        if CONTRADICTION_KEY_PREFIX + key in entries:
+            flags.append(FLAG_CONTRADICTION)
+        if key in embedded:
+            flags.append(FLAG_EMBEDDED)
+        if PROPOSAL_KEY_PREFIX + key in entries:
+            flags.append(FLAG_PROPOSAL)
+        rows.append({
+            "key": key,
+            "owner": entry.owner,
+            "run_id": entry.run_id,
+            "bead_id": entry.bead_id,
+            "date": entry.date.isoformat() if entry.date else None,
+            "age_days": (today - entry.date).days if entry.date else None,
+            "flags": flags,
+        })
+    return rows
+
+# ---------------------------------------------------------------------------
 # alloy:calibration (alloy-4ef.12)
 # ---------------------------------------------------------------------------
 
