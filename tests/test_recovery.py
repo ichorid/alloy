@@ -12,6 +12,8 @@ import os
 import signal
 import subprocess
 import sys
+import time
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -21,12 +23,15 @@ from alloy.checkpoints import read_checkpoint
 from alloy.engine import Engine
 from alloy.store import RUN_RUNNING
 from conftest import (
+    acceptance_entry,
     bd_create,
     context_entry,
     critic_entry,
     implement_entry,
     judge_entry,
     synthesize_entry,
+    verifier_run_entry,
+    verifier_stop_entry,
     write_tests_entry,
 )
 from support import await_role, make_harness, wait_for_role
@@ -43,6 +48,33 @@ def script(**overrides):
     }
     base.update(overrides)
     return base
+
+
+def verification_recovery_script(marker: Path, **overrides):
+    """Verifier runs a quick check, then a sleeping check we can SIGKILL into."""
+    quick = verifier_run_entry('sh -c "exit 0"', kind="targeted")
+    sleep = verifier_run_entry(
+        f"{sys.executable} -c \"import pathlib, time; "
+        f"pathlib.Path({repr(str(marker))}).write_text('sleeping'); "
+        f'time.sleep(120)\"',
+        kind="regression",
+    )
+    base = script(
+        acceptance=[acceptance_entry("accept")],
+        judge=[],
+        verifier=[quick, sleep, verifier_stop_entry("checks complete")],
+    )
+    base.update(overrides)
+    return base
+
+
+def wait_for_file(path: Path, timeout: float) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            return
+        time.sleep(0.1)
+    raise AssertionError(f"{path} never appeared")
 
 
 async def test_an_interrupted_run_resumes_without_repeating_finished_stages(
@@ -153,3 +185,56 @@ async def test_restart_can_answer_what_was_running_and_where(
     assert snapshot["checkpoint_id"]
     assert snapshot["interrupts"]                    # it is safe to resume, and how
     assert snapshot["values"]["iteration"] == 1
+
+
+async def test_killed_mid_check_resumes_without_rerunning_finished_stages_or_checks(
+    beads_project, alloy_home, fake_harnesses
+):
+    """SIGKILL during a sleeping verifier check must resume inside the loop."""
+    marker = alloy_home / "check-sleeping.marker"
+    marker.unlink(missing_ok=True)
+    fake_harnesses.configure(verification_recovery_script(marker))
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+
+    child = subprocess.Popen(
+        [sys.executable, "-m", "alloy.cli", "run", bead_id,
+         "--repo", str(beads_project), "--root", str(alloy_home)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")},
+    )
+    try:
+        wait_for_role(fake_harnesses, "verifier", timeout=90)
+        wait_for_file(marker, timeout=90)
+    finally:
+        child.send_signal(signal.SIGKILL)
+        child.wait(timeout=30)
+
+    calls_before = len(fake_harnesses.calls)
+    engine = Engine.open(beads_project, alloy_home)
+    record = engine.store.latest_run_for_bead(bead_id)
+    assert record["status"] == RUN_RUNNING
+    run_id = record["run_id"]
+    log_dir = Path(record["log_dir"])
+
+    fake_harnesses.configure(verification_recovery_script(marker))
+    result = await engine.run(bead_id)
+
+    assert result.outcome == "done"
+    assert result.run_id == run_id
+
+    roles_after = [call["role"] for call in fake_harnesses.calls[calls_before:]]
+    assert "tests" not in roles_after
+    assert "implement" not in roles_after
+
+    snapshot = engine.graph_snapshot_for_run(run_id)
+    final = snapshot["values"]
+    checks = final["checks"]
+    assert len([c for c in checks if c["kind"] == "targeted"]) == 1
+    assert len([c for c in checks if c["kind"] == "regression"]) == 1
+    assert all(
+        count == 1
+        for count in Counter((c["command"], c["kind"]) for c in checks).values()
+    )
+
+    check_logs = list(log_dir.glob("check-*.log"))
+    assert len(check_logs) == len(checks) + 1

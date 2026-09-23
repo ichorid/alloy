@@ -27,6 +27,8 @@ from conftest import (
     implement_entry,
     judge_entry,
     synthesize_entry,
+    verifier_run_entry,
+    verifier_stop_entry,
     write_tests_entry,
 )
 from support import make_harness
@@ -36,8 +38,8 @@ TOP_LEVEL_KEYS = {
 }
 RUN_ENTRY_KEYS = {
     "bead_id", "run_id", "recipe", "status", "stage", "iteration", "max_iterations",
-    "consiliums", "max_consiliums", "tests_summary", "elapsed_minutes", "current_calls",
-    "tokens", "tokens_by_role", "judge", "worktree", "branch",
+    "consiliums", "max_consiliums", "tests_summary", "checks", "elapsed_minutes",
+    "current_calls", "tokens", "tokens_by_role", "judge", "worktree", "branch",
     "parent_run_id", "complexity",
 }
 CURRENT_CALL_KEYS = {
@@ -167,6 +169,41 @@ async def test_full_key_set_at_top_level_and_in_one_run_entry(project, alloy_hom
 
 
 # -- null / empty rules -------------------------------------------------------
+
+
+def test_run_with_no_checks_has_null_checks_in_snapshot(project, alloy_home):
+    engine = _engine(project, alloy_home)
+    make_harness(project, alloy_home)  # creates the run row; never started
+
+    snapshot = build_snapshot(engine)
+
+    assert len(snapshot["runs"]) == 1
+    assert snapshot["runs"][0]["checks"] is None
+
+
+async def test_finished_run_checks_object_in_snapshot(project, alloy_home, fake_harnesses):
+    import sys
+
+    fake_harnesses.configure(
+        script(
+            verifier=[
+                verifier_run_entry(f"{sys.executable} -m pytest -q", kind="regression"),
+                verifier_stop_entry("suite green"),
+            ],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        await harness.start()
+    finally:
+        harness.close()
+
+    engine = _engine(project, alloy_home)
+    snapshot = build_snapshot(engine)
+
+    run = snapshot["runs"][0]
+    assert isinstance(run["checks"], dict)
+    assert run["checks"]["total"] > 0
 
 
 def test_run_with_no_checkpoint_yet_has_null_judge_and_empty_current_calls(project, alloy_home):

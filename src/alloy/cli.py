@@ -31,6 +31,7 @@ from alloy.paths import AlloyPaths
 from alloy.runners import BUILTIN, RunnerRegistry, RunnerUnavailable
 from alloy.scheduler import Scheduler, SchedulerBusy, read_pid, signal_stop, spawn_detached
 from alloy.store import Store
+from alloy.verify import check_logs, checks_summary
 
 app = typer.Typer(
     name="alloy",
@@ -391,7 +392,8 @@ def logs(
     json: bool = typer.Option(False, "--json"),
     tail: int = typer.Option(20, "--tail", help="Most recent agent calls to show"),
 ) -> None:
-    """List the agent calls of a run and where their raw transcripts live."""
+    """List the agent calls and the checks of a run and where their raw
+    transcripts and outputs live."""
     engine = _engine(repo, root)
     record = engine.store.latest_run_for_bead(bead_id)
     if record is None:
@@ -402,8 +404,10 @@ def logs(
         (call for run in runs for call in engine.store.agent_calls(run["run_id"])),
         key=lambda call: call["id"],
     )[-tail:]
+    checks = check_logs(record["log_dir"])
     if json:
-        _emit({"run_id": record["run_id"], "log_dir": record["log_dir"], "calls": calls}, True)
+        _emit({"run_id": record["run_id"], "log_dir": record["log_dir"], "calls": calls,
+               "checks": checks}, True)
         return
     console.print(f"[bold]run[/bold] {record['run_id']}   [bold]logs[/bold] {record['log_dir']}")
     table = Table(show_header=True, header_style="bold")
@@ -414,6 +418,18 @@ def logs(
             str(index), call["bead_id"], call["role"], call["runner"], call["model"] or "-",
             str(call["iteration"]), f"{call['duration_s']:.1f}",
             str(call["exit_code"]), call["log_path"] or "-",
+        )
+    console.print(table)
+    if not checks:
+        return
+    table = Table(show_header=True, header_style="bold", title="checks (in start order)")
+    for column in ("#", "kind", "exit", "command", "artifact"):
+        table.add_column(column)
+    for index, check in enumerate(checks, 1):
+        exit_code = check["exit_code"]
+        table.add_row(
+            str(index), check["kind"], "-" if exit_code is None else str(exit_code),
+            check["command"], check["log_path"],
         )
     console.print(table)
 
@@ -669,6 +685,7 @@ def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
         "consiliums": record["consiliums"],
         "agent_calls": record["agent_calls"],
         "tests": record["tests_summary"],
+        "checks": checks_summary(state),
         "elapsed": f"{elapsed}m",
         "elapsed_minutes": elapsed,
         "agent_role": agent["role"],
@@ -690,6 +707,7 @@ _EMPTY_RUN_FIELDS: dict[str, Any] = {
     "complexity": None, "complexity_source": None, "dispatch_tier": None,
     "run_id": None, "status": None, "stage": None, "iteration": 0,
     "max_iterations": None, "consiliums": 0, "agent_calls": 0, "tests": None,
+    "checks": None,
     "elapsed": "-", "elapsed_minutes": 0, "agent_role": None, "runner": None,
     "model": None, "worktree": None, "branch": None, "log_dir": None,
     "outcome": None, "outcome_reason": None,
