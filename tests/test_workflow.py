@@ -90,6 +90,30 @@ async def test_baseline_records_that_the_new_tests_fail_first(
     assert final["last_check"]["exit_code"] == 0  # and passing after
 
 
+async def test_implement_change_summary_extracts_marked_summary_block(
+    project, alloy_home, fake_harnesses
+):
+    fake_harnesses.configure(
+        script(
+            implement=[
+                {
+                    **implement_entry(succeed=True),
+                    "text": (
+                        "noise <summary>Implemented slugify.</summary> trailing chatter"
+                    ),
+                }
+            ],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["attempts"][0]["change_summary"] == "Implemented slugify."
+
+
 # -- targeted baseline (prove_red) ------------------------------------------
 
 
