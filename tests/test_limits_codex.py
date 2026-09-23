@@ -139,14 +139,14 @@ def test_probe_cross_file_windows_from_codex_status_from_newest_token_count(code
     assert windows[0] == {
         "key": "primary",
         "label": "5h",
-        "used_percent": 53.0,
+        "used_percent": 47.0,
         "resets_at": RESETS_AT_ISO,
         "model": None,
     }
     assert windows[1] == {
         "key": "secondary",
         "label": "weekly",
-        "used_percent": 51.0,
+        "used_percent": 49.0,
         "resets_at": RESETS_AT_ISO,
         "model": None,
     }
@@ -202,8 +202,8 @@ def test_probe_last_codex_line_wins_within_file(codex_home: Path):
 
     assert result["available"] is True
     assert result["as_of"] == CODEX_TS
-    assert result["windows"][0]["used_percent"] == 12.0
-    assert result["windows"][1]["used_percent"] == 34.0
+    assert result["windows"][0]["used_percent"] == 88.0
+    assert result["windows"][1]["used_percent"] == 66.0
 
 
 def test_probe_newer_file_mtime_wins_over_older_file(codex_home: Path):
@@ -242,8 +242,8 @@ def test_probe_newer_file_mtime_wins_over_older_file(codex_home: Path):
 
     assert result["available"] is True
     assert result["as_of"] == "2026-09-01T00:00:00+00:00"
-    assert result["windows"][0]["used_percent"] == 7.0
-    assert result["windows"][1]["used_percent"] == 8.0
+    assert result["windows"][0]["used_percent"] == 93.0
+    assert result["windows"][1]["used_percent"] == 92.0
 
 
 def test_probe_tail_read_parses_codex_event_after_large_prefix(codex_home: Path):
@@ -274,8 +274,8 @@ def test_probe_tail_read_parses_codex_event_after_large_prefix(codex_home: Path)
 
     assert result["available"] is True
     assert result["as_of"] == CODEX_TS
-    assert result["windows"][0]["used_percent"] == 44.0
-    assert result["windows"][1]["used_percent"] == 55.0
+    assert result["windows"][0]["used_percent"] == 56.0
+    assert result["windows"][1]["used_percent"] == 45.0
 
 
 def test_probe_missing_sessions_dir_returns_no_local_sample(codex_home: Path):
