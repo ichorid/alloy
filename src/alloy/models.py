@@ -515,9 +515,10 @@ MEMORY_OWNER_PREFIX = "alloy:"
 
 MEMORY_RENDER_HEADER = "## Project memory"
 REGRESSION_KEY_PREFIX = "alloy:regression:"
+DEFAULT_RECIPE_KEY = "alloy:default:recipe"
 
 _MEMORY_EXCLUDED_PREFIXES = ("alloy:meta:", "alloy:review:", REGRESSION_KEY_PREFIX)
-_MEMORY_EXCLUDED_KEYS = frozenset({"alloy:calibration"})
+_MEMORY_EXCLUDED_KEYS = frozenset({"alloy:calibration", DEFAULT_RECIPE_KEY})
 _MEMORY_LESSON_PREFIX = "alloy:lesson"
 
 _PROVENANCE_RE = re.compile(

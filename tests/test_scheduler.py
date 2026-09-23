@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -26,7 +27,7 @@ from conftest import (
     synthesize_entry,
     write_tests_entry,
 )
-from support import await_role
+from support import await_role, load_config
 
 
 def script(**overrides):
@@ -457,3 +458,94 @@ async def test_scheduler_tick_skips_embed_and_notes_uncommitted_when_instruction
     assert review_beads
     notes = _bead_notes(scheduler.engine, review_beads[0].id)
     assert notes.count("uncommitted") == 1
+
+
+# -- default recipe from memory (alloy-4ef.14) ---------------------------
+
+
+DEFAULT_RECIPE_KEY = "alloy:default:recipe"
+
+
+def test_next_task_selects_unassigned_bead_when_default_recipe_memory_set(
+    scheduler, beads_project,
+):
+    bead_id = bd_create(beads_project, "needs default recipe")
+    scheduler.engine.beads.remember(DEFAULT_RECIPE_KEY, "tdd-loop")
+
+    picked = scheduler.next_task()
+
+    assert picked is not None
+    assert picked.id == bead_id
+    assert picked.recipe is None
+
+
+def test_next_task_skips_unassigned_bead_without_default_recipe_memory(
+    scheduler, beads_project,
+):
+    bd_create(beads_project, "needs default recipe")
+
+    assert scheduler.next_task() is None
+
+
+def test_next_task_skips_unassigned_bead_when_default_recipe_is_unknown(
+    scheduler, beads_project,
+):
+    bd_create(beads_project, "needs default recipe")
+    scheduler.engine.beads.remember(DEFAULT_RECIPE_KEY, "no-such-recipe")
+
+    assert scheduler.next_task() is None
+
+
+def test_next_task_logs_once_when_default_recipe_is_unknown(
+    scheduler, beads_project, caplog,
+):
+    bd_create(beads_project, "needs default recipe")
+    scheduler.engine.beads.remember(DEFAULT_RECIPE_KEY, "no-such-recipe")
+
+    with caplog.at_level(logging.INFO, logger="alloy.scheduler"):
+        assert scheduler.next_task() is None
+        assert scheduler.next_task() is None
+
+    matches = [record for record in caplog.records if "no-such-recipe" in record.message]
+    assert len(matches) == 1
+
+
+async def test_tick_runs_unassigned_bead_when_default_recipe_memory_set(
+    scheduler, beads_project, fake_harnesses,
+):
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "needs default recipe")
+    scheduler.engine.beads.remember(DEFAULT_RECIPE_KEY, "tdd-loop")
+
+    assert await scheduler.tick() is True
+
+    bead = scheduler.engine.beads.show(bead_id)
+    assert bead.status == bd.STATUS_REVIEW_READY
+    assert bead.recipe == "tdd-loop"
+
+
+async def test_default_recipe_tick_uses_yaml_limits_not_memory(
+    scheduler, beads_project, fake_harnesses, monkeypatch,
+):
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "needs default recipe")
+    scheduler.engine.beads.remember(DEFAULT_RECIPE_KEY, "tdd-loop")
+    scheduler.engine.beads.remember("alloy:limits:max_agent_calls", "999")
+
+    configs_seen: list = []
+    original_load_config = scheduler.engine.load_config
+
+    def spy_load_config(name: str):
+        config = original_load_config(name)
+        configs_seen.append(config)
+        return config
+
+    monkeypatch.setattr(scheduler.engine, "load_config", spy_load_config)
+
+    assert await scheduler.tick() is True
+
+    yaml_limits = load_config().limits
+    assert configs_seen
+    assert configs_seen[0].limits == yaml_limits
+    assert yaml_limits.max_agent_calls == 20
+    assert scheduler.engine.beads.show(bead_id).recipe == "tdd-loop"
