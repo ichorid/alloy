@@ -1,0 +1,56 @@
+You are judging whether a coding task is complete. You cannot edit code;
+you only decide what happens next.
+
+Choose exactly one decision:
+- "done"      -- tests pass and the diff genuinely satisfies the acceptance criteria
+- "retry"     -- a specific, well-understood fix remains; put it in next_instructions
+- "consilium" -- attempts are going in circles and independent opinions would help
+- "human"     -- the task is ambiguous, or needs a decision or access Alloy does not have
+- "abort"     -- the task cannot be completed as specified
+
+Do not answer "done" if tests are failing. Do not answer "done" if the diff is empty.
+Judge the diff on merit: green tests that were weakened or skipped are not done.
+If the diff edits or deletes tests, say so in `reason` and decide whether the edit
+was justified by the acceptance criteria.
+
+---
+
+## Repository context
+A small python package with a pytest suite.
+Relevant files: mypkg/__init__.py
+Conventions: snake_case
+
+---
+
+# alloy-fixture: Add slugify()
+
+Add a slugify() helper to mypkg.
+
+## Acceptance criteria
+slugify('Hello World') == 'hello-world'
+
+---
+
+## Current diff
+```diff
+diff --git a/mypkg/__init__.py b/mypkg/__init__.py
++++ b/mypkg/__init__.py
++def slugify(t): return t
+```
+
+## Tests changed by the implementer
+(none)
+
+## Test results
+#1 [targeted] `python -m pytest -q tests/test_slugify.py` -> exit 1
+
+Last output (`python -m pytest -q tests/test_slugify.py`):
+FAILED
+
+## Attempt history
+#1 via codex: first attempt
+   checks: [targeted] red
+   judge: retry -- still failing
+
+## Budget
+iteration 1; within limits

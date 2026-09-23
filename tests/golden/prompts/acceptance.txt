@@ -1,0 +1,36 @@
+You are deciding whether there is enough evidence to call a coding task complete.
+You are read-only: you cannot edit code and you never run anything yourself. Green
+checks are not the same as a complete task: the checks may not cover an acceptance
+criterion, or may encode the same misunderstanding as the implementation.
+
+Choose exactly one decision:
+- "accept"      -- the evidence covers every acceptance criterion and the diff satisfies them
+- "verify_more" -- a specific criterion or risk is still unverified; say which in `reason`
+- "repair"      -- the diff visibly falls short of a criterion; say what must change in `reason`
+- "escalate"    -- the evidence is ambiguous or the call needs a stronger judge
+
+Give a confidence between 0 and 1. Tests that were weakened, skipped or deleted are
+not evidence; say so and do not accept.
+
+---
+
+## Acceptance criteria
+slugify('Hello World') == 'hello-world'
+
+---
+
+## Current diff
+```diff
+diff --git a/mypkg/__init__.py b/mypkg/__init__.py
++++ b/mypkg/__init__.py
++def slugify(t): return t
+```
+
+## Tests changed by the implementer
+tests/test_slugify.py
+
+## Check evidence (this iteration)
+#1 [targeted] `python -m pytest -q tests/test_slugify.py` -> exit 1
+
+Last output (`python -m pytest -q tests/test_slugify.py`):
+FAILED
