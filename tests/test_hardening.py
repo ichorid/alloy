@@ -222,6 +222,7 @@ async def test_fallback_runner_takes_over_when_the_primary_fails(
     project, alloy_home, fake_harnesses
 ):
     config = load_config()
+    config = replace(config, complexity=replace(config.complexity, routing="shadow"))
     roles = dict(config.roles)
     roles["implement"] = replace(
         roles["implement"], fallback=RoleSpec(runner="claude-write", model="fable")
@@ -286,6 +287,7 @@ async def test_fallback_fires_when_primary_reports_is_error_on_exit_zero(
 
 async def test_no_fallback_means_the_failure_stands(project, alloy_home, fake_harnesses):
     config = load_config()
+    config = replace(config, complexity=replace(config.complexity, routing="shadow"))
     roles = dict(config.roles)
     roles["implement"] = replace(roles["implement"], fallback=None)
     fake_harnesses.configure(
