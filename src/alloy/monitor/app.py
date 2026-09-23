@@ -16,17 +16,36 @@ from textual.binding import Binding
 from textual.events import Resize
 from textual.widgets import DataTable, Footer, Header, Static
 
-from alloy.monitor.icons import resolve_mode
+from alloy.monitor.icons import icon, resolve_mode
 from alloy.monitor.render import (
     COLUMNS,
     format_detail,
     header_line,
     limits_lines,
+    panel_border_subtitle,
+    panel_border_title,
     run_rows,
     status_color,
     title_line,
     visible_columns,
 )
+
+
+class MonitorFooter(Footer):
+    """Footer with key chips and a right-aligned ``icons: <mode>`` marker."""
+
+    def render(self) -> Text:
+        line = Text()
+        for child in self.children:
+            rendered = child.render()
+            line.append(getattr(rendered, "plain", str(rendered)))
+        mode = resolve_mode(interactive=True)
+        keyboard = icon("keyboard", mode)
+        if keyboard:
+            line.append(f" {keyboard} icons: {mode} ")
+        else:
+            line.append(f" icons: {mode} ")
+        return line
 
 
 class MonitorApp(App[None]):
@@ -73,7 +92,7 @@ class MonitorApp(App[None]):
         detail.border_title = "DETAIL"
         detail.display = False
         yield detail
-        yield Footer()
+        yield MonitorFooter(show_command_palette=False)
 
     def get_key_display(self, binding: Binding) -> str:
         if binding.action == "cursor_down":
@@ -133,6 +152,7 @@ class MonitorApp(App[None]):
         mode = resolve_mode(interactive=True)
         self.title = title_line(snapshot, table_width, mode)
         self.query_one("#stats", Static).update(header_line(snapshot, mode))
+        self._sync_panel_chrome(snapshot, mode)
         self._refresh_limits_widget()
         self._refresh_detail(width=table_width)
 
@@ -163,6 +183,12 @@ class MonitorApp(App[None]):
             merged[harness] = sample
         self._probed_limits = merged
         self._refresh_limits_widget()
+
+    def _sync_panel_chrome(self, snapshot: dict[str, Any], mode: str) -> None:
+        for panel_id in ("stats", "limits", "runs", "detail"):
+            widget = self.query_one(f"#{panel_id}")
+            widget.border_title = panel_border_title(panel_id, mode)
+            widget.border_subtitle = panel_border_subtitle(panel_id, snapshot, mode=mode)
 
     def _refresh_limits_widget(self) -> None:
         limits_widget = self.query_one("#limits", Static)

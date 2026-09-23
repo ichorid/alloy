@@ -109,6 +109,39 @@ def _header_line_styled(snapshot: dict[str, Any], mode: str) -> str:
     return line
 
 
+_PANEL_TITLES_ASCII: dict[str, str] = {
+    "stats": "STATS",
+    "limits": "LIMITS",
+    "runs": "RUNS",
+    "detail": "DETAIL",
+}
+_PANEL_ICON_ROLES: dict[str, str] = {
+    "stats": "alloy",
+    "limits": "limits",
+    "runs": "runs",
+    "detail": "detail",
+}
+
+
+def panel_border_title(panel_id: str, mode: str) -> str:
+    """Left segment of a panel's top border: plain uppercase titles in ascii."""
+    if mode == "ascii":
+        return _PANEL_TITLES_ASCII[panel_id]
+    role = _PANEL_ICON_ROLES[panel_id]
+    return f"{icon(role, mode)} {panel_id}"
+
+
+def panel_border_subtitle(
+    panel_id: str, snapshot: dict[str, Any], *, mode: str
+) -> str | None:
+    """Right segment of a panel's top border when a count or status applies."""
+    if panel_id == "runs":
+        count = len(snapshot.get("runs") or [])
+        noun = "run" if count == 1 else "runs"
+        return f"{count} {noun}"
+    return None
+
+
 def title_line(snapshot: dict[str, Any], width: int, mode: str) -> str:
     """Powerline title row: alloy branding, monitor label, repo path."""
     arrow = icon("arrow", mode)
