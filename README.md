@@ -139,6 +139,56 @@ runners:
     text_field: result
 ```
 
+## Project memory
+
+Alloy keeps what it learns about a repository in Beads memories (`bd remember`,
+`bd memories`, `bd forget`), not in git. At run start it reads the memories
+once, renders a capped `## Project memory` block into every role's prompt, and
+after the run writes back what it learned. Memory informs the agents; the
+guard still decides. A remembered lesson never raises a limit, skips a check
+or overrides a human gate.
+
+Keys that start with `alloy:` are alloy-owned and carry a provenance trailer
+(`[alloy run=<id> bead=<id> at=<date>]`); every other key is human-owned and
+Alloy never rewrites it. What Alloy writes:
+
+| key | what it holds |
+|---|---|
+| `alloy:check-hints` | check commands that proved useful, offered to the verifier as hints |
+| `alloy:lesson:<key>` | lessons harvested from finished runs (why, and how to apply) |
+| `alloy:human:<bead-id>` | operator guidance saved by `alloy resume --remember` |
+| `alloy:calibration` | per-tier run statistics, shown only to the complexity estimator |
+| `alloy:regression:<area>` | regression areas, injected role-specifically |
+| `alloy:default:recipe` | the recipe the scheduler uses when a bead names none |
+| `alloy:meta:*` | bookkeeping: last review date, embed set, stale-embed flag |
+| `alloy:review:*` | reviewer contradictions and pending proposals |
+
+`alloy:meta:*`, `alloy:review:*`, `alloy:regression:*`, `alloy:calibration` and
+`alloy:default:recipe` never appear in the generic prompt block.
+
+```bash
+alloy memory list                 # inventory: key, owner, provenance, age, flags
+alloy memory review               # read-only review plan (stale, contradicted, proposed)
+alloy memory review --apply       # execute the plan; only alloy-owned keys change
+alloy memory embed                # splice the embed set into AGENTS.md / CLAUDE.md
+alloy resume <bead-id> -m "..." --remember   # keep the guidance under alloy:human:<bead-id>
+```
+
+`alloy memory embed` writes only between the HTML-comment markers
+`alloy:memory:begin` and `alloy:memory:end` in each file listed under
+`memory.instruction_files` (default `AGENTS.md` and `CLAUDE.md`), appending a
+block when the markers are missing. It never runs git. Review is due every
+`review_every_days` (7) days or `review_every_runs` (20) runs; the scheduler
+runs `alloy memory review --apply` and then `alloy memory embed`, skipping the
+embed while an instruction file has uncommitted changes.
+
+Every prompt is assembled from five layers in a fixed order: static (role
+rules), project (memory), run (repository context and check hints), task
+(brief and acceptance) and volatile (check results, diff, history). The
+`prefix_hash` is the sha256 of the first three, recorded on every agent call;
+the `prefix` column of `alloy logs` shows whether the cacheable prefix held
+still across a run.
+
 ## Layout
 
 ```
