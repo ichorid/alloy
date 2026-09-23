@@ -216,6 +216,49 @@ class _OptionalValueCommand(TyperCommand):
         return super().parse_args(ctx, fixed)
 
 
+@app.command()
+def land(
+    bead_id: str = typer.Argument(..., help="Review-ready bead or finished epic to land"),
+    repo: Optional[Path] = RepoOption,
+    root: Optional[Path] = RootOption,
+    json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Land finished work: run the land recipe, then merge the bead branch
+    into the primary checkout. Parks at waiting-human when the primary
+    checkout refuses the merge."""
+    _setup_logging(verbose=not json)
+    engine = _engine(repo, root)
+    try:
+        result = _run_async(engine.land(bead_id))
+    except (EngineError, ConfigError, bd.BeadsError) as exc:
+        _fail(str(exc))
+        return
+    except asyncio.CancelledError:
+        err.print(f"[yellow]interrupted[/yellow] {bead_id}; the bead stays review-ready")
+        raise typer.Exit(130)
+    bead = engine.beads.show(bead_id)
+    payload = {
+        "bead": bead_id,
+        "run_id": result.run_id,
+        "outcome": result.outcome,
+        "reason": result.reason,
+        "landing": _landing_of(bead),
+    }
+    if json:
+        _emit(payload, True)
+        return
+    console.print(f"[green]landed[/green] {bead_id} -- {payload['landing']['sha']}")
+
+
+def _landing_of(bead: bd.Bead) -> dict[str, Any]:
+    """The bead's landing metadata as one status object."""
+    return {
+        "state": bead.metadata.get(bd.META_LAND_STATE),
+        "sha": bead.metadata.get(bd.META_LAND_SHA),
+        "repair": bead.metadata.get(bd.META_LAND_REPAIR),
+    }
+
+
 @app.command(cls=_OptionalValueCommand)
 def resume(
     bead_id: str = typer.Argument(...),
@@ -990,6 +1033,7 @@ def _bead_row(engine: Engine, bead: bd.Bead, ready_ids: set[str]) -> dict[str, A
         "bead_status": bead.status,
         "ready": bead.id in ready_ids,
         "recipe": bead.recipe,
+        "landing": _landing_of(bead),
     }
     record = engine.store.latest_run_for_bead(bead.id)
     if record:

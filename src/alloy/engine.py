@@ -34,7 +34,7 @@ from alloy.store import (
     RUN_WAITING_HUMAN,
     Store,
 )
-from alloy.worktree import Worktree, WorktreeError, WorktreeManager, is_test_path
+from alloy.worktree import Worktree, WorktreeError, WorktreeManager, branch_name, is_test_path
 
 RECURSION_LIMIT = 200
 
@@ -183,6 +183,85 @@ class Engine:
             return self.load_config(name)
         except (KeyError, ConfigError) as exc:
             raise EngineError(str(exc)) from exc
+
+    # -- landing ----------------------------------------------------------
+
+    async def land(self, bead_id: str) -> RunResult:
+        """Verify the bead branch against its target, then merge it into the
+        primary checkout (docs/plans/auto-land.md).
+
+        Accepts a review-ready standalone bead, or an epic with no open
+        descendants. On a green land run the branch is merged into
+        `landing.target` in the primary checkout and the bead is closed; when
+        the primary checkout refuses the merge (wrong branch, local changes)
+        the bead parks at waiting-human instead -- an environment problem,
+        not a code problem.
+        """
+        bead = self.beads.show(bead_id)
+        if bead.issue_type == "epic":
+            open_descendants = self.beads.open_descendants(bead_id)
+            if open_descendants:
+                names = ", ".join(b.id for b in open_descendants)
+                raise EngineError(
+                    f"{bead_id} cannot land: it still has open descendants: {names}"
+                )
+        elif bead.status != bd.STATUS_REVIEW_READY:
+            raise EngineError(
+                f"{bead_id} is '{bead.status}'; only '{bd.STATUS_REVIEW_READY}' "
+                "beads can land"
+            )
+        config = self.validate_recipe("land")
+
+        original_recipe = bead.recipe
+        try:
+            result = await self._execute(bead, "land", run_id=None, resume_payload=None)
+        finally:
+            # `_execute` records the recipe it ran on the bead; `land` is
+            # engine-invoked, never a bead's own `alloy_recipe`.
+            if original_recipe:
+                self.beads.set_metadata(bead_id, {bd.META_RECIPE: original_recipe})
+            else:
+                self.beads.unset_metadata(bead_id, [bd.META_RECIPE])
+
+        if result.outcome != Outcome.DONE.value:
+            # conflict / red: repair beads are vrh.9's job; the bead's code is
+            # not at fault, so it must not stay `failed` -- hand it back at
+            # review-ready with the reason noted.
+            self.beads.set_status(bead_id, bd.STATUS_REVIEW_READY)
+            self.beads.set_metadata(bead_id, {bd.META_STAGE: "finished"})
+            self.beads.note(
+                bead_id,
+                f"alloy: landing did not complete ({result.outcome}): {result.reason}",
+            )
+            raise EngineError(
+                f"landing {bead_id} did not complete ({result.outcome}): {result.reason}"
+            )
+
+        # The land run is done; `_settle` has parked the bead at
+        # on_success_status (review-ready). Now move the target branch.
+        owner_id = self._worktree_owner(bead)
+        branch = branch_name(owner_id)
+        target = config.landing.target
+        worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
+        merged = worktrees.merge_into_primary(branch, target)
+        if not merged.ok:
+            self.beads.set_status(bead_id, bd.STATUS_WAITING_HUMAN)
+            self.beads.set_metadata(bead_id, {bd.META_LAND_STATE: "parked"})
+            self.beads.note(bead_id, f"alloy: landing parked -- {merged.reason}")
+            raise EngineError(f"landing {bead_id} parked: {merged.reason}")
+
+        self.beads.set_metadata(bead_id, {
+            bd.META_LAND_STATE: "landed",
+            bd.META_LAND_SHA: merged.sha,
+        })
+        self.beads.note(
+            bead_id, f"alloy: landed {branch} into {target} as {merged.sha}"
+        )
+        self.beads.close(bead_id)
+        worktrees.remove(owner_id, force=True, delete_branch=True)
+        log.info("%s: landed %s into %s as %s", bead_id, branch, target, merged.sha)
+        return RunResult(bead_id, result.run_id, "landed",
+                         reason=result.reason, worktree=result.worktree)
 
     # -- remediation ------------------------------------------------------
 
