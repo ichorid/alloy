@@ -336,11 +336,7 @@ class Engine:
         config = self.load_config(recipe_name)
         worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
         if worktree is None:
-            owner_id = (
-                bead.metadata.get(bd.META_WORKTREE_OWNER)
-                or self.beads.epic_root(bead.id)
-                or bead.id
-            )
+            owner_id = self._worktree_owner(bead)
             worktree = worktrees.ensure(owner_id)
             if base_commit:
                 # Resume: the run recorded where this bead's work starts;
@@ -380,6 +376,14 @@ class Engine:
         return ctx
 
     # -- internals --------------------------------------------------------
+
+    def _worktree_owner(self, bead: Bead) -> str:
+        """The bead whose worktree/branch this bead's work lands on."""
+        return (
+            bead.metadata.get(bd.META_WORKTREE_OWNER)
+            or self.beads.epic_root(bead.id)
+            or bead.id
+        )
 
     async def _execute(
         self,
@@ -500,14 +504,21 @@ class Engine:
 
         if outcome == Outcome.DONE.value:
             self.store.finish_run(run_id, status=RUN_DONE, outcome=outcome, reason=reason)
-            self.beads.set_status(bead.id, config.on_success_status)
+            owner_id = self._worktree_owner(bead)
+            if owner_id != bead.id:
+                # Epic child / owner-shared bead: commit its work on the owner
+                # branch and close it; the owner worktree is never removed here.
+                ctx.worktrees.commit_wip(ctx.worktree, f"{bead.id}: {bead.title}")
+                self.beads.set_status(bead.id, bd.STATUS_DONE)
+            else:
+                self.beads.set_status(bead.id, config.on_success_status)
             self.beads.set_metadata(bead.id, {bd.META_STAGE: "finished"})
             self.beads.note(
                 bead.id,
                 f"alloy: {recipe_name} succeeded in {final.get('iteration', 0)} iteration(s) "
                 f"on branch {ctx.worktree.branch}. {reason}",
             )
-            if config.cleanup_worktree_on_success:
+            if config.cleanup_worktree_on_success and owner_id == bead.id:
                 ctx.worktrees.remove(bead.id)
         else:
             self.store.finish_run(run_id, status=RUN_FAILED, outcome=outcome, reason=reason)
