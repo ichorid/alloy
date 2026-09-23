@@ -26,6 +26,7 @@ _COLUMN_TIERS: dict[str, str] = {
 }
 
 _USAGE_BAR_WIDTH = 16
+LIMITS_HARNESS_WIDTH = max(len(name) for name in HARNESSES)
 _COLOR_GREEN = "#7ee787"
 _COLOR_YELLOW = "#e3b341"
 _COLOR_RED = "#f85149"
@@ -92,15 +93,21 @@ def limits_lines(snapshot: dict[str, Any]) -> list[str]:
     return [_limits_line(harness, limits[harness]) for harness in HARNESSES if harness in limits]
 
 
+def _limits_harness_label(harness: str) -> str:
+    """Fixed-width harness column so the first usage bar lines up across agents."""
+    return harness.ljust(LIMITS_HARNESS_WIDTH)
+
+
 def _limits_line(harness: str, sample: dict[str, Any]) -> str:
+    label = _limits_harness_label(harness)
     if not sample.get("available"):
         error = _text(sample.get("error"))
-        line = f"{harness}    [{_COLOR_RED}]unavailable: {error}[/]"
+        line = f"{label}  [{_COLOR_RED}]unavailable: {error}[/]"
         status = sample.get("status")
         if status:
             line += f" [{status}]"
         return line
-    parts = [harness]
+    parts = [label]
     for win in sample.get("windows") or []:
         parts.append(_limits_window_segment(win))
     line = "  ".join(parts)

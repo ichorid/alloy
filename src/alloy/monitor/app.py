@@ -36,6 +36,7 @@ class MonitorApp(App[None]):
         ("j,down", "cursor_down", "move"),
         ("k,up", "cursor_up", ""),
         ("enter,l", "toggle_detail", "Detail"),
+        ("r", "refresh", "Refresh"),
         ("q", "quit", "Quit"),
     ]
 
@@ -229,3 +230,9 @@ class MonitorApp(App[None]):
             return
         detail.display = True
         self._refresh_detail()
+
+    def action_refresh(self) -> None:
+        """Re-fetch the snapshot and, when configured, probe harness limits."""
+        self.refresh_snapshot()
+        if self.limits_source is not None:
+            self.refresh_limits()

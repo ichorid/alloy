@@ -472,6 +472,43 @@ async def test_a_raising_limits_source_leaves_the_previous_limits_text_unchanged
         assert _runs_table(app).row_count == 2
 
 
+async def test_r_key_refreshes_snapshot_and_reprobes_limits():
+    cached = _claude_limits(42.0)
+    snapshot_calls = 0
+    limits_calls = 0
+
+    def snapshot_source() -> dict:
+        nonlocal snapshot_calls
+        snapshot_calls += 1
+        return _snapshot(limits=cached, runs=[_run("run-1")])
+
+    def limits_source() -> dict:
+        nonlocal limits_calls
+        limits_calls += 1
+        return _claude_limits(55.0 + limits_calls)
+
+    app = MonitorApp(
+        snapshot_source=snapshot_source,
+        limits_source=limits_source,
+        interval=DISABLED_INTERVAL,
+        limits_interval=DISABLED_INTERVAL,
+    )
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert snapshot_calls == 1
+        assert limits_calls == 1
+        assert "56%" in _limits_text(app)
+
+        await pilot.press("r")
+        for worker in list(app.workers):
+            await worker.wait()
+        await pilot.pause()
+
+        assert snapshot_calls == 2
+        assert limits_calls == 2
+        assert "57%" in _limits_text(app)
+
+
 # -- CLI: `alloy monitor --once` (plain text, no --json) -----------------------
 
 

@@ -341,6 +341,57 @@ def test_limits_lines_on_empty_limits_returns_empty_list():
     assert limits_lines(snapshot) == []
 
 
+def test_limits_lines_align_first_window_across_harnesses():
+    from alloy.limits import window
+    from alloy.monitor.render import LIMITS_HARNESS_WIDTH, limits_lines
+
+    snapshot = _snapshot()
+    snapshot["limits"] = {
+        "claude": {
+            "harness": "claude",
+            "installed": True,
+            "available": True,
+            "fetched_at": "2026-09-23T10:00:00+00:00",
+            "as_of": "2026-09-23T10:00:00+00:00",
+            "source": "oauth-usage-api",
+            "error": None,
+            "status": None,
+            "windows": [window("five_hour", "5h", 42.0, None)],
+        },
+        "codex": {
+            "harness": "codex",
+            "installed": True,
+            "available": True,
+            "fetched_at": "2026-09-23T10:00:00+00:00",
+            "as_of": "2026-09-23T10:00:00+00:00",
+            "source": "session-rollout",
+            "error": None,
+            "status": None,
+            "windows": [window("primary", "5h", 7.0, None)],
+        },
+        "cursor": {
+            "harness": "cursor",
+            "installed": True,
+            "available": True,
+            "fetched_at": "2026-09-23T10:00:00+00:00",
+            "as_of": "2026-09-23T10:00:00+00:00",
+            "source": "dashboard-api",
+            "error": None,
+            "status": None,
+            "windows": [window("total", "cycle", 25.0, None)],
+        },
+    }
+
+    lines = limits_lines(snapshot)
+    labels = ("claude", "codex", "cursor")
+
+    assert len(lines) == 3
+    for line, harness in zip(lines, labels, strict=True):
+        assert line.startswith(harness.ljust(LIMITS_HARNESS_WIDTH) + "  ")
+    bar_starts = [line.index("[#7ee787]") for line in lines]
+    assert bar_starts[0] == bar_starts[1] == bar_starts[2]
+
+
 # -- alloy-o89.2: color-coded threshold bars in limits panel ------------------
 
 

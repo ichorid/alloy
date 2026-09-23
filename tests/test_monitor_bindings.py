@@ -14,7 +14,7 @@ from alloy.monitor import app as app_module
 from alloy.monitor import render as render_module
 from alloy.monitor.app import MonitorApp
 
-ALLOWED_ACTIONS = {"cursor_down", "cursor_up", "toggle_detail", "quit"}
+ALLOWED_ACTIONS = {"cursor_down", "cursor_up", "toggle_detail", "refresh", "quit"}
 FORBIDDEN_TOKENS = (
     "finish_run", "update_run", "create_run", "set_status", "set_metadata",
     "claim", "cancel(", "note(",
