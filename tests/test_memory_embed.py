@@ -12,6 +12,7 @@ import subprocess
 from datetime import date
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from alloy.cli import app
@@ -236,3 +237,70 @@ def test_memory_embed_acceptance_scenario(project, alloy_home, fake_bd):
     assert inside_stale not in third_text
     assert LESSON_BODY in third_text
     assert _bd_writes(fake_bd) == []
+
+
+# -- is_block_stale (alloy-4ef.20) -------------------------------------------
+
+
+def _import_is_block_stale():
+    from alloy.memory_embed import is_block_stale
+
+    return is_block_stale
+
+
+STALE_CHECK_TODAY = date(2026, 9, 23)
+
+
+def _agents_with_managed_block(
+    *,
+    reviewed: date = LAST_REVIEW,
+    lesson_body: str = LESSON_BODY,
+) -> str:
+    memory = _memory()
+    managed = render_embed_block(memory, MemorySpec())
+    managed = managed.replace(f"reviewed: {LAST_REVIEW.isoformat()}", f"reviewed: {reviewed.isoformat()}")
+    managed = managed.replace(LESSON_BODY, lesson_body)
+    return f"{INITIAL_AGENTS}\n{managed}\n"
+
+
+@pytest.fixture
+def embed_stale_today(monkeypatch):
+    """Pin ``date.today()`` inside memory_embed for age-threshold tests."""
+
+    monkeypatch.setattr(
+        "alloy.memory_embed.date",
+        type(
+            "_FixedDate",
+            (date,),
+            {"today": classmethod(lambda cls: STALE_CHECK_TODAY)},
+        ),
+    )
+
+
+def test_is_block_stale_false_when_file_has_no_managed_block():
+    is_block_stale = _import_is_block_stale()
+    assert is_block_stale(INITIAL_AGENTS, _memory(), LAST_REVIEW, MemorySpec()) is False
+
+
+def test_is_block_stale_false_when_block_matches_rendered_set(embed_stale_today):
+    is_block_stale = _import_is_block_stale()
+    file_text = _agents_with_managed_block()
+
+    assert is_block_stale(file_text, _memory(), LAST_REVIEW, MemorySpec()) is False
+
+
+def test_is_block_stale_true_when_block_content_differs_from_rendered_set(embed_stale_today):
+    is_block_stale = _import_is_block_stale()
+    file_text = _agents_with_managed_block(lesson_body="hand-edited inside markers")
+
+    assert is_block_stale(file_text, _memory(), LAST_REVIEW, MemorySpec()) is True
+
+
+def test_is_block_stale_true_when_reviewed_date_older_than_twice_review_every_days(
+    embed_stale_today,
+):
+    is_block_stale = _import_is_block_stale()
+    old_review = STALE_CHECK_TODAY.replace(day=1)  # 22 days before STALE_CHECK_TODAY
+    file_text = _agents_with_managed_block(reviewed=old_review)
+
+    assert is_block_stale(file_text, _memory(), old_review, MemorySpec()) is True
