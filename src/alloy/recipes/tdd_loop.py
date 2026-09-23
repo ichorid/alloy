@@ -1026,6 +1026,7 @@ def build_graph(ctx: RunContext):
                     reason=f"the tests role failed: {result.error}",
                     next_instructions="Resume when the harness is available again; "
                     "the tests stage runs again from scratch.",
+                    retry_at=_retry_at_iso(result),
                 ).model_dump(),
             }
         output = _tests_output_from(result)
@@ -1885,6 +1886,9 @@ def build_graph(ctx: RunContext):
                 "iteration": state.get("iteration", 0),
                 "last_check": _last_check_summary(state),
                 "worktree": str(ctx.worktree.path),
+                # journal 38: set when the harness said when it comes back;
+                # the scheduler resumes the run itself once it has passed.
+                "retry_at": decision.get("retry_at"),
             }
         )
         instructions = payload if isinstance(payload, str) else (payload or {}).get(
@@ -2073,6 +2077,12 @@ def _is_red(check: dict[str, Any]) -> bool:
     return result.required and result.runnable and not result.ok
 
 
+def _retry_at_iso(result) -> str | None:
+    """The harness's own "available again at" time, for the human-gate payload."""
+    retry_at = getattr(result, "retry_at", None)
+    return retry_at.isoformat() if retry_at is not None else None
+
+
 def _decision_from(result, state: TddState) -> JudgeDecision:
     if result.structured:
         try:
@@ -2084,6 +2094,7 @@ def _decision_from(result, state: TddState) -> JudgeDecision:
             decision="retry",
             reason=f"judge runner failed: {result.error}",
             next_instructions="Judge was unavailable; continue from the test output.",
+            retry_at=_retry_at_iso(result),
         )
     return JudgeDecision(
         decision="retry",

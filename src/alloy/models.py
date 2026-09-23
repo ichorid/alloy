@@ -81,6 +81,8 @@ class AgentResult(BaseModel):
     prompt_hash: str = ""
     error: str | None = None
     session_id: str | None = None
+    retry_at: datetime | None = None
+    """When a failed harness said it will be available again (see alloy.limits)."""
 
     @property
     def summary(self) -> str:
@@ -394,6 +396,9 @@ class JudgeDecision(BaseModel):
     reason: str = ""
     next_instructions: str = ""
     confidence: float = 0.0
+    retry_at: str | None = None
+    """Alloy-internal: ISO time a parked run may resume on its own. Never part
+    of the schema agents answer with."""
 
     @classmethod
     def schema_for_agents(cls) -> dict[str, Any]:

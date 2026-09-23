@@ -139,6 +139,8 @@ class Engine:
         self._refuse_if_live(bead_id, record)
         bead = self.beads.show(bead_id)
         pending = has_pending_interrupt(self.paths.workflows_db, record["thread_id"])
+        if record.get("retry_at"):
+            self.store.update_run(record["run_id"], retry_at=None)
         return await self._execute(
             bead,
             record["recipe"],
@@ -447,15 +449,17 @@ class Engine:
         pending = final.get("__interrupt__")
         if pending:
             payload = _interrupt_payload(pending)
+            retry_at = payload.get("retry_at") or None
             self.store.update_run(run_id, status=RUN_WAITING_HUMAN, stage="waiting-human",
-                                  pid=None)
+                                  pid=None, retry_at=retry_at)
             self.store.mark_paused(run_id)
             self.beads.set_status(bead.id, bd.STATUS_WAITING_HUMAN)
             self.beads.set_metadata(bead.id, {bd.META_STAGE: "waiting-human"})
+            scheduled = f"; the scheduler resumes it after {retry_at}" if retry_at else ""
             self.beads.note(
                 bead.id,
                 f"alloy: waiting for human -- {payload.get('reason', '')} "
-                f"(resume with `alloy resume {bead.id}`)",
+                f"(resume with `alloy resume {bead.id}`{scheduled})",
             )
             return RunResult(bead.id, run_id, Outcome.WAITING_HUMAN.value,
                              reason=str(payload.get("reason", "")), interrupt=payload,
