@@ -495,3 +495,57 @@ def test_status_color_maps_ready_to_dim_gray():
     from alloy.monitor.render import status_color
 
     assert status_color("ready") == "#8b949e"
+
+
+# -- alloy-o89.4: width-tiered column visibility --------------------------------
+
+
+def test_breakpoint_constants_are_named_and_exported():
+    from alloy.monitor.render import COMFORTABLE_WIDTH, WIDE_WIDTH
+
+    assert COMFORTABLE_WIDTH == 80
+    assert WIDE_WIDTH == 100
+
+
+def test_column_tiers_label_wide_only_columns():
+    from alloy.monitor.render import column_tier
+
+    for name in ("parent", "stage", "cons", "complexity"):
+        assert column_tier(name) == "wide"
+
+
+def test_column_tiers_label_comfortable_only_column():
+    from alloy.monitor.render import column_tier
+
+    assert column_tier("recipe") == "comfortable"
+
+
+def test_column_tiers_label_always_shown_columns():
+    from alloy.monitor.render import column_tier
+
+    always = {"bead", "status", "iter", "tests", "elapsed", "now", "tokens", "judge"}
+    for name in always:
+        assert column_tier(name) == "always"
+
+
+def test_visible_columns_at_wide_width_includes_every_column():
+    from alloy.monitor.render import COLUMNS, WIDE_WIDTH, visible_columns
+
+    assert visible_columns(WIDE_WIDTH) == COLUMNS
+
+
+def test_visible_columns_at_comfortable_width_omits_wide_only_columns():
+    from alloy.monitor.render import COLUMNS, COMFORTABLE_WIDTH, visible_columns
+
+    expected = tuple(name for name in COLUMNS if name not in {"parent", "stage", "cons", "complexity"})
+    assert visible_columns(COMFORTABLE_WIDTH) == expected
+    assert visible_columns(99) == expected
+
+
+def test_visible_columns_below_comfortable_width_also_omits_recipe():
+    from alloy.monitor.render import COLUMNS, visible_columns
+
+    expected = tuple(
+        name for name in COLUMNS if name not in {"parent", "stage", "cons", "complexity", "recipe"}
+    )
+    assert visible_columns(79) == expected

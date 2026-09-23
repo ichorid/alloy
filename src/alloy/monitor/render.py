@@ -15,6 +15,16 @@ from alloy.limits import HARNESSES
 COLUMNS = ("parent", "bead", "recipe", "status", "stage", "iter", "cons", "tests", "elapsed", "now",
            "tokens", "judge", "complexity")
 
+COMFORTABLE_WIDTH = 80
+WIDE_WIDTH = 100
+
+_WIDE_ONLY_COLUMNS = frozenset({"parent", "stage", "cons", "complexity"})
+_COMFORTABLE_ONLY_COLUMNS = frozenset({"recipe"})
+_COLUMN_TIERS: dict[str, str] = {
+    **{name: "wide" for name in _WIDE_ONLY_COLUMNS},
+    **{name: "comfortable" for name in _COMFORTABLE_ONLY_COLUMNS},
+}
+
 _USAGE_BAR_WIDTH = 16
 _COLOR_GREEN = "#7ee787"
 _COLOR_YELLOW = "#e3b341"
@@ -22,6 +32,21 @@ _COLOR_RED = "#f85149"
 _COLOR_CYAN = "#56b6c2"
 _COLOR_MAGENTA = "#d2a8ff"
 _COLOR_DIM = "#8b949e"
+
+
+def column_tier(name: str) -> str:
+    """Return the width tier for a column key: always, comfortable, or wide."""
+    return _COLUMN_TIERS.get(name, "always")
+
+
+def visible_columns(width: int) -> tuple[str, ...]:
+    """Column keys shown in DataTable#runs at the given terminal width."""
+    if width >= WIDE_WIDTH:
+        return COLUMNS
+    hidden = set(_WIDE_ONLY_COLUMNS)
+    if width < COMFORTABLE_WIDTH:
+        hidden |= _COMFORTABLE_ONLY_COLUMNS
+    return tuple(name for name in COLUMNS if name not in hidden)
 
 
 def header_line(snapshot: dict[str, Any]) -> str:

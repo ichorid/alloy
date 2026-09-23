@@ -151,6 +151,16 @@ def _cursor_run_id(table: DataTable) -> str:
     return key.row_key.value
 
 
+def _table_column_keys(table: DataTable) -> list[str]:
+    return [column.key.value for column in table.ordered_columns]
+
+
+def _expected_visible_column_keys(width: int) -> tuple[str, ...]:
+    from alloy.monitor.render import visible_columns
+
+    return visible_columns(width)
+
+
 # -- initial render -----------------------------------------------------------
 
 
@@ -374,7 +384,7 @@ async def test_blocked_run_status_cell_renders_with_status_color():
     async with app.run_test() as pilot:
         await pilot.pause()
         table = _runs_table(app)
-        status_col = COLUMNS.index("status")
+        status_col = table.get_column_index("status")
         cell = table.get_cell_at(Coordinate(row=0, column=status_col))
 
         assert isinstance(cell, Text)
@@ -391,7 +401,7 @@ async def test_done_run_row_is_selectable_and_detail_shows_bead_id():
         await pilot.press("j")
         await pilot.pause()
         assert table.cursor_row == 1
-        status_col = COLUMNS.index("status")
+        status_col = table.get_column_index("status")
         done_cell = table.get_cell_at(Coordinate(row=table.cursor_row, column=status_col))
         assert isinstance(done_cell, Text)
         assert str(done_cell) == "done"
@@ -574,3 +584,60 @@ def test_cli_monitor_once_no_limits_skips_probe_all(
     )
 
     assert result.exit_code == 0
+
+
+# -- alloy-o89.4: width-tiered column visibility in runs table ----------------
+
+
+async def test_runs_table_at_wide_width_shows_all_columns():
+    app = MonitorApp(snapshot_source=lambda: TWO_RUNS, interval=DISABLED_INTERVAL)
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        table = _runs_table(app)
+        assert _table_column_keys(table) == list(_expected_visible_column_keys(100))
+        assert len(_table_column_keys(table)) == len(COLUMNS)
+
+
+async def test_runs_table_at_comfortable_width_omits_wide_only_columns():
+    app = MonitorApp(snapshot_source=lambda: TWO_RUNS, interval=DISABLED_INTERVAL)
+    async with app.run_test(size=(99, 24)) as pilot:
+        await pilot.pause()
+        keys = _table_column_keys(_runs_table(app))
+        assert keys == list(_expected_visible_column_keys(99))
+        assert "parent" not in keys
+        assert "stage" not in keys
+        assert "cons" not in keys
+        assert "complexity" not in keys
+        assert "recipe" in keys
+
+
+async def test_runs_table_at_comfortable_lower_bound_keeps_recipe():
+    app = MonitorApp(snapshot_source=lambda: TWO_RUNS, interval=DISABLED_INTERVAL)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        keys = _table_column_keys(_runs_table(app))
+        assert keys == list(_expected_visible_column_keys(80))
+        assert "recipe" in keys
+        assert "parent" not in keys
+
+
+async def test_runs_table_below_comfortable_width_also_omits_recipe():
+    app = MonitorApp(snapshot_source=lambda: TWO_RUNS, interval=DISABLED_INTERVAL)
+    async with app.run_test(size=(79, 24)) as pilot:
+        await pilot.pause()
+        keys = _table_column_keys(_runs_table(app))
+        assert keys == list(_expected_visible_column_keys(79))
+        assert "recipe" not in keys
+        assert "parent" not in keys
+
+
+async def test_runs_table_columns_update_when_terminal_is_resized():
+    app = MonitorApp(snapshot_source=lambda: TWO_RUNS, interval=DISABLED_INTERVAL)
+    async with app.run_test(size=(100, 24)) as pilot:
+        await pilot.pause()
+        table = _runs_table(app)
+        assert _table_column_keys(table) == list(_expected_visible_column_keys(100))
+
+        await pilot.resize_terminal(79, 24)
+        await pilot.pause()
+        assert _table_column_keys(table) == list(_expected_visible_column_keys(79))
