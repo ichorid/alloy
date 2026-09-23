@@ -29,6 +29,7 @@ from langgraph.types import Send, interrupt
 from alloy.beads import LABEL_BUG, LABEL_HUMAN, META_DISCOVERED_IN_RUN, META_RECIPE
 from alloy.config import RoleSpec
 from alloy.models import (
+    CHECK_HINTS_KEY,
     AcceptanceVerdict,
     AgentResult,
     Attempt,
@@ -48,7 +49,10 @@ from alloy.models import (
     VerifierAction,
     clip,
     extract_bug_reports,
+    format_check_hints,
     next_level,
+    parse_check_hints,
+    with_provenance,
 )
 from alloy.diffs import clip_diff_per_file
 from alloy.prompts import assemble
@@ -85,6 +89,7 @@ class TddState(TypedDict, total=False):
 
     context: dict[str, Any]
     memory_block: str                          # rendered project memory, fixed at run start
+    memory_check_hints: str                    # stored alloy:check-hints body, fixed at run start
     complexity: str
     complexity_source: str
     retries_on_tier: int
@@ -996,7 +1001,8 @@ def build_graph(ctx: RunContext):
         reported_bugs = _capture_bugs("context", result, state, 0)
         packet = _context_from(result)
         packet.check_hints = _check_hints(
-            packet.check_hints, ctx.bead.check_hint, (ctx.worktree.path, ctx.worktrees.repo)
+            packet.check_hints, ctx.bead.check_hint, (ctx.worktree.path, ctx.worktrees.repo),
+            memory_hints=parse_check_hints(state.get("memory_check_hints", "")),
         )
         return {
             "reported_bugs": reported_bugs,
@@ -1959,11 +1965,32 @@ def build_graph(ctx: RunContext):
             state.get("decision") or {"decision": "abort", "reason": "no decision"}
         )
         outcome = Outcome.DONE if decision.decision == "done" else Outcome.FAILED
+        if outcome is Outcome.DONE:
+            remember_check_hints(state)
         return {
             "outcome": outcome.value,
             "outcome_reason": decision.reason,
             "stage": "finished",
         }
+
+    def remember_check_hints(state: TddState) -> None:
+        """Persist the commands the verifier could run in this DONE run as
+        alloy:check-hints for the next run on this repository. Nothing is
+        written when memory is off, no bd is bound, no check was runnable, or
+        the stored value already says the same thing."""
+        if ctx.beads is None or not ctx.recipe.memory.enabled:
+            return
+        checks = [CheckResult.model_validate(item) for item in state.get("checks") or []]
+        body = format_check_hints(checks)
+        if not body or body == state.get("memory_check_hints", ""):
+            return
+        try:
+            ctx.beads.remember(
+                CHECK_HINTS_KEY,
+                with_provenance(body, ctx.run_id, ctx.bead.id, utcnow().date()),
+            )
+        except Exception:
+            log.warning("could not remember %s", CHECK_HINTS_KEY, exc_info=True)
 
     graph = StateGraph(TddState)
     graph.add_node("context", gather_context)
@@ -2023,11 +2050,13 @@ def build_graph(ctx: RunContext):
 
 
 def initial_state(ctx: RunContext) -> TddState:
+    memory = ctx.project_memory()
     return TddState(
         bead_id=ctx.bead.id,
         run_id=ctx.run_id,
         title=ctx.bead.title,
-        memory_block=ctx.memory_block(),
+        memory_block=memory.render() if memory is not None else "",
+        memory_check_hints=memory.body_of(CHECK_HINTS_KEY) if memory is not None else "",
         iteration=0,
         consiliums=0,
         retries_on_tier=0,
@@ -2067,12 +2096,23 @@ def initial_state(ctx: RunContext) -> TddState:
     )
 
 
-def _check_hints(from_context: list[str], bead_hint: str | None, roots) -> list[str]:
-    """The operator's `alloy_test_cmd` hint comes first; autodetection from the
-    project layout (the worktree, then the repository it was cut from) fills in
-    only when the context role suggested nothing."""
-    hints = [normalize_command(hint) for hint in from_context if hint]
-    if not hints:
+def _check_hints(
+    from_context: list[str],
+    bead_hint: str | None,
+    roots,
+    memory_hints: list[str] | None = None,
+) -> list[str]:
+    """The operator's `alloy_test_cmd` hint comes first, then what the last
+    DONE run's verifier could run (alloy:check-hints), then the context role's
+    suggestions; autodetection from the project layout (the worktree, then the
+    repository it was cut from) fills in only when the context role suggested
+    nothing."""
+    hints: list[str] = []
+    for hint in [*(memory_hints or []), *from_context]:
+        hint = normalize_command(hint) if hint else ""
+        if hint and hint not in hints:
+            hints.append(hint)
+    if not any(from_context):
         for root in roots:
             for command in detect_commands(root):
                 command = normalize_command(command)

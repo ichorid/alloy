@@ -187,22 +187,28 @@ class RunContext:
 
     # -- project memory ---------------------------------------------------
 
-    def memory_block(self) -> str:
-        """The rendered project memory block for this run's prompts.
+    def project_memory(self) -> ProjectMemory | None:
+        """The project memories for this run, or None when memory is disabled,
+        no beads client is bound, or bd failed.
 
-        Read from `bd memories` once, at run start, by `initial_state`; the
-        result lives in graph state so resumes and every iteration reuse the
-        same snapshot. `memory.enabled: false` yields an empty block without
-        touching bd, and any bd failure degrades to an empty block."""
+        Read from `bd memories` once, at run start, by `initial_state`; what
+        the run needs from it lives in graph state so resumes and every
+        iteration reuse the same snapshot."""
         spec = self.recipe.memory
         if not spec.enabled or self.beads is None:
-            return ""
+            return None
         try:
             memories = self.beads.memories()
         except Exception:
             log.warning("bd memories failed; running without project memory", exc_info=True)
-            return ""
-        return ProjectMemory.from_raw(memories, spec).render()
+            return None
+        return ProjectMemory.from_raw(memories, spec)
+
+    def memory_block(self) -> str:
+        """The rendered project memory block for this run's prompts; empty
+        when there is no memory to render."""
+        memory = self.project_memory()
+        return memory.render() if memory is not None else ""
 
     # -- project context --------------------------------------------------
 

@@ -619,6 +619,12 @@ class ProjectMemory:
 
         return self._rendered
 
+    def body_of(self, key: str) -> str:
+        """The provenance-stripped body stored under ``key``; "" when absent."""
+
+        entry = self.entries.get(key)
+        return entry.body if entry is not None else ""
+
 
 def _render_block(entries: list[MemoryEntry]) -> str:
     if not entries:
@@ -627,3 +633,43 @@ def _render_block(entries: list[MemoryEntry]) -> str:
     for entry in sorted(entries, key=lambda entry: entry.key):
         lines.extend((f"### {entry.key}", entry.body, ""))
     return "\n".join(lines).rstrip("\n")
+
+
+# ---------------------------------------------------------------------------
+# alloy:check-hints (alloy-4ef.9)
+# ---------------------------------------------------------------------------
+
+CHECK_HINTS_KEY = "alloy:check-hints"
+"""The verifier's runnable check commands from the last DONE run on this repo."""
+
+MAX_CHECK_HINTS = 8
+
+
+def format_check_hints(checks: list[CheckResult]) -> str:
+    """One ``<kind>: <command>`` line per distinct runnable check, most recent
+    first (a command that ran twice keeps its latest kind), capped at
+    MAX_CHECK_HINTS. Empty when nothing was runnable."""
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    for check in reversed(checks):
+        command = check.command.strip()
+        if not check.runnable or not command or command in seen:
+            continue
+        seen.add(command)
+        lines.append(f"{check.kind}: {command}")
+        if len(lines) == MAX_CHECK_HINTS:
+            break
+    return "\n".join(lines)
+
+
+def parse_check_hints(body: str) -> list[str]:
+    """The commands of a stored alloy:check-hints body, in stored order."""
+
+    commands: list[str] = []
+    for line in body.splitlines():
+        kind, sep, command = line.partition(":")
+        command = command.strip()
+        if sep and kind.strip() in CHECK_KINDS and command and command not in commands:
+            commands.append(command)
+    return commands
