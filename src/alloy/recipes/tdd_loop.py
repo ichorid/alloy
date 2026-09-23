@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import operator
+from dataclasses import replace
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -193,10 +194,24 @@ Return complexity, reason and confidence in the required structured output.
 
 
 def tests_prompt(
-    brief: str, acceptance: str, context: dict[str, Any], instructions: str = ""
+    brief: str,
+    acceptance: str,
+    context: dict[str, Any],
+    instructions: str = "",
+    *,
+    resumed: bool = False,
 ) -> str:
+    """`resumed` is the continuation variant sent into the tests writer's own
+    session: the brief and repository context are already in its window, so
+    only the baseline failure explanation and the rules are repeated."""
     required = f"\n## Required changes this iteration\n{instructions}\n" if instructions else ""
-    return f"""Write failing tests for this task. Do not implement the behavior itself.
+    if resumed:
+        packet = f"""Write failing tests for this task -- continuing in your session: the task brief,
+acceptance criteria and repository context are the ones you already have. Do not implement
+the behavior itself.
+{required}"""
+    else:
+        packet = f"""Write failing tests for this task. Do not implement the behavior itself.
 
 {brief}
 
@@ -205,7 +220,8 @@ def tests_prompt(
 
 ## Repository context
 {_render_context(context)}
-{required}
+{required}"""
+    return f"""{packet}
 Requirements:
 - Add tests that encode the acceptance criteria, following this repo's existing test conventions.
 - The tests must fail right now, because the behavior does not exist yet.
@@ -579,7 +595,12 @@ def verifier_prompt(
     history: list[dict[str, Any]],
     baseline_checks: list[dict[str, Any]] | None = None,
     instructions: str = "",
+    *,
+    resumed: bool = False,
 ) -> str:
+    """`resumed` is the continuation variant sent into the tests writer's own
+    session: it drops the task brief, acceptance criteria and repository context
+    (already in the window) and keeps the evidence, the diff and the budget."""
     results = [CheckResult.model_validate(item) for item in checks_this_run]
     if results:
         last = results[-1]
@@ -592,17 +613,24 @@ def verifier_prompt(
             )
     else:
         last_text = "(nothing has run yet this run)"
-    return f"""You are choosing the next verification check for a coding task. You are read-only:
-you cannot edit code and you never run anything yourself. Alloy runs the one command you
-name, in the worktree root, exactly as written, and shows you the result.
-
-{brief}
+    if resumed:
+        task = (
+            "This continues your session: the task brief, acceptance criteria and repository "
+            "context are the ones you already have, and the tests are the ones you wrote."
+        )
+    else:
+        task = f"""{brief}
 
 ## Acceptance criteria
 {acceptance or "(none stated)"}
 
 ## Repository context
-{_render_context(context)}
+{_render_context(context)}"""
+    return f"""You are choosing the next verification check for a coding task. You are read-only:
+you cannot edit code and you never run anything yourself. Do not modify any file. Alloy runs
+the one command you name, in the worktree root, exactly as written, and shows you the result.
+
+{task}
 
 ## Baseline commands (the tests role's targeted checks; red before implementation)
 {_render_checks(baseline_checks or []) or "(none)"}
@@ -789,12 +817,65 @@ async def classify(
         result = await ctx.call(
             role, spec, prompt, schema=model_cls.schema_for_agents(), iteration=iteration
         )
+    except Exception as exc:
+        default.reason = f"{role} failed: {exc}"
+        return default
+    return answer_of(role, result, model_cls=model_cls, default=default)
+
+
+def answer_of(role: str, result: AgentResult, *, model_cls, default):
+    """`classify`'s validation step for a call made elsewhere."""
+    try:
         if not result.ok:
             raise ValueError(result.error or result.summary)
         return model_cls.model_validate(result.structured)
     except Exception as exc:
         default.reason = f"{role} failed: {exc}"
         return default
+
+
+def resumable_session(spec: RoleSpec, session: dict[str, Any] | None) -> str | None:
+    """The tests writer's session id, if `spec`'s primary runner is the harness
+    that opened it -- a cursor session cannot be resumed by claude."""
+    if not session or not session.get("session_id"):
+        return None
+    if session.get("runner") != spec.runner:
+        return None
+    return str(session["session_id"])
+
+
+def was_resumed(result: AgentResult) -> bool:
+    return bool((result.usage or {}).get("resumed"))
+
+
+async def call_in_session(
+    ctx: RunContext,
+    role: str,
+    spec: RoleSpec,
+    prompt: str,
+    resumed_prompt: str,
+    *,
+    session_id: str | None,
+    schema: dict[str, Any] | None = None,
+    iteration: int = 0,
+) -> AgentResult:
+    """Call `role` inside the tests writer's session when `session_id` is set,
+    else fresh with the full `prompt`.
+
+    A resumed call that fails is retried once fresh, through the role's normal
+    fallback chain; the ledger's usage_json `resumed` says which happened."""
+    if session_id is not None:
+        result = await ctx.call(
+            role, replace(spec, fallback=None), resumed_prompt,
+            schema=schema, iteration=iteration, resume_session=session_id,
+        )
+        if result.ok:
+            return result
+        log.warning(
+            "%s: resuming session %s on %s failed (%s); running fresh",
+            role, session_id, spec.label, (result.error or f"exit {result.exit_code}")[:200],
+        )
+    return await ctx.call(role, spec, prompt, schema=schema, iteration=iteration)
 
 
 class TriageFailure:
@@ -882,15 +963,20 @@ def build_graph(ctx: RunContext):
     async def write_tests(state: TddState) -> dict[str, Any]:
         ctx.set_stage("tests")
         spec = ctx.recipe.role("tests")
-        result = await ctx.call(
-            "tests",
-            spec,
-            tests_prompt(
-                ctx.bead.task_brief(),
-                ctx.bead.acceptance_criteria,
-                state.get("context", {}),
-                state.get("instructions", ""),
-            ),
+        # A repair pass (green or unrunnable baseline) continues the session
+        # that wrote the tests; the first pass has no session yet.
+        session_id = resumable_session(spec, state.get("tests_session"))
+        prompt_args = (
+            ctx.bead.task_brief(),
+            ctx.bead.acceptance_criteria,
+            state.get("context", {}),
+            state.get("instructions", ""),
+        )
+        result = await call_in_session(
+            ctx, "tests", spec,
+            tests_prompt(*prompt_args),
+            tests_prompt(*prompt_args, resumed=True),
+            session_id=session_id,
             schema=TestsOutput.schema_for_agents(),
             iteration=0,
         )
@@ -1244,6 +1330,7 @@ def build_graph(ctx: RunContext):
         iteration = state.get("iteration", 0)
         ctx.set_stage("verify", iteration=iteration)
         spec = ctx.recipe.role("verifier")
+        tests_session = state.get("tests_session")
         per_iteration = ctx.recipe.verification.max_checks_per_iteration
         allowed_total = ctx.total_checks_allowed(state)
         checks = list(state.get("checks") or [])
@@ -1281,23 +1368,62 @@ def build_graph(ctx: RunContext):
                 break
             failure = VerifierAction(action="stop")
             diff = ctx.diff()
-            action = await classify(
-                ctx, "verifier", spec,
-                verifier_prompt(
-                    ctx.bead.task_brief(),
-                    ctx.bead.acceptance_criteria,
-                    state.get("context", {}),
-                    diff,
-                    ctx.worktrees.changed_files(ctx.worktree),
-                    checks,
-                    iteration,
-                    per_iteration - iteration_checks,
-                    allowed_total - total,
-                    state.get("attempts", []),
-                    baseline_checks=state.get("baseline_checks", []),
-                    instructions=state.get("instructions", ""),
-                ),
-                model_cls=VerifierAction, default=failure, iteration=iteration,
+            changed_before = ctx.worktrees.changed_files(ctx.worktree)
+            prompt_args = (
+                ctx.bead.task_brief(),
+                ctx.bead.acceptance_criteria,
+                state.get("context", {}),
+                diff,
+                changed_before,
+                checks,
+                iteration,
+                per_iteration - iteration_checks,
+                allowed_total - total,
+                state.get("attempts", []),
+            )
+            prompt_kwargs = dict(
+                baseline_checks=state.get("baseline_checks", []),
+                instructions=state.get("instructions", ""),
+            )
+            # The verifier continues the tests writer's session: the agent that
+            # wrote the tests chooses how to verify them, context intact.
+            session_id = resumable_session(spec, tests_session)
+            try:
+                result = await call_in_session(
+                    ctx, "verifier", spec,
+                    verifier_prompt(*prompt_args, **prompt_kwargs),
+                    verifier_prompt(*prompt_args, **prompt_kwargs, resumed=True),
+                    session_id=session_id,
+                    schema=VerifierAction.schema_for_agents(),
+                    iteration=iteration,
+                )
+            except Exception as exc:
+                failure.reason = f"verifier failed: {exc}"
+                result = None
+            if session_id is not None and (result is None or not was_resumed(result)):
+                # The session is gone (or the harness refused it): stop paying
+                # for a failed resume before every fresh call.
+                tests_session = None
+                update["tests_session"] = None
+            # The verifier is read-only by contract; an edit would let it pass
+            # or fail the task for the wrong reason, so a human decides.
+            changed_after = ctx.worktrees.changed_files(ctx.worktree)
+            if changed_after != changed_before or ctx.diff() != diff:
+                touched = sorted(set(changed_after) ^ set(changed_before)) or changed_after
+                update.update(
+                    verify_route="human_gate",
+                    resume_to="implement",
+                    iteration_checks=iteration_checks,
+                    decision=JudgeDecision(
+                        decision="human",
+                        reason="verifier modified the worktree: " + ", ".join(touched),
+                        next_instructions="Revert or keep the verifier's edits, then "
+                        "resume; the implementer runs again.",
+                    ).model_dump(),
+                )
+                return update
+            action = failure if result is None else answer_of(
+                "verifier", result, model_cls=VerifierAction, default=failure
             )
             if action is failure or (action.action == "run" and not action.command.strip()):
                 why = failure.reason if action is failure else \
