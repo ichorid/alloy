@@ -230,6 +230,44 @@ def test_schema_instructions_include_the_schema():
     assert "decision" in schema_instructions(SCHEMA)
 
 
+ROLE_PROMPT = "You are judging whether this is complete."
+
+
+@pytest.mark.parametrize(
+    "runner_name",
+    ["codex", "cursor", "cursor-plan", "codex-readonly"],
+)
+def test_build_prompt_prepends_schema_for_non_native_runners(runner_name):
+    runner = RunnerRegistry().get(runner_name)
+    built = runner.build_prompt(ROLE_PROMPT, SCHEMA)
+    schema_block = schema_instructions(SCHEMA)
+    assert built.startswith(schema_block)
+    assert built.endswith(ROLE_PROMPT)
+
+
+def test_claude_build_prompt_unchanged_with_structured_schema():
+    runner = RunnerRegistry().get("claude")
+    assert runner.build_prompt(ROLE_PROMPT, SCHEMA) == ROLE_PROMPT
+    assert runner.build_prompt(ROLE_PROMPT, None) == ROLE_PROMPT
+
+
+def test_extract_json_object_parses_fixture_with_schema_preamble():
+    output = schema_instructions(SCHEMA) + '{"decision": "done"}'
+    assert extract_json_object(output) == {"decision": "done"}
+
+
+async def test_text_schema_runner_prompt_starts_with_schema_instructions(
+    fake_harnesses, project, tmp_path
+):
+    fake_harnesses.configure({"judge": {"structured": {"decision": "retry"}}})
+    registry = RunnerRegistry(log_dir=tmp_path / "logs")
+    await registry.get("codex").run(ROLE_PROMPT, project, structured_schema=SCHEMA)
+    call = fake_harnesses.calls_for("judge")[0]
+    schema_block = schema_instructions(SCHEMA)
+    assert call["prompt"].startswith(schema_block)
+    assert call["prompt"].endswith(ROLE_PROMPT)
+
+
 def test_claude_build_command_includes_effort_when_set():
     runner = RunnerRegistry().get("claude")
     argv = runner.build_command("hi", model="haiku", effort="low", structured_schema=None)

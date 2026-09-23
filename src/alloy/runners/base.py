@@ -104,7 +104,8 @@ def _failure_message(text: str, stderr: str, exit_code: int) -> str:
 
 
 def schema_instructions(schema: dict[str, Any]) -> str:
-    """Prompt suffix for harnesses without native structured output."""
+    """Prompt prefix for harnesses without native structured output. It goes
+    before the role text so it lands in the cacheable static prefix."""
     return (
         "\n\n---\nRespond with a single JSON object and nothing else -- no prose "
         "before or after, no markdown fence. It must validate against this schema:\n"
@@ -185,7 +186,7 @@ class CLIRunner:
 
     def build_prompt(self, prompt: str, structured_schema: dict | None) -> str:
         if structured_schema and not self.supports_native_schema:
-            return prompt + schema_instructions(structured_schema)
+            return schema_instructions(structured_schema) + prompt
         return prompt
 
     def parse(self, stdout: str, stderr: str, exit_code: int) -> tuple:
