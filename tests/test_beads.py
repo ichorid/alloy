@@ -437,3 +437,114 @@ def test_epic_for_returns_epic_id_for_grandchild(read_client, fake_bd):
     })
 
     assert read_client.epic_for("grand-1") == "epic-1"
+
+
+# -- fake-bd read helpers (alloy-vrh.3) ------------------------------------
+
+
+def test_epic_root_returns_top_epic_for_grandchild_under_sub_epic(read_client, fake_bd):
+    fake_bd.configure({
+        "shows": {
+            "epic-a": {"id": "epic-a", "title": "Top Epic", "issue_type": "epic"},
+            "sub-epic-b": {
+                "id": "sub-epic-b",
+                "title": "Sub Epic",
+                "issue_type": "epic",
+                "parent": "epic-a",
+            },
+            "grand-1": {
+                "id": "grand-1",
+                "title": "Grandchild task",
+                "issue_type": "task",
+                "parent": "sub-epic-b",
+            },
+        },
+    })
+
+    assert read_client.epic_root("grand-1") == "epic-a"
+
+
+def test_epic_root_returns_none_for_standalone_bead(read_client, fake_bd):
+    fake_bd.configure({
+        "shows": {
+            "standalone": {"id": "standalone", "title": "Lonely task", "issue_type": "task"},
+        },
+    })
+
+    assert read_client.epic_root("standalone") is None
+
+
+def test_epic_root_returns_none_on_bd_failure(read_client, fake_bd):
+    fake_bd.configure({"shows": {}})
+
+    assert read_client.epic_root("missing-bead") is None
+
+
+def test_open_descendants_lists_open_non_epic_descendants(read_client, fake_bd):
+    fake_bd.configure({
+        "beads": [
+            {
+                "id": "sub-epic-b",
+                "title": "Sub Epic",
+                "issue_type": "epic",
+                "status": "open",
+                "parent": "epic-a",
+            },
+            {
+                "id": "task-open-1",
+                "title": "Open under sub",
+                "issue_type": "task",
+                "status": "open",
+                "parent": "sub-epic-b",
+            },
+            {
+                "id": "task-closed",
+                "title": "Closed under sub",
+                "issue_type": "task",
+                "status": "closed",
+                "parent": "sub-epic-b",
+            },
+            {
+                "id": "task-open-2",
+                "title": "Open under epic",
+                "issue_type": "task",
+                "status": "open",
+                "parent": "epic-a",
+            },
+            {
+                "id": "other-root",
+                "title": "Unrelated",
+                "issue_type": "task",
+                "status": "open",
+                "parent": "other-epic",
+            },
+        ],
+    })
+
+    descendants = read_client.open_descendants("epic-a")
+
+    assert {bead.id for bead in descendants} == {"task-open-1", "task-open-2"}
+
+
+def test_open_descendants_returns_empty_on_bd_failure(read_client, fake_bd):
+    fake_bd.configure({
+        "beads": [
+            {
+                "id": "child-1",
+                "title": "Child",
+                "issue_type": "task",
+                "status": "open",
+                "parent": "epic-a",
+            },
+        ],
+    })
+    original_json = read_client._json
+
+    def failing_json(args):
+        if args and args[0] == "list":
+            raise BeadsError("bd list failed")
+        return original_json(args)
+
+    read_client._json = failing_json
+
+    assert read_client.open_descendants("epic-a") == []
