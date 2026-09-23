@@ -29,7 +29,7 @@ from alloy.memory_schedule import (
 )
 from alloy.models import DEFAULT_RECIPE_KEY, EMBED_STALE_KEY, ProjectMemory, utcnow
 from alloy.paths import AlloyPaths
-from alloy.store import RUN_RUNNING, RUN_WAITING_HUMAN
+from alloy.store import RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN
 
 DEFAULT_POLL_SECONDS = 15.0
 HUMAN_RESUME_MEMORY_PREFIX = "alloy:human:"
@@ -54,6 +54,7 @@ class Scheduler:
     _current: "asyncio.Task | None" = field(default=None, init=False)
     _default_recipe: str | None = field(default=None, init=False)
     _unknown_default_recipe: str | None = field(default=None, init=False)
+    _epic_block_logged: set[str] = field(default_factory=set, init=False)
 
     # -- lifecycle --------------------------------------------------------
 
@@ -246,8 +247,40 @@ class Scheduler:
         for bead in self.engine.beads.ready(
             recipe=self.recipe_filter, include_unassigned=self._default_recipe is not None,
         ):
-            if (bead.recipe or self._default_recipe) in known:
-                return bead
+            if (bead.recipe or self._default_recipe) not in known:
+                continue
+            if self._epic_dispatch_blocked(bead.id):
+                continue
+            return bead
+        return None
+
+    def _epic_dispatch_blocked(self, bead_id: str) -> bool:
+        """True when an epic child must wait for a sibling or its own prior run."""
+        epic_id = self.engine.beads.epic_root(bead_id)
+        if epic_id is None:
+            return False
+        blocker = self._epic_blocking_sibling(epic_id)
+        if blocker is not None:
+            if blocker not in self._epic_block_logged:
+                log.info(
+                    "skipping epic children: %s blocks dispatch",
+                    blocker,
+                )
+                self._epic_block_logged.add(blocker)
+            return True
+        latest = self.engine.store.latest_run_for_bead(bead_id)
+        return latest is not None and latest["status"] == RUN_DONE
+
+    def _epic_blocking_sibling(self, epic_id: str) -> str | None:
+        """Return a descendant id whose run holds the shared epic worktree."""
+        for sibling in self.engine.beads.open_descendants(epic_id):
+            run = self.engine.store.latest_run_for_bead(sibling.id)
+            if run is None:
+                continue
+            if run["status"] in (RUN_RUNNING, RUN_WAITING_HUMAN):
+                return sibling.id
+            if run["status"] == RUN_FAILED and _worktree_dirty(run.get("worktree")):
+                return sibling.id
         return None
 
     def due_resume(self) -> dict | None:
@@ -353,6 +386,28 @@ def read_session(paths: AlloyPaths) -> dict | None:
     if not isinstance(data, dict) or set(data.keys()) != {"pid", "started_at", "ended_at"}:
         return None
     return data
+
+
+def _worktree_dirty(worktree: str | None) -> bool:
+    """True when the path has uncommitted git changes (porcelain output)."""
+    if not worktree:
+        return False
+    path = Path(worktree)
+    if not path.is_dir():
+        return False
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(path),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    if proc.returncode != 0:
+        return False
+    return bool(proc.stdout.strip())
 
 
 def _parse_day(value: str | None) -> date | None:

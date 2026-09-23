@@ -23,7 +23,7 @@ alloy = "alloy.cli:app"
 alloy_xdist_options = "alloy.pytest_xdist_options"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "pytest-xdist>=3.6"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "pytest-xdist>=3.6", "ruff>=0.9"]
 
 [build-system]
 requires = ["hatchling"]
@@ -41,3 +41,6 @@ addopts = ["-n", "auto"]
 # install points at the main checkout, so inside an Alloy worktree a bare
 # `import alloy` would test main's code; this puts ./src ahead of it.
 pythonpath = ["src"]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
