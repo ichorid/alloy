@@ -742,6 +742,10 @@ def recipes_command(
             for spec in config.consilium.critics
         ]
         entry["limits"] = config.limits.__dict__
+        entry["landing"] = {
+            "mode": config.landing.mode,
+            "target": config.landing.target,
+        }
         entries.append(entry)
 
     if json:

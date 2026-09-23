@@ -225,6 +225,29 @@ class MemorySpec:
 
 
 @dataclass(frozen=True)
+class LandingSpec:
+    mode: str = "off"
+    target: str = "main"
+
+    @classmethod
+    def parse(cls, raw: dict[str, Any] | None) -> "LandingSpec":
+        if raw is not None and not isinstance(raw, dict):
+            raise ConfigError(f"landing must be a mapping: {raw!r}")
+        raw = raw or {}
+        defaults = cls()
+        unknown = raw.keys() - defaults.__dict__.keys()
+        if unknown:
+            raise ConfigError(f"unknown landing keys: {', '.join(sorted(map(repr, unknown)))}")
+        mode = raw.get("mode", defaults.mode)
+        if mode not in ("off", "auto"):
+            raise ConfigError(f"invalid landing.mode: {mode!r}")
+        target = raw.get("target", defaults.target)
+        if not isinstance(target, str):
+            raise ConfigError(f"invalid landing.target: {target!r}")
+        return cls(mode=mode, target=target)
+
+
+@dataclass(frozen=True)
 class RecipeConfig:
     name: str
     roles: dict[str, RoleSpec]
@@ -237,6 +260,7 @@ class RecipeConfig:
     source_path: Path | None = None
     complexity: ComplexitySpec = field(default_factory=ComplexitySpec)
     memory: MemorySpec = field(default_factory=MemorySpec)
+    landing: LandingSpec = field(default_factory=LandingSpec)
 
     def role(self, name: str) -> RoleSpec:
         try:
@@ -279,6 +303,7 @@ class RecipeConfig:
             limits=Limits.parse(raw.get("limits")),
             verification=VerificationSpec.parse(raw.get("verification"), legacy=legacy_verify),
             memory=MemorySpec.parse(raw.get("memory")),
+            landing=LandingSpec.parse(raw.get("landing")),
             runners=dict(raw.get("runners") or {}),
             on_success_status=raw.get("on_success_status", "review-ready"),
             cleanup_worktree_on_success=bool(raw.get("cleanup_worktree_on_success", False)),

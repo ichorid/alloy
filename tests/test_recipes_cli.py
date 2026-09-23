@@ -81,6 +81,17 @@ def _estimate_script(**overrides):
 # -- alloy recipes --json complexity -----------------------------------------
 
 
+def test_recipes_json_exports_landing_mode_and_target(project, alloy_home):
+    result = _invoke("recipes", "--json", project=project, alloy_home=alloy_home)
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    for entry in payload["recipes"]:
+        landing = entry["landing"]
+        assert landing["mode"] == "auto"
+        assert landing["target"] == "main"
+
+
 def test_recipes_json_exports_complexity_tiers(project, alloy_home, fake_harnesses):
     result = _invoke("recipes", "--json", project=project, alloy_home=alloy_home)
 

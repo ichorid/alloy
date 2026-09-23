@@ -10,6 +10,9 @@ name: tdd-loop-jev
 # Not exercised by the test suite for the reason stated in tests/conftest.py --
 # no test calls a real model; see tests/test_jev.py for the mocked coverage.
 
+landing:
+  mode: auto
+
 complexity:
   routing: live  # live selects tiers for tiered roles; shadow would estimate and record only
   escalate_after_retries: 2
