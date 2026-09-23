@@ -22,6 +22,7 @@ from alloy.models import (
     AgentResult,
     CheckRequest,
     CheckResult,
+    ProjectMemory,
     ProjectSnapshot,
     RunnerUnavailable,
     utcnow,
@@ -183,6 +184,25 @@ class RunContext:
         if self.remediator is None:
             raise RuntimeError("no remediator bound")
         return await self.remediator(bug_bead_id)
+
+    # -- project memory ---------------------------------------------------
+
+    def memory_block(self) -> str:
+        """The rendered project memory block for this run's prompts.
+
+        Read from `bd memories` once, at run start, by `initial_state`; the
+        result lives in graph state so resumes and every iteration reuse the
+        same snapshot. `memory.enabled: false` yields an empty block without
+        touching bd, and any bd failure degrades to an empty block."""
+        spec = self.recipe.memory
+        if not spec.enabled or self.beads is None:
+            return ""
+        try:
+            memories = self.beads.memories()
+        except Exception:
+            log.warning("bd memories failed; running without project memory", exc_info=True)
+            return ""
+        return ProjectMemory.from_raw(memories, spec).render()
 
     # -- project context --------------------------------------------------
 

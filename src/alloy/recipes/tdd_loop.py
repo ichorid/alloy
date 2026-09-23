@@ -84,6 +84,7 @@ class TddState(TypedDict, total=False):
     title: str
 
     context: dict[str, Any]
+    memory_block: str                          # rendered project memory, fixed at run start
     complexity: str
     complexity_source: str
     retries_on_tier: int
@@ -176,6 +177,15 @@ def _run_layer(context: dict[str, Any] | None) -> str:
     return f"## Repository context\n{_render_context(context)}"
 
 
+BEAD_DESIGN_OUTRANKS_MEMORY = "Bead design notes outrank project memory."
+
+
+def _project_layer(memory: str) -> str:
+    """The rendered project memory block plus the one sentence that ranks it
+    below the bead's own design notes; empty when there is no memory."""
+    return f"{memory}\n\n{BEAD_DESIGN_OUTRANKS_MEMORY}" if memory else ""
+
+
 def _diff_section(diff: str) -> str:
     clipped = clip_diff(diff).rstrip("\n")
     return f"## Current diff\n```diff\n{clipped}\n```"
@@ -195,8 +205,10 @@ Produce a context packet:
 {BUG_PROTOCOL}"""
 
 
-def context_prompt(brief: str, acceptance: str) -> str:
-    return assemble(CONTEXT_STATIC, "", "", _task_layer(brief, acceptance), "").text
+def context_prompt(brief: str, acceptance: str, *, memory: str = "") -> str:
+    return assemble(
+        CONTEXT_STATIC, _project_layer(memory), "", _task_layer(brief, acceptance), ""
+    ).text
 
 
 ESTIMATE_STATIC = """You are estimating how hard this task is
@@ -208,9 +220,15 @@ You are read-only: do not modify any file. Choose one complexity level:
 Return complexity, reason and confidence in the required structured output."""
 
 
-def estimate_prompt(brief: str, acceptance: str, context: dict[str, Any]) -> str:
+def estimate_prompt(
+    brief: str, acceptance: str, context: dict[str, Any], *, memory: str = ""
+) -> str:
     return assemble(
-        ESTIMATE_STATIC, "", _run_layer(context), _task_layer(brief, acceptance), ""
+        ESTIMATE_STATIC,
+        _project_layer(memory),
+        _run_layer(context),
+        _task_layer(brief, acceptance),
+        "",
     ).text
 
 
@@ -245,6 +263,7 @@ def tests_prompt(
     context: dict[str, Any],
     instructions: str = "",
     *,
+    memory: str = "",
     resumed: bool = False,
 ) -> str:
     """`resumed` is the continuation variant sent into the tests writer's own
@@ -258,7 +277,7 @@ def tests_prompt(
         volatile.append(f"## Required changes this iteration\n{instructions}")
     return assemble(
         TESTS_STATIC,
-        "",
+        _project_layer(memory),
         "" if resumed else _run_layer(context),
         "" if resumed else _task_layer(brief, acceptance),
         "\n\n".join(volatile),
@@ -299,6 +318,7 @@ def implement_prompt(
     *,
     diff: str = "",
     previous_instructions: str = "",
+    memory: str = "",
 ) -> str:
     task = [_task_layer(brief, acceptance)]
     if baseline_checks:
@@ -321,7 +341,11 @@ def implement_prompt(
     if instructions:
         volatile.append(f"## Required changes this iteration\n{instructions}")
     return assemble(
-        IMPLEMENT_STATIC, "", _run_layer(context), "\n\n".join(task), "\n\n".join(volatile)
+        IMPLEMENT_STATIC,
+        _project_layer(memory),
+        _run_layer(context),
+        "\n\n".join(task),
+        "\n\n".join(volatile),
     ).text
 
 
@@ -548,6 +572,7 @@ def judge_prompt(
     limits_note: str,
     verifier_stop: dict[str, Any] | None = None,
     changed_tests: list[str] | None = None,
+    memory: str = "",
 ) -> str:
     volatile = f"""{_diff_section(diff)}
 
@@ -563,7 +588,11 @@ def judge_prompt(
 ## Budget
 iteration {iteration}; {limits_note}"""
     return assemble(
-        JUDGE_STATIC, "", _run_layer(context), _task_layer(brief, acceptance), volatile
+        JUDGE_STATIC,
+        _project_layer(memory),
+        _run_layer(context),
+        _task_layer(brief, acceptance),
+        volatile,
     ).text
 
 
@@ -638,6 +667,7 @@ def verifier_prompt(
     baseline_checks: list[dict[str, Any]] | None = None,
     instructions: str = "",
     *,
+    memory: str = "",
     resumed: bool = False,
 ) -> str:
     """`resumed` is the continuation variant sent into the tests writer's own
@@ -688,7 +718,7 @@ iteration {iteration}; {checks_left_iteration} more check(s) allowed this iterat
 {checks_left_run} more in this run"""
     if resumed:
         volatile = f"{VERIFIER_RESUMED}\n\n{volatile}"
-    return assemble(VERIFIER_STATIC, "", run, task, volatile).text
+    return assemble(VERIFIER_STATIC, _project_layer(memory), run, task, volatile).text
 
 
 CRITIC_STATIC = """You are one of several independent critics reviewing a stuck coding task.
@@ -817,7 +847,7 @@ def _evidence_packet(state: TddState, ctx: RunContext, diff: str) -> str:
     return str(
         assemble(
             "",
-            "",
+            _project_layer(state.get("memory_block", "")),
             _run_layer(state.get("context")),
             _task_layer(ctx.bead.task_brief(), ctx.bead.acceptance_criteria),
             volatile,
@@ -955,7 +985,11 @@ def build_graph(ctx: RunContext):
         result = await ctx.call(
             "context",
             spec,
-            context_prompt(ctx.bead.task_brief(), ctx.bead.acceptance_criteria),
+            context_prompt(
+                ctx.bead.task_brief(),
+                ctx.bead.acceptance_criteria,
+                memory=state.get("memory_block", ""),
+            ),
             schema=CONTEXT_SCHEMA,
             iteration=0,
         )
@@ -983,7 +1017,10 @@ def build_graph(ctx: RunContext):
                 "estimate",
                 ctx.recipe.role("estimate"),
                 estimate_prompt(
-                    ctx.bead.task_brief(), ctx.bead.acceptance_criteria, state.get("context", {})
+                    ctx.bead.task_brief(),
+                    ctx.bead.acceptance_criteria,
+                    state.get("context", {}),
+                    memory=state.get("memory_block", ""),
                 ),
                 model_cls=ComplexityEstimate,
                 default=default,
@@ -1006,10 +1043,11 @@ def build_graph(ctx: RunContext):
             state.get("context", {}),
             state.get("instructions", ""),
         )
+        prompt_kwargs = dict(memory=state.get("memory_block", ""))
         result = await call_in_session(
             ctx, "tests", spec,
-            tests_prompt(*prompt_args),
-            tests_prompt(*prompt_args, resumed=True),
+            tests_prompt(*prompt_args, **prompt_kwargs),
+            tests_prompt(*prompt_args, **prompt_kwargs, resumed=True),
             session_id=session_id,
             schema=TestsOutput.schema_for_agents(),
             iteration=0,
@@ -1138,6 +1176,7 @@ def build_graph(ctx: RunContext):
                 baseline_checks=state.get("baseline_checks", []),
                 diff=ctx.diff() if repairing else "",
                 previous_instructions=state.get("last_instructions", "") if repairing else "",
+                memory=state.get("memory_block", ""),
             ),
             iteration=iteration,
         )
@@ -1421,6 +1460,7 @@ def build_graph(ctx: RunContext):
         prompt_kwargs = dict(
             baseline_checks=state.get("baseline_checks", []),
             instructions=state.get("instructions", ""),
+            memory=state.get("memory_block", ""),
         )
         # The verifier continues the tests writer's session: the agent that
         # wrote the tests chooses how to verify them, context intact.
@@ -1668,6 +1708,7 @@ def build_graph(ctx: RunContext):
                 ctx.limits_note(state),
                 verifier_stop=state.get("verifier_stop"),
                 changed_tests=changed_tests,
+                memory=state.get("memory_block", ""),
             ),
             schema=JudgeDecision.schema_for_agents(),
             iteration=state.get("iteration", 0),
@@ -1986,6 +2027,7 @@ def initial_state(ctx: RunContext) -> TddState:
         bead_id=ctx.bead.id,
         run_id=ctx.run_id,
         title=ctx.bead.title,
+        memory_block=ctx.memory_block(),
         iteration=0,
         consiliums=0,
         retries_on_tier=0,
