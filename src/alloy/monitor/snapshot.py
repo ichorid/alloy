@@ -19,7 +19,7 @@ from alloy.config import ConfigError, RecipeConfig
 from alloy.engine import Engine
 from alloy.limits import installed_harnesses, read_cache, unavailable
 from alloy.runners import RunnerRegistry
-from alloy.scheduler import read_pid
+from alloy.scheduler import read_pid, read_session
 from alloy.store import RUN_CANCELLED, RUN_DONE, RUN_FAILED
 from alloy.verify import checks_summary
 
@@ -32,6 +32,22 @@ def build_snapshot(engine: Engine) -> dict[str, Any]:
     pid = read_pid(engine.paths.scheduler_pid)
     totals = engine.store.run_status_totals(engine.repo)
     limits = _limits(engine)
+    session_data = read_session(engine.paths)
+    session = _session(session_data)
+    active_records = engine.store.active_runs(repo=engine.repo)
+    active_ids = {record["run_id"] for record in active_records}
+    finished_records: list[dict[str, Any]] = []
+    if session_data and session_data.get("started_at"):
+        finished_records = [
+            record
+            for record in engine.store.finished_runs_since(
+                session_data["started_at"], engine.repo
+            )
+            if record["run_id"] not in active_ids
+        ]
+    runs = [
+        _run_entry(engine, record, limits) for record in active_records
+    ] + [_run_entry(engine, record, limits) for record in finished_records]
     return {
         "root": str(engine.paths.root),
         "repo": str(engine.repo),
@@ -40,11 +56,29 @@ def build_snapshot(engine: Engine) -> dict[str, Any]:
         "ready_capped_at": READY_CAP,
         "lifetime": {status: int(totals.get(status, 0)) for status in LIFETIME_STATUSES},
         "limits": limits,
-        "runs": [
-            _run_entry(engine, record, limits)
-            for record in engine.store.active_runs(repo=engine.repo)
-        ],
+        "session": session,
+        "session_totals": _session_totals(finished_records),
+        "runs": runs,
     }
+
+
+def _session(session_data: dict[str, Any] | None) -> dict[str, Any]:
+    if session_data is None:
+        return {"started_at": None, "ended_at": None, "pid": None}
+    return {
+        "started_at": session_data.get("started_at"),
+        "ended_at": session_data.get("ended_at"),
+        "pid": session_data.get("pid"),
+    }
+
+
+def _session_totals(finished_records: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {status: 0 for status in LIFETIME_STATUSES}
+    for record in finished_records:
+        status = record["status"]
+        if status in counts:
+            counts[status] += 1
+    return counts
 
 
 def _limits(engine: Engine) -> dict[str, Any]:
