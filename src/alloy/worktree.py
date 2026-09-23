@@ -13,6 +13,41 @@ from pathlib import Path, PurePosixPath
 
 BRANCH_PREFIX = "alloy"
 
+JUNK_PATTERNS: tuple[str, ...] = (
+    "uv.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "Cargo.lock",
+    "poetry.lock",
+    "*.pyc",
+    "__pycache__/",
+    ".serena/",
+    ".DS_Store",
+    "*.egg-info/",
+)
+"""Generated files that must never reach a diff the agents read (journal 20, 33).
+
+Glob-style, gitignore-like: a trailing slash names a directory. Untracked junk
+enters the index via `git add -A --intent-to-add`, so it is excluded by pathspec
+at diff time rather than relying on .gitignore.
+"""
+
+
+def junk_pathspecs(patterns: tuple[str, ...] = JUNK_PATTERNS) -> list[str]:
+    """`:(exclude)` pathspecs matching each junk pattern at any depth.
+
+    Glob magic is needed: a plain `:(exclude)uv.lock` only matches the top level
+    and `:(exclude)*.egg-info/` does not match at all.
+    """
+    specs = []
+    for pattern in patterns:
+        if pattern.endswith("/"):
+            specs.append(f":(exclude,glob)**/{pattern}**")
+        else:
+            specs.append(f":(exclude,glob)**/{pattern}")
+    return specs
+
 
 def is_test_path(path: str) -> bool:
     """A path that looks like a test by location or name (tests/, test_*.py, *_test.py)."""
@@ -122,12 +157,16 @@ class WorktreeManager:
         args = ["diff", worktree.base_commit]
         if stat_only:
             args.append("--stat")
+        args += ["--", ".", *junk_pathspecs()]
         proc = _git(args, worktree.path, check=False)
         return proc.stdout
 
     def changed_files(self, worktree: Worktree) -> list[str]:
         _git(["add", "-A", "--intent-to-add"], worktree.path, check=False)
-        proc = _git(["diff", "--name-only", worktree.base_commit], worktree.path, check=False)
+        proc = _git(
+            ["diff", "--name-only", worktree.base_commit, "--", ".", *junk_pathspecs()],
+            worktree.path, check=False,
+        )
         return [line for line in proc.stdout.splitlines() if line.strip()]
 
     def has_changes(self, worktree: Worktree) -> bool:
