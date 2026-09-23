@@ -8,6 +8,7 @@ state stays cheap to checkpoint and cheap to hand to the next agent.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -647,6 +648,71 @@ def _render_block(entries: list[MemoryEntry]) -> str:
 CHECK_HINTS_KEY = "alloy:check-hints"
 CONTRADICTION_KEY_PREFIX = "alloy:review:contradiction:"
 """The verifier's runnable check commands from the last DONE run on this repo."""
+
+# ---------------------------------------------------------------------------
+# alloy:calibration (alloy-4ef.12)
+# ---------------------------------------------------------------------------
+
+CALIBRATION_KEY = "alloy:calibration"
+"""Per-complexity-level aggregate of finished runs, read by the estimate role only."""
+
+
+def _load_calibration(body: str) -> dict[str, dict[str, Any]]:
+    try:
+        data = json.loads(body) if body.strip() else {}
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        level: entry
+        for level, entry in data.items()
+        if level in COMPLEXITY_LEVELS and isinstance(entry, dict)
+    }
+
+
+def update_calibration(
+    previous_json: str, level: str, iterations: int, agent_calls: int, overrun: bool
+) -> str:
+    """Fold one finished run into the stored alloy:calibration JSON: per level
+    ``runs``, ``mean_iterations``, ``mean_agent_calls`` (one decimal) and
+    ``overruns`` (runs that hit a limit). An unreadable previous body starts over."""
+
+    data = _load_calibration(previous_json)
+    entry = data.get(level) or {}
+    runs = int(entry.get("runs", 0) or 0)
+
+    def running_mean(key: str, value: float) -> float:
+        previous = float(entry.get(key, 0.0) or 0.0)
+        return round((previous * runs + value) / (runs + 1), 1)
+
+    data[level] = {
+        "runs": runs + 1,
+        "mean_iterations": running_mean("mean_iterations", iterations),
+        "mean_agent_calls": running_mean("mean_agent_calls", agent_calls),
+        "overruns": int(entry.get("overruns", 0) or 0) + (1 if overrun else 0),
+    }
+    ordered = {level: data[level] for level in COMPLEXITY_LEVELS if level in data}
+    return json.dumps(ordered, separators=(",", ":"), sort_keys=False)
+
+
+def format_calibration(body: str) -> str:
+    """One deterministic ``calibration: <level> N runs avg X.X it avg Y.Y calls
+    Z overruns, ...`` line in level order; empty when nothing is stored."""
+
+    data = _load_calibration(body)
+    parts = []
+    for level in COMPLEXITY_LEVELS:
+        entry = data.get(level)
+        if not entry:
+            continue
+        parts.append(
+            f"{level} {int(entry.get('runs', 0) or 0)} runs"
+            f" avg {float(entry.get('mean_iterations', 0.0) or 0.0):.1f} it"
+            f" avg {float(entry.get('mean_agent_calls', 0.0) or 0.0):.1f} calls"
+            f" {int(entry.get('overruns', 0) or 0)} overruns"
+        )
+    return f"calibration: {', '.join(parts)}" if parts else ""
 
 # ---------------------------------------------------------------------------
 # alloy:lesson:<key> (alloy-4ef.10)

@@ -29,6 +29,7 @@ from langgraph.types import Send, interrupt
 from alloy.beads import LABEL_BUG, LABEL_HUMAN, META_DISCOVERED_IN_RUN, META_RECIPE
 from alloy.config import RoleSpec
 from alloy.models import (
+    CALIBRATION_KEY,
     CHECK_HINTS_KEY,
     CONTRADICTION_KEY_PREFIX,
     LESSON_KEY_PREFIX,
@@ -53,9 +54,11 @@ from alloy.models import (
     VerifierAction,
     clip,
     extract_bug_reports,
+    format_calibration,
     format_check_hints,
     next_level,
     parse_check_hints,
+    update_calibration,
     with_provenance,
 )
 from alloy.diffs import clip_diff_per_file
@@ -94,6 +97,7 @@ class TddState(TypedDict, total=False):
     context: dict[str, Any]
     memory_block: str                          # rendered project memory, fixed at run start
     memory_check_hints: str                    # stored alloy:check-hints body, fixed at run start
+    memory_calibration: str                    # stored alloy:calibration body, fixed at run start
     memory_keys: list[str]                     # every stored memory key, fixed at run start
     memory_lessons: dict[str, str]             # stored alloy:lesson:* bodies, fixed at run start
     complexity: str
@@ -235,11 +239,19 @@ Return complexity, reason and confidence in the required structured output."""
 
 
 def estimate_prompt(
-    brief: str, acceptance: str, context: dict[str, Any], *, memory: str = ""
+    brief: str,
+    acceptance: str,
+    context: dict[str, Any],
+    *,
+    memory: str = "",
+    calibration: str = "",
 ) -> str:
+    """`calibration` is the rendered alloy:calibration line; only the estimate
+    role sees it, so it joins the project layer here rather than the shared
+    memory block."""
     return assemble(
         ESTIMATE_STATIC,
-        _project_layer(memory),
+        _project_layer("\n\n".join(part for part in (memory, calibration) if part)),
         _run_layer(context),
         _task_layer(brief, acceptance),
         "",
@@ -1117,6 +1129,7 @@ def build_graph(ctx: RunContext):
                     ctx.bead.acceptance_criteria,
                     state.get("context", {}),
                     memory=state.get("memory_block", ""),
+                    calibration=format_calibration(state.get("memory_calibration", "")),
                 ),
                 model_cls=ComplexityEstimate,
                 default=default,
@@ -2057,6 +2070,7 @@ def build_graph(ctx: RunContext):
         outcome = Outcome.DONE if decision.decision == "done" else Outcome.FAILED
         if outcome is Outcome.DONE:
             remember_check_hints(state)
+        remember_calibration(state)
         return {
             "outcome": outcome.value,
             "outcome_reason": decision.reason,
@@ -2081,6 +2095,28 @@ def build_graph(ctx: RunContext):
             )
         except Exception:
             log.warning("could not remember %s", CHECK_HINTS_KEY, exc_info=True)
+
+    def remember_calibration(state: TddState) -> None:
+        """Fold this run into alloy:calibration: per complexity level, how many
+        runs finished, their mean iterations and agent calls, and how many hit
+        a limit. Every finish counts, DONE or not, so overruns are recorded.
+        Nothing is written when memory is off or no bd is bound."""
+        if ctx.beads is None or not ctx.recipe.memory.enabled:
+            return
+        body = update_calibration(
+            state.get("memory_calibration", ""),
+            level=state.get("complexity") or "medium",
+            iterations=state.get("iteration", 0),
+            agent_calls=ctx.store.call_count(ctx.run_id, include_children=True),
+            overrun=bool(state.get("limit_hit")),
+        )
+        try:
+            ctx.beads.remember(
+                CALIBRATION_KEY,
+                with_provenance(body, ctx.run_id, ctx.bead.id, utcnow().date()),
+            )
+        except Exception:
+            log.warning("could not remember %s", CALIBRATION_KEY, exc_info=True)
 
     async def harvest(state: TddState) -> dict[str, Any]:
         """Ask the harvest role for a durable lesson from this run and persist
@@ -2205,6 +2241,7 @@ def initial_state(ctx: RunContext) -> TddState:
         title=ctx.bead.title,
         memory_block=memory.render() if memory is not None else "",
         memory_check_hints=memory.body_of(CHECK_HINTS_KEY) if memory is not None else "",
+        memory_calibration=memory.body_of(CALIBRATION_KEY) if memory is not None else "",
         memory_keys=sorted(memory.entries) if memory is not None else [],
         memory_lessons=existing_lessons(memory),
         iteration=0,
