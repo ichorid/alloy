@@ -164,22 +164,23 @@ as any other stacked-branch situation.
 
 ## Merging accepted work
 
-Recipes default to `cleanup_worktree_on_success: false`, so nothing merges or
-cleans up automatically — that's a deliberate step you take after review:
+Shipped recipes set `landing: {mode: auto, target: main}`. After a successful
+run the scheduler invokes `alloy land <bead-id>`: trial-merge into the bead
+branch, re-verify, merge into the primary checkout on `landing.target`, close
+the bead, and remove the worktree. Recipes with `landing: {mode: off}` stop at
+`review-ready`; land manually with `alloy land <bead-id>` when ready.
 
-```bash
-git checkout <target-branch>              # main, or a parent bead's branch for a stacked feature
-git merge --no-ff alloy/<bead-id>
-bd close <bead-id>
-```
+Epic children share one worktree (`alloy/<epic-id>`); each child closes on
+success and the epic lands when every descendant is closed. A trial-merge
+conflict or red post-merge checks files a land-repair bug bead
+(`alloy_land_state=repairing`); when it closes, landing retries. If the
+primary checkout is not on `landing.target` or has local changes, the bead
+parks at `waiting-human` (`alloy_land_state=parked`) — fix the environment,
+then `alloy land <bead-id>` again.
 
-Then remove the worktree explicitly once you've confirmed the merge is good
-(`alloy cancel <bead-id>` releases Alloy's tracking of it if it's still
-recorded as active; the worktree itself is a normal `git worktree remove`).
-For a multi-bead feature, decide the branch topology deliberately — either
-every bead merges independently into the same target branch, or later beads'
-worktrees are meant to stack off an earlier bead's branch — Alloy doesn't
-choose this for you.
+For stacked features, decide branch topology deliberately — Alloy does not
+infer whether later beads stack off an earlier feature branch or land
+independently into the same target.
 
 ## Rules
 
