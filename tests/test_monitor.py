@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from alloy import beads as bd
 from alloy.cli import app
 from alloy.engine import Engine
 from alloy.limits import window, write_cache
@@ -40,13 +41,16 @@ from support import make_harness
 
 TOP_LEVEL_KEYS = {
     "root", "repo", "scheduler", "ready_count", "ready_capped_at", "lifetime", "runs",
-    "limits", "session", "session_totals",
+    "limits", "session", "session_totals", "epics",
+}
+EPIC_ENTRY_KEYS = {
+    "epic_id", "title", "total", "done", "done_ids", "running", "judge",
 }
 RUN_ENTRY_KEYS = {
     "bead_id", "run_id", "recipe", "status", "stage", "iteration", "max_iterations",
     "consiliums", "max_consiliums", "tests_summary", "checks", "elapsed_minutes",
     "current_calls", "tokens", "tokens_by_role", "judge", "worktree", "branch",
-    "parent_run_id", "parent_bead_id", "complexity", "models_used",
+    "parent_run_id", "parent_bead_id", "complexity", "models_used", "epic_id",
 }
 CURRENT_CALL_KEYS = {
     "role", "requested_runner", "effective_runner", "requested_model",
@@ -57,18 +61,59 @@ JUDGE_KEYS = {"raw", "effective", "matches_effective"}
 
 
 class FakeBeads:
-    """Stands in for `BeadsClient`; `build_snapshot` only ever calls `ready()`."""
+    """Stands in for `BeadsClient` in monitor snapshot tests."""
 
-    def __init__(self, ready_ids: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        ready_ids: tuple[str, ...] = (),
+        *,
+        children: dict[str, list[bd.Bead]] | None = None,
+        shows: dict[str, bd.Bead] | None = None,
+        epics: dict[str, str | None] | None = None,
+        epics_build_error: bool = False,
+        beads_error: bool = False,
+    ) -> None:
         self._ready = list(ready_ids)
+        self._children = dict(children or {})
+        self._shows = dict(shows or {})
+        self._epics = dict(epics or {})
+        self._epics_build_error = epics_build_error
+        self._beads_error = beads_error
+
+    def _maybe_raise(self) -> None:
+        if self._beads_error:
+            raise bd.BeadsError("fake bd failure")
 
     def ready(self, *, recipe: str | None = None, limit: int = 50):
+        self._maybe_raise()
         return self._ready[:limit]
 
+    def children(self, parent_id: str) -> list[bd.Bead]:
+        self._maybe_raise()
+        if self._epics_build_error:
+            raise bd.BeadsError("fake bd failure building epics")
+        return list(self._children.get(parent_id, []))
 
-def _engine(repo: Path, alloy_home: Path, *, ready_ids: tuple[str, ...] = ()) -> Engine:
+    def show(self, bead_id: str) -> bd.Bead | None:
+        self._maybe_raise()
+        return self._shows.get(bead_id)
+
+    def epic_for(self, bead_id: str, *, max_depth: int = 3) -> str | None:
+        self._maybe_raise()
+        return self._epics.get(bead_id)
+
+
+def _engine(
+    repo: Path,
+    alloy_home: Path,
+    *,
+    ready_ids: tuple[str, ...] = (),
+    beads: FakeBeads | None = None,
+) -> Engine:
     paths = AlloyPaths.resolve(alloy_home).ensure()
-    return Engine(repo=repo, paths=paths, store=Store(paths.alloy_db), beads=FakeBeads(ready_ids))
+    if beads is None:
+        beads = FakeBeads(ready_ids)
+    return Engine(repo=repo, paths=paths, store=Store(paths.alloy_db), beads=beads)
 
 
 def script(**overrides):
@@ -771,3 +816,94 @@ def test_snapshot_finished_run_entry_has_full_shape_and_empty_current_calls(proj
     assert set(run.keys()) == RUN_ENTRY_KEYS
     assert run["current_calls"] == []
     assert run["status"] == RUN_DONE
+
+
+# -- snapshot epics[] and run epic_id (alloy-byo.3) ---------------------------
+
+
+_EPIC_ID = "E"
+_EPIC_TITLE = "Monitor TUI redesign"
+_DONE_CHILDREN = ("E.1", "E.2", "E.3", "E.4")
+_OPEN_CHILDREN = ("E.5", "E.6", "E.7", "E.8", "E.9")
+
+
+def _epic_children() -> list[bd.Bead]:
+    return [
+        *[bd.Bead(id=child_id, title=child_id, status=bd.STATUS_DONE) for child_id in _DONE_CHILDREN],
+        *[bd.Bead(id=child_id, title=child_id, status="open") for child_id in _OPEN_CHILDREN],
+    ]
+
+
+def _seed_active_run(
+    engine: Engine,
+    run_id: str,
+    bead_id: str,
+    *,
+    stage: str,
+) -> None:
+    engine.store.create_run(
+        run_id=run_id,
+        bead_id=bead_id,
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=engine.repo,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    engine.store.update_run(run_id, status=RUN_RUNNING, pid=os.getpid(), stage=stage)
+
+
+def _epic_progress_beads() -> FakeBeads:
+    epic_children = _epic_children()
+    return FakeBeads(
+        children={_EPIC_ID: epic_children},
+        shows={_EPIC_ID: bd.Bead(id=_EPIC_ID, title=_EPIC_TITLE, issue_type="epic")},
+        epics={
+            "E.5": _EPIC_ID,
+            "E.6": _EPIC_ID,
+            "orphan": None,
+        },
+    )
+
+
+def test_snapshot_epics_progress_from_children_and_active_runs(project, alloy_home):
+    """Acceptance: epic children progress plus active run/judge counts; runs carry epic_id."""
+    engine = _engine(project, alloy_home, beads=_epic_progress_beads())
+    _seed_active_run(engine, "run-judge", "E.5", stage="judge")
+    _seed_active_run(engine, "run-active", "E.6", stage="tests")
+    _seed_active_run(engine, "run-orphan", "orphan", stage="implement")
+
+    snapshot = build_snapshot(engine)
+
+    assert "epics" in snapshot
+    assert len(snapshot["epics"]) == 1
+    epic = snapshot["epics"][0]
+    assert set(epic.keys()) == EPIC_ENTRY_KEYS
+    assert epic == {
+        "epic_id": _EPIC_ID,
+        "title": _EPIC_TITLE,
+        "total": 9,
+        "done": 4,
+        "done_ids": list(_DONE_CHILDREN),
+        "running": 2,
+        "judge": 1,
+    }
+
+    by_id = {row["run_id"]: row for row in snapshot["runs"]}
+    assert by_id["run-judge"]["epic_id"] == _EPIC_ID
+    assert by_id["run-active"]["epic_id"] == _EPIC_ID
+    assert by_id["run-orphan"]["epic_id"] is None
+
+
+def test_snapshot_epics_empty_on_beads_error(project, alloy_home):
+    """Acceptance: bd failure while building epics yields [] but runs still return."""
+    beads = _epic_progress_beads()
+    beads._epics_build_error = True
+    engine = _engine(project, alloy_home, beads=beads)
+    _seed_active_run(engine, "run-judge", "E.5", stage="judge")
+
+    snapshot = build_snapshot(engine)
+
+    assert snapshot["epics"] == []
+    assert len(snapshot["runs"]) == 1
