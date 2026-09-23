@@ -89,6 +89,73 @@ def _cmd_forget(config: dict, argv: list[str]) -> int:
     return 0
 
 
+def _next_bead_id(config: dict) -> str:
+    counter = int(config.get("bead_counter") or 0) + 1
+    config["bead_counter"] = counter
+    return f"beads-{counter}"
+
+
+def _parse_flag_value(argv: list[str], flag: str, short: str | None = None) -> str | None:
+    flags = [flag]
+    if short:
+        flags.append(short)
+    for index, arg in enumerate(argv):
+        if arg in flags and index + 1 < len(argv):
+            return argv[index + 1]
+    return None
+
+
+def _cmd_create(config: dict, argv: list[str]) -> int:
+    _record("create", argv)
+    title_parts: list[str] = []
+    index = 1
+    while index < len(argv):
+        arg = argv[index]
+        if arg.startswith("-"):
+            index += 2 if index + 1 < len(argv) else 1
+            continue
+        title_parts.append(arg)
+        index += 1
+    title = " ".join(title_parts)
+    issue_type = _parse_flag_value(argv, "--type", "-t") or "task"
+    labels_raw = _parse_flag_value(argv, "--labels") or ""
+    labels = [label for label in labels_raw.split(",") if label]
+    bead_id = _next_bead_id(config)
+    beads = list(config.get("beads") or [])
+    beads.append(
+        {
+            "id": bead_id,
+            "title": title,
+            "issue_type": issue_type,
+            "labels": labels,
+            "status": "open",
+        }
+    )
+    merged = {**config, "beads": beads}
+    Path(os.environ["ALLOY_FAKE_CONFIG"]).write_text(json.dumps(merged), encoding="utf-8")
+    if "--silent" in argv:
+        print(bead_id)
+    else:
+        print(json.dumps(beads[-1]))
+    return 0
+
+
+def _cmd_list(config: dict, argv: list[str]) -> int:
+    beads = list(config.get("beads") or [])
+    label = _parse_flag_value(argv, "--label")
+    status = _parse_flag_value(argv, "--status")
+    if label:
+        beads = [bead for bead in beads if label in (bead.get("labels") or [])]
+    if status:
+        beads = [bead for bead in beads if bead.get("status") == status]
+    if "--json" in argv:
+        print(json.dumps(beads))
+    else:
+        for bead in beads:
+            print(f"{bead.get('id')}: {bead.get('title')} [{bead.get('status')}]")
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         sys.stderr.write("usage: bd <command> ...\n")
@@ -102,6 +169,8 @@ def main() -> int:
         "remember": _cmd_remember,
         "note": _cmd_note,
         "forget": _cmd_forget,
+        "create": _cmd_create,
+        "list": _cmd_list,
     }
     handler = handlers.get(command)
     if handler is None:
