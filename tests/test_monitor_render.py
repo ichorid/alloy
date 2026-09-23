@@ -462,3 +462,36 @@ def test_parent_run_row_shows_complexity_when_set():
     row = run_rows(_snapshot(runs=[parent]))[0]
 
     assert "simple" in row
+
+
+# -- alloy-o89.3: status -> color for DataTable badges -------------------------
+
+
+def test_status_color_maps_running_to_cyan():
+    from alloy.monitor.render import status_color
+
+    assert status_color("running") == "#56b6c2"
+
+
+def test_status_color_maps_judge_to_magenta():
+    from alloy.monitor.render import status_color
+
+    assert status_color("judge") == "#d2a8ff"
+
+
+def test_status_color_maps_blocked_to_red():
+    from alloy.monitor.render import status_color
+
+    assert status_color("blocked") == "#f85149"
+
+
+def test_status_color_maps_done_to_green():
+    from alloy.monitor.render import status_color
+
+    assert status_color("done") == "#7ee787"
+
+
+def test_status_color_maps_ready_to_dim_gray():
+    from alloy.monitor.render import status_color
+
+    assert status_color("ready") == "#8b949e"

@@ -19,6 +19,9 @@ _USAGE_BAR_WIDTH = 16
 _COLOR_GREEN = "#7ee787"
 _COLOR_YELLOW = "#e3b341"
 _COLOR_RED = "#f85149"
+_COLOR_CYAN = "#56b6c2"
+_COLOR_MAGENTA = "#d2a8ff"
+_COLOR_DIM = "#8b949e"
 
 
 def header_line(snapshot: dict[str, Any]) -> str:
@@ -43,6 +46,17 @@ def header_line(snapshot: dict[str, Any]) -> str:
 def run_rows(snapshot: dict[str, Any]) -> list[tuple[str, ...]]:
     """One tuple per `runs[]` entry, in `COLUMNS` order."""
     return [_row(run) for run in snapshot.get("runs") or []]
+
+
+def status_color(status: str) -> str:
+    """Map a run status label to its DataTable badge color."""
+    return {
+        "running": _COLOR_CYAN,
+        "judge": _COLOR_MAGENTA,
+        "blocked": _COLOR_RED,
+        "done": _COLOR_GREEN,
+        "ready": _COLOR_DIM,
+    }.get(status, _COLOR_DIM)
 
 
 def limits_lines(snapshot: dict[str, Any]) -> list[str]:

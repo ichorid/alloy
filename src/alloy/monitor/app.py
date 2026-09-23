@@ -9,12 +9,20 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Header, Static
 
-from alloy.monitor.render import COLUMNS, detail_lines, header_line, limits_lines, run_rows
+from alloy.monitor.render import (
+    COLUMNS,
+    detail_lines,
+    header_line,
+    limits_lines,
+    run_rows,
+    status_color,
+)
 
 
 class MonitorApp(App[None]):
@@ -95,8 +103,12 @@ class MonitorApp(App[None]):
         selected = self._selected_run_id(table)
         table.clear()
         run_ids = [run["run_id"] for run in snapshot.get("runs") or []]
+        status_col = COLUMNS.index("status")
         for run_id, cells in zip(run_ids, run_rows(snapshot)):
-            table.add_row(*cells, key=run_id)
+            row = list(cells)
+            status = row[status_col]
+            row[status_col] = Text(status, style=status_color(status))
+            table.add_row(*row, key=run_id)
         if run_ids:
             if selected is None:
                 target = 0
