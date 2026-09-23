@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import pytest
+from rich.text import Text
 from textual.coordinate import Coordinate
 from textual.widgets import DataTable, Static
 from typer.testing import CliRunner
@@ -84,6 +85,12 @@ def _done_run(run_id: str, bead_id: str | None = None) -> dict:
     run["status"] = "done"
     run["stage"] = "finished"
     run["current_calls"] = []
+    return run
+
+
+def _run_with_status(run_id: str, status: str, bead_id: str | None = None) -> dict:
+    run = _run(run_id, bead_id=bead_id)
+    run["status"] = status
     return run
 
 
@@ -361,6 +368,20 @@ async def test_selected_run_disappearing_hides_the_detail_pane_instead_of_raisin
         assert _detail(app).display is False
 
 
+async def test_blocked_run_status_cell_renders_with_status_color():
+    snapshot = _snapshot(runs=[_run_with_status("run-blocked", "blocked")])
+    app = MonitorApp(snapshot_source=lambda: snapshot, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = _runs_table(app)
+        status_col = COLUMNS.index("status")
+        cell = table.get_cell_at(Coordinate(row=0, column=status_col))
+
+        assert isinstance(cell, Text)
+        assert str(cell) == "blocked"
+        assert cell.style == "#f85149"
+
+
 async def test_done_run_row_is_selectable_and_detail_shows_bead_id():
     app = MonitorApp(snapshot_source=lambda: RUNNING_AND_DONE, interval=DISABLED_INTERVAL)
     async with app.run_test() as pilot:
@@ -371,7 +392,10 @@ async def test_done_run_row_is_selectable_and_detail_shows_bead_id():
         await pilot.pause()
         assert table.cursor_row == 1
         status_col = COLUMNS.index("status")
-        assert table.get_cell_at(Coordinate(row=table.cursor_row, column=status_col)) == "done"
+        done_cell = table.get_cell_at(Coordinate(row=table.cursor_row, column=status_col))
+        assert isinstance(done_cell, Text)
+        assert str(done_cell) == "done"
+        assert done_cell.style == "#7ee787"
 
         await pilot.press("enter")
         await pilot.pause()
