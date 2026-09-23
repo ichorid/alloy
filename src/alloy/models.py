@@ -854,6 +854,99 @@ def merge_review_plan(
 
 
 # ---------------------------------------------------------------------------
+# alloy memory review --apply (alloy-4ef.17)
+# ---------------------------------------------------------------------------
+
+LAST_REVIEW_KEY = "alloy:meta:last-review"
+"""Meta key holding the ISO date of the last applied memory review."""
+
+MEMORY_REVIEW_LABEL = "alloy-memory-review"
+"""Label on the task bead that lists pending proposals on human-owned memories."""
+
+_EMBED_EXCLUDED_PREFIXES = _META_KEY_PREFIXES
+_EMBED_EXCLUDED_KEYS = frozenset({"alloy:calibration"})
+
+
+class ReviewApply(BaseModel):
+    """The bd writes an applied review plan comes down to, in execution order.
+
+    Alloy-owned ``forget``/``update`` verdicts become ``forgets`` and
+    ``remembers``; ``forget``/``update`` on human-owned keys are never
+    executed and become ``proposals`` (each also a remember under
+    ``alloy:review:proposal:<key>``). ``embed_keys`` is what
+    ``alloy:meta:embed`` is set to; ``alloy:meta:last-review`` is always
+    written.
+    """
+
+    forgets: list[str] = Field(default_factory=list)
+    remembers: list[tuple[str, str]] = Field(default_factory=list)
+    proposals: list[str] = Field(default_factory=list)
+    embed_keys: list[str] = Field(default_factory=list)
+
+
+def _embeddable(key: str) -> bool:
+    return not (key in _EMBED_EXCLUDED_KEYS or key.startswith(_EMBED_EXCLUDED_PREFIXES))
+
+
+def proposal_body(item: ReviewPlanItem) -> str:
+    """The JSON stored under ``alloy:review:proposal:<key>``: the verdict, its
+    reason and, for updates, the proposed content."""
+
+    payload: dict[str, str] = {"action": item.action, "reason": item.reason}
+    if item.new_content is not None:
+        payload["new_content"] = item.new_content
+    return json.dumps(payload)
+
+
+def plan_review_apply(plan: ReviewPlan, *, run_id: str, bead_id: str, today: date) -> ReviewApply:
+    """Turn a review plan into bd writes. Pure: nothing is executed here.
+
+    Ownership is by key prefix (``alloy:`` is alloy-owned). An alloy-owned
+    ``update`` without ``new_content`` is skipped; ``keep`` and ``embed``
+    never forget anything.
+    """
+
+    apply = ReviewApply()
+    embed: set[str] = set()
+    for item in plan.items:
+        alloy_owned = item.key.startswith(MEMORY_OWNER_PREFIX)
+        if item.action == "embed":
+            if _embeddable(item.key):
+                embed.add(item.key)
+            continue
+        if item.action == "keep":
+            continue
+        if not alloy_owned:
+            apply.proposals.append(item.key)
+            apply.remembers.append((PROPOSAL_KEY_PREFIX + item.key, proposal_body(item)))
+            continue
+        if item.action == "forget":
+            apply.forgets.append(item.key)
+        elif item.new_content is not None:
+            apply.remembers.append(
+                (item.key, with_provenance(item.new_content, run_id, bead_id, today))
+            )
+    apply.embed_keys = sorted(embed)
+    apply.remembers.append((EMBED_KEY, json.dumps(apply.embed_keys)))
+    apply.remembers.append((LAST_REVIEW_KEY, today.isoformat()))
+    return apply
+
+
+def review_bead_text(proposals: list[str]) -> tuple[str, str]:
+    """Title and description of the task bead listing pending proposals."""
+
+    title = f"Review {len(proposals)} memory proposals"
+    lines = [
+        "Alloy proposed changes to these human-owned project memories. Each "
+        f"proposal is stored under {PROPOSAL_KEY_PREFIX}<key>; apply or "
+        "dismiss it with bd remember/forget.",
+        "",
+        *(f"- {key}" for key in proposals),
+    ]
+    return title, "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # alloy:calibration (alloy-4ef.12)
 # ---------------------------------------------------------------------------
 

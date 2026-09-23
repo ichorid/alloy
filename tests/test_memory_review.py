@@ -17,7 +17,7 @@ import pytest
 from typer.testing import CliRunner
 
 from alloy.cli import app
-from alloy.models import CONTRADICTION_KEY_PREFIX, with_provenance
+from alloy.models import CONTRADICTION_KEY_PREFIX, EMBED_KEY as META_EMBED_KEY, PROPOSAL_KEY_PREFIX, with_provenance
 from conftest import FAKE_BD_SOURCE, FAKE_RUNNERS, FAKE_SOURCE, memory_reviewer_entry
 
 RUN_ID = "run-review-1"
@@ -108,6 +108,41 @@ class FakeMemoryReviewHarness:
             if call.get("command") in {"remember", "forget"}
         ]
 
+    def bd_creates(self) -> list[dict]:
+        return [call for call in self.calls if call.get("command") == "create"]
+
+    def forget_keys(self) -> list[str]:
+        keys: list[str] = []
+        for call in self.calls:
+            if call.get("command") != "forget":
+                continue
+            argv = call.get("argv") or []
+            if len(argv) >= 2:
+                keys.append(argv[1])
+        return keys
+
+    def remember_by_key(self) -> dict[str, str]:
+        remembered: dict[str, str] = {}
+        for call in self.calls:
+            if call.get("command") != "remember":
+                continue
+            argv = call.get("argv") or []
+            key: str | None = None
+            content_parts: list[str] = []
+            index = 1
+            while index < len(argv):
+                arg = argv[index]
+                if arg == "--key" and index + 1 < len(argv):
+                    key = argv[index + 1]
+                    index += 2
+                    continue
+                if not arg.startswith("-"):
+                    content_parts.append(arg)
+                index += 1
+            if key is not None:
+                remembered[key] = " ".join(content_parts)
+        return remembered
+
     def reviewer_calls(self) -> list[dict]:
         return [call for call in self.calls if call.get("role") == "memory_reviewer"]
 
@@ -143,6 +178,23 @@ def _invoke_review(project: Path, alloy_home: Path):
         [
             "memory",
             "review",
+            "--json",
+            "--repo",
+            str(project),
+            "--root",
+            str(alloy_home),
+        ],
+    )
+
+
+def _invoke_review_apply(project: Path, alloy_home: Path):
+    runner = CliRunner()
+    return runner.invoke(
+        app,
+        [
+            "memory",
+            "review",
+            "--apply",
             "--json",
             "--repo",
             str(project),
@@ -270,3 +322,114 @@ def test_memory_review_does_not_write_to_bd(
     assert result.exit_code == 0
     assert fake_memory_review.bd_writes() == []
     assert len(fake_memory_review.reviewer_calls()) == 1
+
+
+# -- alloy memory review --apply (alloy-4ef.17) --------------------------------
+
+APPLY_ALLOY_FORGET_KEY = "alloy:lesson:a"
+APPLY_HUMAN_FORGET_KEY = "human-k"
+APPLY_ALLOY_EMBED_KEY = "alloy:lesson:b"
+APPLY_META_EMBED_KEY = "alloy:meta:x"
+APPLY_RECENT_DATE = date.today() - timedelta(days=5)
+LAST_REVIEW_KEY = "alloy:meta:last-review"
+MEMORY_REVIEW_LABEL = "alloy-memory-review"
+
+
+def _apply_memories() -> dict[str, str]:
+    return {
+        APPLY_ALLOY_FORGET_KEY: with_provenance(
+            "lesson a body",
+            RUN_ID,
+            BEAD_ID,
+            APPLY_RECENT_DATE,
+        ),
+        APPLY_HUMAN_FORGET_KEY: "human memory to forget",
+        APPLY_ALLOY_EMBED_KEY: with_provenance(
+            "lesson b body",
+            RUN_ID,
+            BEAD_ID,
+            APPLY_RECENT_DATE,
+        ),
+        APPLY_META_EMBED_KEY: "meta x body",
+    }
+
+
+def _apply_verdicts() -> list[dict[str, str]]:
+    return [
+        {"action": "forget", "key": APPLY_ALLOY_FORGET_KEY, "reason": "stale lesson a"},
+        {"action": "forget", "key": APPLY_HUMAN_FORGET_KEY, "reason": "human should propose"},
+        {"action": "embed", "key": APPLY_ALLOY_EMBED_KEY, "reason": "belongs in AGENTS.md"},
+        {
+            "action": "embed",
+            "key": APPLY_META_EMBED_KEY,
+            "reason": "meta keys excluded from embed list",
+        },
+    ]
+
+
+def _create_labels(argv: list[str]) -> list[str]:
+    if "--labels" not in argv:
+        return []
+    index = argv.index("--labels") + 1
+    if index >= len(argv):
+        return []
+    return [label for label in argv[index].split(",") if label]
+
+
+def test_memory_review_apply_executes_alloy_forget_proposals_human_and_writes_meta(
+    project, alloy_home, fake_memory_review,
+):
+    _configure_review(
+        fake_memory_review,
+        memories=_apply_memories(),
+        reviewer_verdicts=_apply_verdicts(),
+    )
+
+    result = _invoke_review_apply(project, alloy_home)
+
+    assert result.exit_code == 0
+
+    forgets = fake_memory_review.forget_keys()
+    assert forgets.count(APPLY_ALLOY_FORGET_KEY) == 1
+    assert APPLY_HUMAN_FORGET_KEY not in forgets
+
+    remembers = fake_memory_review.remember_by_key()
+    proposal_key = f"{PROPOSAL_KEY_PREFIX}{APPLY_HUMAN_FORGET_KEY}"
+    assert proposal_key in remembers
+    proposal = json.loads(remembers[proposal_key])
+    assert proposal == {
+        "action": "forget",
+        "reason": "human should propose",
+    }
+
+    creates = fake_memory_review.bd_creates()
+    assert len(creates) == 1
+    create_argv = creates[0]["argv"]
+    assert MEMORY_REVIEW_LABEL in _create_labels(create_argv)
+    type_flag = "--type" if "--type" in create_argv else "-t"
+    type_index = create_argv.index(type_flag) + 1
+    assert create_argv[type_index] == "task"
+
+    assert META_EMBED_KEY in remembers
+    assert json.loads(remembers[META_EMBED_KEY]) == [APPLY_ALLOY_EMBED_KEY]
+
+    assert LAST_REVIEW_KEY in remembers
+    assert remembers[LAST_REVIEW_KEY] == date.today().isoformat()
+
+
+def test_memory_review_apply_second_run_reuses_open_review_bead(
+    project, alloy_home, fake_memory_review,
+):
+    _configure_review(
+        fake_memory_review,
+        memories=_apply_memories(),
+        reviewer_verdicts=_apply_verdicts(),
+    )
+
+    first = _invoke_review_apply(project, alloy_home)
+    assert first.exit_code == 0
+    assert len(fake_memory_review.bd_creates()) == 1
+
+    second = _invoke_review_apply(project, alloy_home)
+    assert second.exit_code == 0
+    assert len(fake_memory_review.bd_creates()) == 1

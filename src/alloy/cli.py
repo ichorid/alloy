@@ -27,7 +27,10 @@ from alloy.config import (
     ConfigError, MemorySpec, RecipeConfig, RoleSpec, discover_recipes, load_recipe,
 )
 from alloy.engine import Engine, EngineError
-from alloy.models import ProjectMemory, ReviewPlan, memory_inventory, utcnow, with_provenance
+from alloy.models import (
+    MEMORY_REVIEW_LABEL, ProjectMemory, ReviewApply, ReviewPlan, memory_inventory,
+    plan_review_apply, review_bead_text, utcnow, with_provenance,
+)
 from alloy.monitor import build_snapshot
 from alloy.monitor.app import MonitorApp
 from alloy.monitor.render import COLUMNS, header_line, run_rows
@@ -525,11 +528,16 @@ MEMORY_REVIEW_RECIPE = "tdd-loop"
 MEMORY_REVIEW_BEAD = "memory-review"
 
 
-def _review_plan(engine: Engine, recipe_name: str, memory: ProjectMemory) -> ReviewPlan:
-    """Run the read-only memory review under a throwaway RunContext bound to
-    the repository itself (no worktree, no bead, no ledger run row)."""
+def _review_run_id() -> str:
     import uuid
 
+    return f"memory-review-{uuid.uuid4().hex[:12]}"
+
+
+def _review_plan(engine: Engine, recipe_name: str, memory: ProjectMemory,
+                 run_id: str) -> ReviewPlan:
+    """Run the read-only memory review under a throwaway RunContext bound to
+    the repository itself (no worktree, no bead, no ledger run row)."""
     from alloy.recipes.tdd_loop import review_memory
     from alloy.runtime import RunContext
     from alloy.worktree import Worktree, WorktreeManager
@@ -537,7 +545,6 @@ def _review_plan(engine: Engine, recipe_name: str, memory: ProjectMemory) -> Rev
     config = engine.load_config(recipe_name)
     if "memory_reviewer" not in config.roles:
         _fail(f"recipe {recipe_name} has no memory_reviewer role")
-    run_id = f"memory-review-{uuid.uuid4().hex[:12]}"
     log_dir = engine.paths.logs / "memory-review" / run_id
     log_dir.mkdir(parents=True, exist_ok=True)
     ctx = RunContext(
@@ -555,18 +562,54 @@ def _review_plan(engine: Engine, recipe_name: str, memory: ProjectMemory) -> Rev
     return _run_async(review_memory(ctx, memory, today=utcnow().date()))
 
 
+def _apply_review(engine: Engine, plan: ReviewPlan, run_id: str) -> dict[str, Any]:
+    """Execute the plan: alloy-owned forgets/updates, proposal memories for
+    human-owned keys plus one open alloy-memory-review task bead listing
+    them (reused when already open), then the meta keys."""
+    apply: ReviewApply = plan_review_apply(
+        plan, run_id=run_id, bead_id=MEMORY_REVIEW_BEAD, today=utcnow().date(),
+    )
+    for key in apply.forgets:
+        engine.beads.forget(key)
+    for key, content in apply.remembers:
+        engine.beads.remember(key, content)
+    review_bead: str | None = None
+    created = False
+    if apply.proposals:
+        open_beads = engine.beads.open_by_label(MEMORY_REVIEW_LABEL)
+        if open_beads:
+            review_bead = open_beads[0].id
+        else:
+            title, description = review_bead_text(apply.proposals)
+            review_bead = engine.beads.create_task(
+                title=title, description=description, labels=[MEMORY_REVIEW_LABEL],
+            )
+            created = True
+    return {
+        "forgotten": apply.forgets,
+        "remembered": [key for key, _ in apply.remembers],
+        "proposals": apply.proposals,
+        "embed": apply.embed_keys,
+        "review_bead": review_bead,
+        "review_bead_created": created,
+    }
+
+
 @memory_app.command(name="review")
 def memory_review(
     repo: Optional[Path] = RepoOption,
     root: Optional[Path] = RootOption,
     recipe: str = typer.Option(MEMORY_REVIEW_RECIPE, "--recipe",
                                help="Recipe whose memory settings and memory_reviewer role to use"),
+    apply: bool = typer.Option(False, "--apply",
+                               help="Execute the plan: alloy-owned verdicts are applied, "
+                                    "human-owned ones become proposals on a review bead"),
     json: bool = typer.Option(False, "--json", help="Machine-readable output"),
 ) -> None:
     """Plan a project-memory review: deterministic hygiene (expired alloy
     memories, orphan contradiction flags, duplicate bodies) plus the
-    memory_reviewer role's keep/update/forget/embed verdicts. Read-only:
-    nothing is written to bd."""
+    memory_reviewer role's keep/update/forget/embed verdicts. Read-only
+    unless --apply is given."""
     engine = _engine(repo, root)
     try:
         memories = engine.beads.memories()
@@ -579,13 +622,24 @@ def memory_review(
         _fail(str(exc))
         return
     memory = ProjectMemory.from_raw(memories, config.memory)
-    plan = _review_plan(engine, recipe, memory)
+    run_id = _review_run_id()
+    plan = _review_plan(engine, recipe, memory, run_id)
+    applied: dict[str, Any] | None = None
+    if apply:
+        try:
+            applied = _apply_review(engine, plan, run_id)
+        except bd.BeadsError as exc:
+            _fail(str(exc))
+            return
     if json:
-        _emit(plan.model_dump(exclude_none=True), True)
+        payload = plan.model_dump(exclude_none=True)
+        if applied is not None:
+            payload["applied"] = applied
+        _emit(payload, True)
         return
     if not plan.reviewer_ok:
         err.print(f"[yellow]memory_reviewer unavailable:[/yellow] {plan.reviewer_reason}")
-    if not plan.items:
+    if not plan.items and applied is None:
         console.print("nothing to do")
         return
     table = Table(show_header=True, header_style="bold")
@@ -594,7 +648,17 @@ def memory_review(
         table.add_column(column, overflow="fold")
     for item in plan.items:
         table.add_row(item.key, item.action, item.source, item.reason)
-    console.print(table)
+    if plan.items:
+        console.print(table)
+    if applied is not None:
+        console.print(
+            f"applied: forgot {len(applied['forgotten'])}, "
+            f"remembered {len(applied['remembered'])}, "
+            f"proposed {len(applied['proposals'])}"
+            + (f" (review bead {applied['review_bead']}"
+               f"{', new' if applied['review_bead_created'] else ', reused'})"
+               if applied["review_bead"] else "")
+        )
 
 
 @app.command(name="recipes")

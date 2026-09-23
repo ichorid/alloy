@@ -364,6 +364,23 @@ class BeadsClient:
             raise BeadsError(f"could not claim freshly created bug bead {new_id}")
         return new_id
 
+    def create_task(self, *, title: str, description: str, labels: list[str]) -> str:
+        """Create a plain task bead and return its id."""
+        args = ["create", title, "--type", "task", "--description", description]
+        if labels:
+            args += ["--labels", ",".join(labels)]
+        args.append("--silent")
+        proc = self._run(args)
+        lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+        if not lines:
+            raise BeadsError(f"bd create --silent returned no id: {proc.stderr.strip()}")
+        return lines[-1]
+
+    def open_by_label(self, label: str) -> list[Bead]:
+        """Open beads carrying `label`."""
+        rows = self._json(["list", "--label", label, "--status", "open", "--limit", "0", "--flat"])
+        return [Bead.model_validate(row) for row in rows]
+
     def add_dependency(self, bead_id: str, depends_on_id: str) -> None:
         """Make `bead_id` blocked by `depends_on_id` (bd's default `blocks` edge)."""
         self._run(["dep", "add", bead_id, depends_on_id])
