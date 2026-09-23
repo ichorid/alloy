@@ -13,7 +13,7 @@ from datetime import date
 from typer.testing import CliRunner
 
 from alloy.cli import app
-from alloy.models import with_provenance
+from alloy.models import utcnow, with_provenance
 
 HUMAN_KEY = "conv"
 HUMAN_VALUE = "repo uses pathlib"
@@ -121,7 +121,9 @@ def test_memory_list_json_lesson_has_provenance_embedded_flag_and_age(
     assert lesson["run_id"] == RUN_ID
     assert lesson["bead_id"] == BEAD_ID
     assert lesson["date"] == PROVENANCE_DATE.isoformat()
-    assert lesson["age_days"] == (date.today() - PROVENANCE_DATE).days
+    # the CLI ages memories against utcnow().date(); a local date.today()
+    # disagrees with UTC shortly after local midnight in UTC+ timezones
+    assert lesson["age_days"] == (utcnow().date() - PROVENANCE_DATE).days
     assert lesson["flags"] == ["embedded"]
 
 
