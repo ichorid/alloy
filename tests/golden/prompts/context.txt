@@ -8,6 +8,8 @@ Produce a context packet:
   for running tests, lint or build; a verifier decides what actually runs
 - conventions: naming, structure and style rules an outsider would get wrong
 - risks: things that could make this change break something else
+- memory_contradictions (optional): project memory entries the repository
+  contradicts, each 'key: why'; the memory is left as is and flagged for review
 
 If you discover a defect in existing code outside this task's scope (not the failing tests you were asked to make pass, and not your own change), do not fix it or silently work around it.
 If the defect blocks your task, stop and report it.
