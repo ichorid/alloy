@@ -661,6 +661,41 @@ def memory_review(
         )
 
 
+@memory_app.command(name="embed")
+def memory_embed(
+    repo: Optional[Path] = RepoOption,
+    root: Optional[Path] = RootOption,
+    recipe: str = typer.Option(MEMORY_REVIEW_RECIPE, "--recipe",
+                               help="Recipe whose memory settings to use"),
+) -> None:
+    """Render the alloy:meta:embed set into the managed block of every
+    existing instruction file (memory.instruction_files) and print the files
+    that changed. Never runs git."""
+    from alloy.memory_embed import render_embed_block, splice_managed_block
+
+    engine = _engine(repo, root)
+    try:
+        memories = engine.beads.memories()
+    except bd.BeadsError as exc:
+        _fail(str(exc))
+        return
+    try:
+        config = engine.load_config(recipe)
+    except ConfigError as exc:
+        _fail(str(exc))
+        return
+    memory = ProjectMemory.from_raw(memories, config.memory)
+    managed = render_embed_block(memory, config.memory)
+    for name in config.memory.instruction_files:
+        path = engine.repo / name
+        if not path.is_file():
+            continue
+        updated, changed = splice_managed_block(path.read_text(encoding="utf-8"), managed)
+        if changed:
+            path.write_text(updated, encoding="utf-8")
+            console.print(name)
+
+
 @app.command(name="recipes")
 def recipes_command(
     repo: Optional[Path] = RepoOption,
