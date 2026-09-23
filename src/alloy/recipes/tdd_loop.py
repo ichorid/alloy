@@ -23,7 +23,7 @@ import re
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, Awaitable, Callable, NamedTuple, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send, interrupt
@@ -153,6 +153,7 @@ class TddState(TypedDict, total=False):
     stage: str
     outcome: str | None
     outcome_reason: str
+    conflict_files: list[str]               # land: paths the trial merge conflicted on
     limit_hit: str | None
     human_note: str
     resume_to: str | None      # stage that parked the run at the human gate
@@ -1174,6 +1175,376 @@ def untriaged(state: TddState) -> list[dict[str, Any]]:
     return [bug for bug in state.get("reported_bugs", []) if bug["title"] not in done]
 
 
+def _implementer_changed_tests(ctx: RunContext, state: TddState) -> list[str]:
+    """Test files whose contents moved since prove_red: edited, deleted or
+    added by the implementer, as opposed to written by the tests role."""
+    before = state.get("test_fingerprints") or {}
+    current = [
+        path for path in ctx.worktrees.changed_files(ctx.worktree) if is_test_path(path)
+    ]
+    paths = sorted(set(before) | set(current))
+    after = ctx.worktrees.fingerprints(ctx.worktree, paths)
+    return [path for path in paths if before.get(path) != after.get(path)]
+
+
+class VerifyLoop(NamedTuple):
+    """The nodes tdd-loop and land share -- the verifier's check loop, the
+    acceptance gate and the judge -- plus their routing functions."""
+
+    verifier_step: Callable[[TddState], Awaitable[dict[str, Any]]]
+    route_after_verifier: Callable[[TddState], str]
+    run_check_step: Callable[[TddState], Awaitable[dict[str, Any]]]
+    route_after_check: Callable[[TddState], str]
+    acceptance_gate: Callable[[TddState], Awaitable[dict[str, Any]]]
+    route_after_acceptance: Callable[[TddState], str]
+    judge: Callable[[TddState], Awaitable[dict[str, Any]]]
+
+
+def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None) -> VerifyLoop:
+    """Bind the shared verify/judge nodes to one run's context.
+
+    `implementer_fallback` labels Attempt rows when the state names no
+    implementer and the recipe has no implement role to ask (land)."""
+
+    def _implementer(state: TddState) -> str:
+        if state.get("implementer"):
+            return str(state["implementer"])
+        if implementer_fallback is not None:
+            return implementer_fallback
+        return ctx.role_spec("implement", state).runner
+
+    async def verifier_step(state: TddState) -> dict[str, Any]:
+        """Ask the verifier for one action: the next check to run, or stop.
+
+        One agent call per node so LangGraph checkpoints between the proposal
+        and its execution (`run_check_step`); a run killed mid-check resumes
+        with every finished check already in the state. The verifier
+        proposes; Alloy enforces the budgets here. A stop, or the
+        per-iteration budget, hands the evidence to the acceptance gate; the
+        run-wide cap routes to guard, which parks the run like
+        max_iterations."""
+        iteration = state.get("iteration", 0)
+        ctx.set_stage("verify", iteration=iteration)
+        spec = ctx.recipe.role("verifier")
+        tests_session = state.get("tests_session")
+        per_iteration = ctx.recipe.verification.max_checks_per_iteration
+        allowed_total = ctx.total_checks_allowed(state)
+        checks = list(state.get("checks") or [])
+        iteration_checks = int(state.get("iteration_checks", 0) or 0)
+        total = len(state.get("baseline") or []) + len(checks)
+        update: dict[str, Any] = {
+            "stage": "verify", "pending_check": None, "verify_route": "acceptance_gate",
+            "verifier_stop": None,
+        }
+
+        if total >= allowed_total:
+            update.update(
+                verify_route="guard",
+                decision=JudgeDecision(
+                    decision="retry",
+                    reason=f"the run's verification budget is spent ({total} checks)",
+                ).model_dump(),
+            )
+            return update
+        if iteration_checks >= per_iteration:
+            # `pending_check` still holds the action behind the check that just ran.
+            last_action = state.get("pending_check") or {}
+            risks = list(last_action.get("remaining_risks") or [])
+            stop = VerifierAction(
+                action="stop",
+                reason=f"Alloy stopped verification after {iteration_checks} checks "
+                "this iteration",
+                remaining_risks=[*risks, "verifier check budget exhausted"],
+            )
+            update["verifier_stop"] = stop.model_dump()
+            return update
+
+        failure = VerifierAction(action="stop")
+        diff = ctx.diff()
+        changed_before = ctx.worktrees.changed_files(ctx.worktree)
+        prompt_args = (
+            ctx.bead.task_brief(),
+            ctx.bead.acceptance_criteria,
+            state.get("context", {}),
+            diff,
+            changed_before,
+            checks,
+            iteration,
+            per_iteration - iteration_checks,
+            allowed_total - total,
+            state.get("attempts", []),
+        )
+        prompt_kwargs = dict(
+            baseline_checks=state.get("baseline_checks", []),
+            instructions=state.get("instructions", ""),
+            memory=state.get("memory_block", ""),
+        )
+        # The verifier continues the tests writer's session: the agent that
+        # wrote the tests chooses how to verify them, context intact.
+        session_id = resumable_session(spec, tests_session)
+        try:
+            result = await call_in_session(
+                ctx, "verifier", spec,
+                verifier_prompt(*prompt_args, **prompt_kwargs),
+                verifier_prompt(*prompt_args, **prompt_kwargs, resumed=True),
+                session_id=session_id,
+                schema=VerifierAction.schema_for_agents(),
+                iteration=iteration,
+            )
+        except Exception as exc:
+            failure.reason = f"verifier failed: {exc}"
+            result = None
+        if session_id is not None and (result is None or not was_resumed(result)):
+            # The session is gone (or the harness refused it): stop paying
+            # for a failed resume before every fresh call.
+            update["tests_session"] = None
+        # The verifier is read-only by contract; an edit would let it pass
+        # or fail the task for the wrong reason, so a human decides.
+        changed_after = ctx.worktrees.changed_files(ctx.worktree)
+        if changed_after != changed_before or ctx.diff() != diff:
+            touched = sorted(set(changed_after) ^ set(changed_before)) or changed_after
+            update.update(
+                verify_route="human_gate",
+                resume_to="implement",
+                decision=JudgeDecision(
+                    decision="human",
+                    reason="verifier modified the worktree: " + ", ".join(touched),
+                    next_instructions="Revert or keep the verifier's edits, then "
+                    "resume; the implementer runs again.",
+                ).model_dump(),
+            )
+            return update
+        action = failure if result is None else answer_of(
+            "verifier", result, model_cls=VerifierAction, default=failure
+        )
+        if action is failure or (action.action == "run" and not action.command.strip()):
+            why = failure.reason if action is failure else \
+                "verifier proposed a run without a command"
+            stop = VerifierAction(
+                action="stop",
+                reason=f"verifier failed: {why}",
+                remaining_risks=["verifier did not answer; no further checks were run"],
+            )
+            update["verifier_stop"] = stop.model_dump()
+            return update
+        if action.action == "stop":
+            update["verifier_stop"] = action.model_dump()
+            return update
+        update.update(pending_check=action.model_dump(), verify_route="run_check_step")
+        return update
+
+    def route_after_verifier(state: TddState) -> str:
+        return state.get("verify_route") or "acceptance_gate"
+
+    async def run_check_step(state: TddState) -> dict[str, Any]:
+        """Run the check the verifier proposed, as-is, and record the evidence.
+
+        One command per node: the result is checkpointed before the verifier
+        is asked again, so a crash here re-runs only this check. A red
+        required check goes straight back to the implementer (through guard,
+        so the iteration limits still apply) without a judge call; two
+        unrunnable commands in a row ask a human."""
+        iteration = state.get("iteration", 0)
+        action = VerifierAction.model_validate(state.get("pending_check") or {})
+        result = await ctx.run_check(action.to_request())
+        result.iteration = iteration
+        record = result.model_dump(mode="json")
+        checks = [*(state.get("checks") or []), record]
+        iteration_checks = int(state.get("iteration_checks", 0) or 0) + 1
+        ctx.set_tests_summary(f"{len(checks)} checks, last: {result.headline()}")
+        update: dict[str, Any] = {
+            "stage": "verify", "checks": [record], "last_check": record,
+            "iteration_checks": iteration_checks, "verify_route": "verifier_step",
+            "unrunnable_streak": 0,
+        }
+
+        if not result.runnable:
+            streak = int(state.get("unrunnable_streak", 0) or 0) + 1
+            update["unrunnable_streak"] = streak
+            if streak >= 2:
+                unrunnable = [CheckResult.model_validate(c) for c in checks[-2:]]
+                update.update(
+                    verify_route="human_gate",
+                    resume_to="implement",
+                    decision=JudgeDecision(
+                        decision="human",
+                        reason="the verifier proposed two commands in a row that could "
+                        "not run: " + ", ".join(
+                            f"`{c.command}` ({c.headline()})" for c in unrunnable
+                        ),
+                        next_instructions="Check the worktree's toolchain or tell the "
+                        "implementer what to verify, then resume; the implementer "
+                        "runs again.",
+                    ).model_dump(),
+                )
+            return update
+
+        if result.required and not result.ok:
+            reason = f"required check `{result.command}` failed ({result.headline()})"
+            update.update(
+                verify_route="guard",
+                decision=JudgeDecision(
+                    decision="retry",
+                    reason=reason,
+                    next_instructions=(
+                        f"The required check `{result.command}` exited "
+                        f"{result.exit_code}; see '## Failed check'. Make it pass "
+                        "without weakening or skipping it."
+                    ),
+                ).model_dump(),
+                attempts=[Attempt(
+                    iteration=iteration,
+                    implementer=_implementer(state),
+                    change_summary=state.get("change_summary", ""),
+                    checks=_checks_headline(_checks_of({"checks": checks}, iteration)),
+                    decision="repair",
+                    reason=reason,
+                ).model_dump()],
+            )
+        return update
+
+    def route_after_check(state: TddState) -> str:
+        return state.get("verify_route") or "verifier_step"
+
+    async def acceptance_gate(state: TddState) -> dict[str, Any]:
+        """A cheap semantic check after the verifier stops: is the evidence enough?
+
+        The acceptance role proposes accept / verify_more / repair / escalate;
+        Alloy post-processes deterministically. Only escalate (including low
+        confidence and a failed call) reaches the judge, and guard alone can
+        finalise `done`."""
+        iteration = state.get("iteration", 0)
+        ctx.set_stage("acceptance", iteration=iteration)
+        spec = ctx.recipe.role("acceptance")
+        verification = ctx.recipe.verification
+        iteration_checks = int(state.get("iteration_checks", 0) or 0)
+        checks = _checks_of(state, iteration)
+        stop_raw = state.get("verifier_stop")
+        stop = VerifierAction.model_validate(stop_raw) if stop_raw else None
+        changed_tests = _implementer_changed_tests(ctx, state)
+        verdict = await classify(
+            ctx, "acceptance", spec,
+            acceptance_prompt(
+                ctx.bead.acceptance_criteria, ctx.diff(), changed_tests, checks, stop_raw,
+            ),
+            model_cls=AcceptanceVerdict,
+            default=AcceptanceVerdict(decision="escalate", reason="acceptance role failed"),
+            iteration=iteration,
+        )
+        if verdict.decision == "accept" and \
+                verdict.confidence < verification.min_acceptance_confidence:
+            verdict = AcceptanceVerdict(
+                decision="escalate",
+                reason=f"{verdict.reason}; confidence below threshold",
+                confidence=verdict.confidence,
+            )
+        if verdict.decision == "verify_more" and \
+                iteration_checks >= verification.max_checks_per_iteration:
+            verdict = AcceptanceVerdict(
+                decision="escalate",
+                reason=f"{verdict.reason}; verifier check budget exhausted",
+                confidence=verdict.confidence,
+            )
+
+        update: dict[str, Any] = {"stage": "acceptance", "acceptance": verdict.model_dump()}
+        risks = "; ".join(stop.remaining_risks) if stop and stop.remaining_risks else ""
+        row = dict(
+            iteration=iteration,
+            implementer=_implementer(state),
+            change_summary=state.get("change_summary", ""),
+            checks=_checks_headline(checks),
+            changed_tests=changed_tests,
+        )
+        if verdict.decision == "accept":
+            update.update(
+                acceptance_route="guard",
+                decision=JudgeDecision(
+                    decision="done",
+                    reason=f"acceptance gate: {verdict.reason}",
+                    confidence=verdict.confidence,
+                ).model_dump(),
+            )
+        elif verdict.decision == "repair":
+            instructions = f"The acceptance gate asked for a repair: {verdict.reason}."
+            if risks:
+                instructions += f" Remaining risks: {risks}"
+            reason = f"acceptance gate asked for a repair: {verdict.reason}"
+            update.update(
+                acceptance_route="guard",
+                decision=JudgeDecision(
+                    decision="retry", reason=reason, next_instructions=instructions,
+                    confidence=verdict.confidence,
+                ).model_dump(),
+                attempts=[Attempt(**row, decision="repair", reason=reason).model_dump()],
+            )
+        elif verdict.decision == "verify_more":
+            instructions = f"The acceptance gate found this unverified: {verdict.reason}"
+            if risks:
+                instructions += f" Remaining risks: {risks}"
+            update.update(
+                acceptance_route="verifier_step",
+                verifier_stop=None,
+                unrunnable_streak=0,
+                instructions=instructions,
+            )
+        else:
+            update["acceptance_route"] = "judge"
+        return update
+
+    def route_after_acceptance(state: TddState) -> str:
+        return state.get("acceptance_route") or "judge"
+
+    async def judge(state: TddState) -> dict[str, Any]:
+        ctx.set_stage("judge", iteration=state.get("iteration", 0))
+        spec = ctx.recipe.role("judge")
+        diff = ctx.diff()
+        changed_tests = _implementer_changed_tests(ctx, state)
+        result = await ctx.call(
+            "judge",
+            spec,
+            judge_prompt(
+                ctx.bead.task_brief(),
+                ctx.bead.acceptance_criteria,
+                state.get("context", {}),
+                diff,
+                _checks_of(state, state.get("iteration", 0)),
+                state.get("attempts", []),
+                state.get("iteration", 0),
+                ctx.limits_note(state),
+                verifier_stop=state.get("verifier_stop"),
+                changed_tests=changed_tests,
+                memory=state.get("memory_block", ""),
+            ),
+            schema=JudgeDecision.schema_for_agents(),
+            iteration=state.get("iteration", 0),
+        )
+        decision = _decision_from(result, state)
+        attempt = Attempt(
+            iteration=state.get("iteration", 0),
+            implementer=_implementer(state),
+            change_summary=state.get("change_summary", ""),
+            checks=_checks_headline(_checks_of(state, state.get("iteration", 0))),
+            decision=decision.decision,
+            reason=decision.reason,
+            changed_tests=changed_tests,
+        )
+        return {
+            "decision": decision.model_dump(),
+            "attempts": [attempt.model_dump()],
+            "stage": "judge",
+        }
+
+    return VerifyLoop(
+        verifier_step=verifier_step,
+        route_after_verifier=route_after_verifier,
+        run_check_step=run_check_step,
+        route_after_check=route_after_check,
+        acceptance_gate=acceptance_gate,
+        route_after_acceptance=route_after_acceptance,
+        judge=judge,
+    )
+
+
 def build_graph(ctx: RunContext):
     """Compile the tdd-loop graph bound to one task's runtime."""
 
@@ -1665,338 +2036,7 @@ def build_graph(ctx: RunContext):
         last = remediations[-1] if remediations else {}
         return "implement" if last.get("outcome") == Outcome.DONE.value else "human_gate"
 
-    async def verifier_step(state: TddState) -> dict[str, Any]:
-        """Ask the verifier for one action: the next check to run, or stop.
-
-        One agent call per node so LangGraph checkpoints between the proposal
-        and its execution (`run_check_step`); a run killed mid-check resumes
-        with every finished check already in the state. The verifier
-        proposes; Alloy enforces the budgets here. A stop, or the
-        per-iteration budget, hands the evidence to the acceptance gate; the
-        run-wide cap routes to guard, which parks the run like
-        max_iterations."""
-        iteration = state.get("iteration", 0)
-        ctx.set_stage("verify", iteration=iteration)
-        spec = ctx.recipe.role("verifier")
-        tests_session = state.get("tests_session")
-        per_iteration = ctx.recipe.verification.max_checks_per_iteration
-        allowed_total = ctx.total_checks_allowed(state)
-        checks = list(state.get("checks") or [])
-        iteration_checks = int(state.get("iteration_checks", 0) or 0)
-        total = len(state.get("baseline") or []) + len(checks)
-        update: dict[str, Any] = {
-            "stage": "verify", "pending_check": None, "verify_route": "acceptance_gate",
-            "verifier_stop": None,
-        }
-
-        if total >= allowed_total:
-            update.update(
-                verify_route="guard",
-                decision=JudgeDecision(
-                    decision="retry",
-                    reason=f"the run's verification budget is spent ({total} checks)",
-                ).model_dump(),
-            )
-            return update
-        if iteration_checks >= per_iteration:
-            # `pending_check` still holds the action behind the check that just ran.
-            last_action = state.get("pending_check") or {}
-            risks = list(last_action.get("remaining_risks") or [])
-            stop = VerifierAction(
-                action="stop",
-                reason=f"Alloy stopped verification after {iteration_checks} checks "
-                "this iteration",
-                remaining_risks=[*risks, "verifier check budget exhausted"],
-            )
-            update["verifier_stop"] = stop.model_dump()
-            return update
-
-        failure = VerifierAction(action="stop")
-        diff = ctx.diff()
-        changed_before = ctx.worktrees.changed_files(ctx.worktree)
-        prompt_args = (
-            ctx.bead.task_brief(),
-            ctx.bead.acceptance_criteria,
-            state.get("context", {}),
-            diff,
-            changed_before,
-            checks,
-            iteration,
-            per_iteration - iteration_checks,
-            allowed_total - total,
-            state.get("attempts", []),
-        )
-        prompt_kwargs = dict(
-            baseline_checks=state.get("baseline_checks", []),
-            instructions=state.get("instructions", ""),
-            memory=state.get("memory_block", ""),
-        )
-        # The verifier continues the tests writer's session: the agent that
-        # wrote the tests chooses how to verify them, context intact.
-        session_id = resumable_session(spec, tests_session)
-        try:
-            result = await call_in_session(
-                ctx, "verifier", spec,
-                verifier_prompt(*prompt_args, **prompt_kwargs),
-                verifier_prompt(*prompt_args, **prompt_kwargs, resumed=True),
-                session_id=session_id,
-                schema=VerifierAction.schema_for_agents(),
-                iteration=iteration,
-            )
-        except Exception as exc:
-            failure.reason = f"verifier failed: {exc}"
-            result = None
-        if session_id is not None and (result is None or not was_resumed(result)):
-            # The session is gone (or the harness refused it): stop paying
-            # for a failed resume before every fresh call.
-            update["tests_session"] = None
-        # The verifier is read-only by contract; an edit would let it pass
-        # or fail the task for the wrong reason, so a human decides.
-        changed_after = ctx.worktrees.changed_files(ctx.worktree)
-        if changed_after != changed_before or ctx.diff() != diff:
-            touched = sorted(set(changed_after) ^ set(changed_before)) or changed_after
-            update.update(
-                verify_route="human_gate",
-                resume_to="implement",
-                decision=JudgeDecision(
-                    decision="human",
-                    reason="verifier modified the worktree: " + ", ".join(touched),
-                    next_instructions="Revert or keep the verifier's edits, then "
-                    "resume; the implementer runs again.",
-                ).model_dump(),
-            )
-            return update
-        action = failure if result is None else answer_of(
-            "verifier", result, model_cls=VerifierAction, default=failure
-        )
-        if action is failure or (action.action == "run" and not action.command.strip()):
-            why = failure.reason if action is failure else \
-                "verifier proposed a run without a command"
-            stop = VerifierAction(
-                action="stop",
-                reason=f"verifier failed: {why}",
-                remaining_risks=["verifier did not answer; no further checks were run"],
-            )
-            update["verifier_stop"] = stop.model_dump()
-            return update
-        if action.action == "stop":
-            update["verifier_stop"] = action.model_dump()
-            return update
-        update.update(pending_check=action.model_dump(), verify_route="run_check_step")
-        return update
-
-    def route_after_verifier(state: TddState) -> str:
-        return state.get("verify_route") or "acceptance_gate"
-
-    async def run_check_step(state: TddState) -> dict[str, Any]:
-        """Run the check the verifier proposed, as-is, and record the evidence.
-
-        One command per node: the result is checkpointed before the verifier
-        is asked again, so a crash here re-runs only this check. A red
-        required check goes straight back to the implementer (through guard,
-        so the iteration limits still apply) without a judge call; two
-        unrunnable commands in a row ask a human."""
-        iteration = state.get("iteration", 0)
-        action = VerifierAction.model_validate(state.get("pending_check") or {})
-        result = await ctx.run_check(action.to_request())
-        result.iteration = iteration
-        record = result.model_dump(mode="json")
-        checks = [*(state.get("checks") or []), record]
-        iteration_checks = int(state.get("iteration_checks", 0) or 0) + 1
-        ctx.set_tests_summary(f"{len(checks)} checks, last: {result.headline()}")
-        update: dict[str, Any] = {
-            "stage": "verify", "checks": [record], "last_check": record,
-            "iteration_checks": iteration_checks, "verify_route": "verifier_step",
-            "unrunnable_streak": 0,
-        }
-
-        if not result.runnable:
-            streak = int(state.get("unrunnable_streak", 0) or 0) + 1
-            update["unrunnable_streak"] = streak
-            if streak >= 2:
-                unrunnable = [CheckResult.model_validate(c) for c in checks[-2:]]
-                update.update(
-                    verify_route="human_gate",
-                    resume_to="implement",
-                    decision=JudgeDecision(
-                        decision="human",
-                        reason="the verifier proposed two commands in a row that could "
-                        "not run: " + ", ".join(
-                            f"`{c.command}` ({c.headline()})" for c in unrunnable
-                        ),
-                        next_instructions="Check the worktree's toolchain or tell the "
-                        "implementer what to verify, then resume; the implementer "
-                        "runs again.",
-                    ).model_dump(),
-                )
-            return update
-
-        if result.required and not result.ok:
-            reason = f"required check `{result.command}` failed ({result.headline()})"
-            update.update(
-                verify_route="guard",
-                decision=JudgeDecision(
-                    decision="retry",
-                    reason=reason,
-                    next_instructions=(
-                        f"The required check `{result.command}` exited "
-                        f"{result.exit_code}; see '## Failed check'. Make it pass "
-                        "without weakening or skipping it."
-                    ),
-                ).model_dump(),
-                attempts=[Attempt(
-                    iteration=iteration,
-                    implementer=state.get("implementer")
-                    or ctx.role_spec("implement", state).runner,
-                    change_summary=state.get("change_summary", ""),
-                    checks=_checks_headline(_checks_of({"checks": checks}, iteration)),
-                    decision="repair",
-                    reason=reason,
-                ).model_dump()],
-            )
-        return update
-
-    def route_after_check(state: TddState) -> str:
-        return state.get("verify_route") or "verifier_step"
-
-    def implementer_changed_tests(state: TddState) -> list[str]:
-        """Test files whose contents moved since prove_red: edited, deleted or
-        added by the implementer, as opposed to written by the tests role."""
-        before = state.get("test_fingerprints") or {}
-        current = [
-            path for path in ctx.worktrees.changed_files(ctx.worktree) if is_test_path(path)
-        ]
-        paths = sorted(set(before) | set(current))
-        after = ctx.worktrees.fingerprints(ctx.worktree, paths)
-        return [path for path in paths if before.get(path) != after.get(path)]
-
-    async def acceptance_gate(state: TddState) -> dict[str, Any]:
-        """A cheap semantic check after the verifier stops: is the evidence enough?
-
-        The acceptance role proposes accept / verify_more / repair / escalate;
-        Alloy post-processes deterministically. Only escalate (including low
-        confidence and a failed call) reaches the judge, and guard alone can
-        finalise `done`."""
-        iteration = state.get("iteration", 0)
-        ctx.set_stage("acceptance", iteration=iteration)
-        spec = ctx.recipe.role("acceptance")
-        verification = ctx.recipe.verification
-        iteration_checks = int(state.get("iteration_checks", 0) or 0)
-        checks = _checks_of(state, iteration)
-        stop_raw = state.get("verifier_stop")
-        stop = VerifierAction.model_validate(stop_raw) if stop_raw else None
-        changed_tests = implementer_changed_tests(state)
-        verdict = await classify(
-            ctx, "acceptance", spec,
-            acceptance_prompt(
-                ctx.bead.acceptance_criteria, ctx.diff(), changed_tests, checks, stop_raw,
-            ),
-            model_cls=AcceptanceVerdict,
-            default=AcceptanceVerdict(decision="escalate", reason="acceptance role failed"),
-            iteration=iteration,
-        )
-        if verdict.decision == "accept" and \
-                verdict.confidence < verification.min_acceptance_confidence:
-            verdict = AcceptanceVerdict(
-                decision="escalate",
-                reason=f"{verdict.reason}; confidence below threshold",
-                confidence=verdict.confidence,
-            )
-        if verdict.decision == "verify_more" and \
-                iteration_checks >= verification.max_checks_per_iteration:
-            verdict = AcceptanceVerdict(
-                decision="escalate",
-                reason=f"{verdict.reason}; verifier check budget exhausted",
-                confidence=verdict.confidence,
-            )
-
-        update: dict[str, Any] = {"stage": "acceptance", "acceptance": verdict.model_dump()}
-        risks = "; ".join(stop.remaining_risks) if stop and stop.remaining_risks else ""
-        row = dict(
-            iteration=iteration,
-            implementer=state.get("implementer") or ctx.role_spec("implement", state).runner,
-            change_summary=state.get("change_summary", ""),
-            checks=_checks_headline(checks),
-            changed_tests=changed_tests,
-        )
-        if verdict.decision == "accept":
-            update.update(
-                acceptance_route="guard",
-                decision=JudgeDecision(
-                    decision="done",
-                    reason=f"acceptance gate: {verdict.reason}",
-                    confidence=verdict.confidence,
-                ).model_dump(),
-            )
-        elif verdict.decision == "repair":
-            instructions = f"The acceptance gate asked for a repair: {verdict.reason}."
-            if risks:
-                instructions += f" Remaining risks: {risks}"
-            reason = f"acceptance gate asked for a repair: {verdict.reason}"
-            update.update(
-                acceptance_route="guard",
-                decision=JudgeDecision(
-                    decision="retry", reason=reason, next_instructions=instructions,
-                    confidence=verdict.confidence,
-                ).model_dump(),
-                attempts=[Attempt(**row, decision="repair", reason=reason).model_dump()],
-            )
-        elif verdict.decision == "verify_more":
-            instructions = f"The acceptance gate found this unverified: {verdict.reason}"
-            if risks:
-                instructions += f" Remaining risks: {risks}"
-            update.update(
-                acceptance_route="verifier_step",
-                verifier_stop=None,
-                unrunnable_streak=0,
-                instructions=instructions,
-            )
-        else:
-            update["acceptance_route"] = "judge"
-        return update
-
-    def route_after_acceptance(state: TddState) -> str:
-        return state.get("acceptance_route") or "judge"
-
-    async def judge(state: TddState) -> dict[str, Any]:
-        ctx.set_stage("judge", iteration=state.get("iteration", 0))
-        spec = ctx.recipe.role("judge")
-        diff = ctx.diff()
-        changed_tests = implementer_changed_tests(state)
-        result = await ctx.call(
-            "judge",
-            spec,
-            judge_prompt(
-                ctx.bead.task_brief(),
-                ctx.bead.acceptance_criteria,
-                state.get("context", {}),
-                diff,
-                _checks_of(state, state.get("iteration", 0)),
-                state.get("attempts", []),
-                state.get("iteration", 0),
-                ctx.limits_note(state),
-                verifier_stop=state.get("verifier_stop"),
-                changed_tests=changed_tests,
-                memory=state.get("memory_block", ""),
-            ),
-            schema=JudgeDecision.schema_for_agents(),
-            iteration=state.get("iteration", 0),
-        )
-        decision = _decision_from(result, state)
-        attempt = Attempt(
-            iteration=state.get("iteration", 0),
-            implementer=state.get("implementer") or ctx.role_spec("implement", state).runner,
-            change_summary=state.get("change_summary", ""),
-            checks=_checks_headline(_checks_of(state, state.get("iteration", 0))),
-            decision=decision.decision,
-            reason=decision.reason,
-            changed_tests=changed_tests,
-        )
-        return {
-            "decision": decision.model_dump(),
-            "attempts": [attempt.model_dump()],
-            "stage": "judge",
-        }
+    verify = make_verify_loop(ctx)
 
     def guard(state: TddState) -> dict[str, Any]:
         """The deterministic gate.
@@ -2043,7 +2083,7 @@ def build_graph(ctx: RunContext):
                 checks=_checks_headline(_checks_of(state, iteration)),
                 decision=decision.decision,
                 reason=decision.reason,
-                changed_tests=implementer_changed_tests(state),
+                changed_tests=_implementer_changed_tests(ctx, state),
             ).model_dump()]
 
         if decision.decision in ("done", "abort", "human"):
@@ -2342,10 +2382,10 @@ def build_graph(ctx: RunContext):
     graph.add_node("implement", implement)
     graph.add_node("triage", triage)
     graph.add_node("remediate", remediate)
-    graph.add_node("verifier_step", verifier_step)
-    graph.add_node("run_check_step", run_check_step)
-    graph.add_node("acceptance_gate", acceptance_gate)
-    graph.add_node("judge", judge)
+    graph.add_node("verifier_step", verify.verifier_step)
+    graph.add_node("run_check_step", verify.run_check_step)
+    graph.add_node("acceptance_gate", verify.acceptance_gate)
+    graph.add_node("judge", verify.judge)
     graph.add_node("guard", guard)
     graph.add_node("critic", critic, input_schema=CriticInput)
     graph.add_node("synthesize", synthesize)
@@ -2369,15 +2409,15 @@ def build_graph(ctx: RunContext):
     )
     graph.add_conditional_edges("remediate", route_after_remediate, ["implement", "human_gate"])
     graph.add_conditional_edges(
-        "verifier_step", route_after_verifier,
+        "verifier_step", verify.route_after_verifier,
         ["run_check_step", "acceptance_gate", "guard", "human_gate"],
     )
     graph.add_conditional_edges(
-        "run_check_step", route_after_check,
+        "run_check_step", verify.route_after_check,
         ["verifier_step", "guard", "human_gate"],
     )
     graph.add_conditional_edges(
-        "acceptance_gate", route_after_acceptance,
+        "acceptance_gate", verify.route_after_acceptance,
         ["guard", "verifier_step", "judge"],
     )
     graph.add_edge("judge", "guard")

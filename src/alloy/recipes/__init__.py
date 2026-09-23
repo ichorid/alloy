@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, NamedTuple
 
-from alloy.recipes import tdd_loop
+from alloy.recipes import land, tdd_loop
 
 
 class Recipe(NamedTuple):
@@ -31,6 +31,13 @@ REGISTRY: dict[str, Recipe] = {
         build_graph=tdd_loop.build_graph,
         initial_state=tdd_loop.initial_state,
         description="tdd-loop with Jev (Typesafe AI) as the judge instead of Claude",
+    ),
+    "land": Recipe(
+        name="land",
+        build_graph=land.build_graph,
+        initial_state=land.initial_state,
+        description="Trial-merge the target into the bead branch, then verify and judge "
+        "the merged tree (done / conflict / red)",
     ),
 }
 
