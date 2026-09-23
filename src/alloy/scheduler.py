@@ -15,12 +15,18 @@ import signal
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
+from typing import Callable
 
 from alloy import beads as bd
+from alloy.config import ConfigError, MemorySpec
 from alloy.engine import Engine, EngineError
-from alloy.models import utcnow
+from alloy.memory_schedule import (
+    MEMORY_REVIEW_RECIPE, apply_review, dirty_instruction_files, embed_instruction_files,
+    review_bead_for_note, review_due, review_plan, review_run_id,
+)
+from alloy.models import EMBED_STALE_KEY, ProjectMemory, utcnow
 from alloy.store import RUN_RUNNING, RUN_WAITING_HUMAN
 
 DEFAULT_POLL_SECONDS = 15.0
@@ -39,6 +45,7 @@ class Scheduler:
     concurrency: int = 1
     recipe_filter: str | None = None
     once: bool = False
+    clock: Callable[[], datetime] = utcnow
     _stopping: bool = field(default=False, init=False)
     _cancel_requested: bool = field(default=False, init=False)
     _current: "asyncio.Task | None" = field(default=None, init=False)
@@ -89,6 +96,8 @@ class Scheduler:
         due = self.due_resume()
         if due is not None:
             return await self._resume_due(due)
+        if await self._memory_maintenance():
+            return True
         bead = self.next_task()
         if bead is None:
             return False
@@ -134,6 +143,65 @@ class Scheduler:
             return await self._current
         finally:
             self._current = None
+
+    # -- memory maintenance (alloy-4ef.19) ----------------------------------
+
+    async def _memory_maintenance(self) -> bool:
+        """Run `memory review --apply` then embed when due: at most once per
+        calendar day and never while a run is active. True if it ran."""
+        if self._running():
+            return False
+        store = self.engine.store
+        today = self.clock().date()
+        last_ran_day = _parse_day(store.last_memory_review_day())
+        if last_ran_day == today:
+            return False  # once per calendar day; skip the bd read entirely
+        try:
+            config = self.engine.load_config(MEMORY_REVIEW_RECIPE)
+            if not config.memory.enabled:
+                return False
+            memory = ProjectMemory.from_raw(self.engine.beads.memories(), config.memory)
+        except (ConfigError, bd.BeadsError) as exc:
+            log.debug("memory maintenance skipped: %s", exc)
+            return False
+        reason = review_due(
+            memory, config.memory, today=today,
+            finished_runs=store.finished_runs_since_last_review(),
+            last_ran_day=last_ran_day,
+        )
+        if reason is None:
+            return False
+        log.info("memory review due: %s", reason)
+        store.set_last_memory_review_day(today.isoformat())
+        run_id = review_run_id()
+        try:
+            plan = await review_plan(self.engine, MEMORY_REVIEW_RECIPE, memory, run_id, today=today)
+            applied = apply_review(self.engine, plan, run_id, today=today)
+            store.set_finished_runs_since_last_review(0)
+            if EMBED_STALE_KEY in memory.entries:
+                self.engine.beads.forget(EMBED_STALE_KEY)
+            self._embed_after_review(config.memory, applied)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("memory review %s failed", run_id)
+            return False
+        return True
+
+    def _embed_after_review(self, spec: MemorySpec, applied: dict) -> None:
+        dirty = dirty_instruction_files(self.engine.repo, spec.instruction_files)
+        if dirty:
+            files = ", ".join(dirty)
+            log.warning("memory embed skipped: %s has uncommitted changes", files)
+            self.engine.beads.note(
+                review_bead_for_note(self.engine, applied),
+                f"alloy: memory embed skipped -- {files} has uncommitted changes; "
+                "commit or revert them, then run `alloy memory embed`",
+            )
+            return
+        memory = ProjectMemory.from_raw(self.engine.beads.memories(), spec)
+        changed = embed_instruction_files(self.engine.repo, memory, spec)
+        log.info("memory embed updated %s", ", ".join(changed) or "nothing")
 
     # -- selection --------------------------------------------------------
 
@@ -200,6 +268,13 @@ class Scheduler:
         with contextlib.suppress(FileNotFoundError):
             if read_pid(self.pidfile) == os.getpid():
                 self.pidfile.unlink()
+
+
+def _parse_day(value: str | None) -> date | None:
+    try:
+        return date.fromisoformat(value) if value else None
+    except ValueError:
+        return None
 
 
 def _parse_iso(value: str) -> datetime | None:
