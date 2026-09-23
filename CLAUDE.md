@@ -106,6 +106,8 @@ alloy recipes --probe --recipe tdd-loop --json
 
 _Add your project-specific conventions here_
 
+- **Monitor UI may use Nerd Font glyphs** (the owner's terminal has them). Read `docs/plans/monitor-nerd-fonts.md` before touching `src/alloy/monitor/`; icons need `nerd|unicode|ascii` fallbacks, and numeric columns are right-aligned.
+
 <!-- alloy:memory:begin -->
 reviewed: 2026-09-23
 review due: 2026-09-30

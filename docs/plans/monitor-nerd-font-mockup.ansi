@@ -1,0 +1,18 @@
+[1m[36m  alloy monitor[0m                                                          [90m14:32:07[0m
+[44;97m  scheduler pid 48213 [0m[34;42m[30;42m  ready 4 [0m[32;45m[97;45m  128   3  cancelled 1 [0m[35m[0m  [90msession +6[0m
+
+  [1mclaude [0m [92m5h      34% █████▍░░░░░░░░░░[0m  [90m 18:00[0m
+  [1m       [0m [93mweekly  71% ███████████▎░░░░[0m  [90m Mon[0m
+  [1mcodex  [0m [91m5h      88% ██████████████░░[0m  [90m 15:10[0m [91m[0m
+  [1mjev    [0m [91m unavailable: no API key[0m
+
+[90m╭─ runs ──────────────────────────────────────────────────────────────────────╮[0m
+[90m│[0m [90mBEAD     STATUS        STAGE     ITER     TESTS  ELAPSED  NOW[0m
+[90m│[0m vrh.9    [96m[7m  running [0m[96m[0m verify     2/5  [92m 14[0m [91m 1[0m      12m  Bash uv run…
+[90m│[0m vrh.10   [95m[7m  judge [0m[95m[0m   judge      1/5      [92m 22[0m       4m  reasoning
+[90m│[0m o89.3    [91m[7m  blocked [0m[91m[0m human      3/5       [91m 2[0m      41m  awaiting gate
+[90m│[0m vrh.8    [92m[7m  done [0m[92m[0m    —          1/5      [92m 31[0m       8m  —
+[90m│[0m 4ef.21   [90m[7m  ready [0m[90m[0m   —            —         —        —  queued
+[90m╰─────────────────────────────────────────────────────────────────────────────╯[0m
+ [90m vrh.9   48k in / 6k out    medium    pending[0m
+ [90m↑↓ select   enter detail   l logs   c cancel   q quit[0m

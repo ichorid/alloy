@@ -64,3 +64,7 @@ The width the app reacts to is `self.size.width` (or an equivalent reactive
 on the app/screen); breakpoints should be named constants shared by both the
 runs-table column selection and the detail-pane layout switch, not duplicated
 threshold literals in two places.
+
+## Nerd Font glyphs
+
+See `monitor-nerd-fonts.md`: glyphs are allowed and encouraged, with `unicode`/`ascii` fallbacks; numeric columns right-aligned.
