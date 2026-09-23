@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from textual import work
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Header, Static
 
 from alloy.monitor.render import COLUMNS, detail_lines, header_line, limits_lines, run_rows
@@ -20,9 +21,10 @@ class MonitorApp(App[None]):
     """Live dashboard over a `snapshot_source` callable returning the frozen snapshot dict."""
 
     TITLE = "alloy monitor"
+    CSS_PATH = "monitor.tcss"
     BINDINGS = [
-        ("j,down", "cursor_down", "Down"),
-        ("k,up", "cursor_up", "Up"),
+        ("j,down", "cursor_down", "move"),
+        ("k,up", "cursor_up", ""),
         ("enter,l", "toggle_detail", "Detail"),
         ("q", "quit", "Quit"),
     ]
@@ -44,15 +46,26 @@ class MonitorApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Static("loading…", id="stats")
+        stats = Static("loading…", id="stats")
+        stats.border_title = "STATS"
+        yield stats
         limits = Static("", id="limits")
+        limits.border_title = "LIMITS"
         limits.display = False
         yield limits
-        yield DataTable(id="runs", cursor_type="row")
+        runs = DataTable(id="runs", cursor_type="row")
+        runs.border_title = "RUNS"
+        yield runs
         detail = Static("", id="detail")
+        detail.border_title = "DETAIL"
         detail.display = False
         yield detail
         yield Footer()
+
+    def get_key_display(self, binding: Binding) -> str:
+        if binding.action == "cursor_down":
+            return "[j/k]"
+        return super().get_key_display(binding)
 
     def on_mount(self) -> None:
         table = self.query_one("#runs", DataTable)
