@@ -11,7 +11,7 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from langgraph.types import Command
@@ -34,7 +34,7 @@ from alloy.store import (
     RUN_WAITING_HUMAN,
     Store,
 )
-from alloy.worktree import Worktree, WorktreeError, WorktreeManager
+from alloy.worktree import Worktree, WorktreeError, WorktreeManager, is_test_path
 
 RECURSION_LIMIT = 200
 
@@ -276,7 +276,7 @@ class Engine:
         """
         if wip_sha is None:
             return []
-        wip_tests = [p for p in worktrees.added_paths(wip_sha) if _is_test_path(p)]
+        wip_tests = [p for p in worktrees.added_paths(wip_sha) if is_test_path(p)]
         child_changed = set(worktrees.changed_paths(child_wt, base))
         touched = [p for p in wip_tests if p in child_changed]
         if not touched:
@@ -523,14 +523,4 @@ def _interrupt_payload(pending: Any) -> dict[str, Any]:
 
 def _pid_alive(pid: int | None) -> bool:
     return pid_alive(pid)
-
-
-def _is_test_path(path: str) -> bool:
-    parts = PurePosixPath(path)
-    name = parts.name
-    return (
-        any(part in ("tests", "test") for part in parts.parts[:-1])
-        or name.startswith("test_")
-        or name.endswith("_test.py")
-    )
 

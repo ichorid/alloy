@@ -55,6 +55,16 @@ def load_config(**overrides: Any) -> RecipeConfig:
             fallback=None,
         )
         config = replace(config, roles=roles)
+    if "acceptance" in roles:
+        # No jev fake on PATH; exercise acceptance through the claude harness.
+        acceptance = roles["acceptance"]
+        roles["acceptance"] = replace(
+            acceptance,
+            runner="claude",
+            model=acceptance.model,
+            fallback=None,
+        )
+        config = replace(config, roles=roles)
     return replace(config, **overrides) if overrides else config
 
 

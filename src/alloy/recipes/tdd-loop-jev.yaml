@@ -94,6 +94,18 @@ roles:
       model: sonnet
       timeout_minutes: 10
 
+  acceptance:
+    # Decides, after the verifier stops, whether the evidence is enough to call
+    # the task complete (accept / verify_more / repair / escalate); only
+    # escalate, low confidence or a failed call reaches the judge.
+    runner: jev
+    model: jev-latest
+    timeout_minutes: 5
+    fallback:
+      runner: claude
+      model: sonnet
+      timeout_minutes: 5
+
   judge:
     runner: jev
     model: jev-latest

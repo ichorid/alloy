@@ -71,7 +71,7 @@ async def test_an_interrupted_run_resumes_without_repeating_finished_stages(
     final = await harness.resume(None)
 
     assert final["outcome"] == "done"
-    assert [call["role"] for call in fake_harnesses.calls] == ["implement", "verifier", "judge"]
+    assert [call["role"] for call in fake_harnesses.calls] == ["implement", "verifier", "acceptance", "judge"]
 
 
 async def test_the_checkpoint_survives_the_object_that_wrote_it(
@@ -127,7 +127,7 @@ async def test_a_killed_process_leaves_an_orphaned_run_that_can_be_adopted(
 
     assert result.outcome == "done"
     assert result.run_id == record["run_id"]        # the same run, continued
-    assert [call["role"] for call in fake_harnesses.calls] == ["implement", "verifier", "judge"]
+    assert [call["role"] for call in fake_harnesses.calls] == ["implement", "verifier", "acceptance", "judge"]
     assert engine.beads.show(bead_id).status == bd.STATUS_REVIEW_READY
 
 

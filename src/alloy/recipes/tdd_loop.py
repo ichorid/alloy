@@ -1,9 +1,9 @@
 """The `tdd-loop` recipe.
 
-    context -> estimate -> write failing tests -> implement -> verification loop -> judge -> guard
-                                         ^              |        ^        |                  |
-                                         |          <bug> reports |  red required     done / retry /
-                                         |              v        |  check -> guard  consilium / human / abort
+    context -> estimate -> write failing tests -> implement -> verification loop -> acceptance gate -> guard
+                                         ^              |        ^        |            |  escalate ^
+                                         |          <bug> reports |  red required     |  -> judge --+
+                                         |              v        |  check -> guard  repair -> guard; verify_more -> loop
                                          |            triage ----+
                                          |         (blocking -> remediate; needs-human -> human gate)
                                          +----- synthesize <- critics (parallel)
@@ -27,6 +27,7 @@ from langgraph.types import Send, interrupt
 from alloy.beads import LABEL_BUG, LABEL_HUMAN, META_DISCOVERED_IN_RUN, META_RECIPE, META_TEST_CMD
 from alloy.config import RoleSpec
 from alloy.models import (
+    AcceptanceVerdict,
     AgentResult,
     Attempt,
     BugReport,
@@ -48,6 +49,7 @@ from alloy.models import (
     next_level,
 )
 from alloy.runtime import RunContext
+from alloy.worktree import is_test_path
 
 MAX_DIFF_CHARS = 12000
 PROJECT_CONTEXT_CHARS = 6000
@@ -90,6 +92,8 @@ class TddState(TypedDict, total=False):
     last_check: dict[str, Any] | None          # the most recent CheckResult
     last_instructions: str                     # what the last implement call was told
     verify_route: str | None                   # where verification_loop sent the run
+    acceptance: dict[str, Any] | None          # the AcceptanceVerdict after post-processing
+    acceptance_route: str | None               # where acceptance_gate sent the run
     decision: dict[str, Any] | None
     change_summary: str
     attempts: Annotated[list[dict[str, Any]], operator.add]
@@ -525,6 +529,43 @@ was justified by the acceptance criteria.
 """
 
 
+def acceptance_prompt(
+    acceptance: str,
+    diff: str,
+    changed_tests: list[str],
+    checks_this_iteration: list[dict[str, Any]],
+    verifier_stop: dict[str, Any] | None,
+) -> str:
+    return f"""You are deciding whether there is enough evidence to call a coding task complete.
+You are read-only: you cannot edit code and you never run anything yourself. Green
+checks are not the same as a complete task: the checks may not cover an acceptance
+criterion, or may encode the same misunderstanding as the implementation.
+
+## Acceptance criteria
+{acceptance or "(none stated)"}
+
+## Current diff
+```diff
+{clip(diff, MAX_DIFF_CHARS)}
+```
+
+## Tests changed by the implementer
+{chr(10).join(changed_tests) or "(none)"}
+
+## Check evidence (this iteration)
+{_render_results(checks_this_iteration, verifier_stop)}
+
+Choose exactly one decision:
+- "accept"      -- the evidence covers every acceptance criterion and the diff satisfies them
+- "verify_more" -- a specific criterion or risk is still unverified; say which in `reason`
+- "repair"      -- the diff visibly falls short of a criterion; say what must change in `reason`
+- "escalate"    -- the evidence is ambiguous or the call needs a stronger judge
+
+Give a confidence between 0 and 1. Tests that were weakened, skipped or deleted are
+not evidence; say so and do not accept.
+"""
+
+
 def verifier_prompt(
     brief: str,
     acceptance: str,
@@ -537,6 +578,7 @@ def verifier_prompt(
     checks_left_run: int,
     history: list[dict[str, Any]],
     baseline_checks: list[dict[str, Any]] | None = None,
+    instructions: str = "",
 ) -> str:
     results = [CheckResult.model_validate(item) for item in checks_this_run]
     if results:
@@ -578,6 +620,9 @@ name, in the worktree root, exactly as written, and shows you the result.
 
 ## Last result
 {last_text}
+
+## Acceptance gate
+{instructions or "(not consulted yet this iteration)"}
 
 ## Attempt history
 {_render_history(history) or "(first attempt)"}
@@ -1193,8 +1238,9 @@ def build_graph(ctx: RunContext):
         The verifier proposes; Alloy executes and enforces the budgets. A red
         required check goes straight back to the implementer (through guard,
         so the iteration limits still apply) without a judge call; a stop, or
-        the per-iteration budget, hands the evidence to the judge; the run-wide
-        cap routes to guard, which parks the run like max_iterations."""
+        the per-iteration budget, hands the evidence to the acceptance gate;
+        the run-wide cap routes to guard, which parks the run like
+        max_iterations."""
         iteration = state.get("iteration", 0)
         ctx.set_stage("verify", iteration=iteration)
         spec = ctx.recipe.role("verifier")
@@ -1206,7 +1252,7 @@ def build_graph(ctx: RunContext):
         unrunnable_streak = 0
         last_action: VerifierAction | None = None
         update: dict[str, Any] = {
-            "stage": "verify", "checks": new_checks, "verify_route": "judge",
+            "stage": "verify", "checks": new_checks, "verify_route": "acceptance_gate",
             "verifier_stop": None,
         }
         if checks:
@@ -1249,6 +1295,7 @@ def build_graph(ctx: RunContext):
                     allowed_total - total,
                     state.get("attempts", []),
                     baseline_checks=state.get("baseline_checks", []),
+                    instructions=state.get("instructions", ""),
                 ),
                 model_cls=VerifierAction, default=failure, iteration=iteration,
             )
@@ -1326,7 +1373,95 @@ def build_graph(ctx: RunContext):
         return update
 
     def route_after_verification(state: TddState) -> str:
-        return state.get("verify_route") or "judge"
+        return state.get("verify_route") or "acceptance_gate"
+
+    async def acceptance_gate(state: TddState) -> dict[str, Any]:
+        """A cheap semantic check after the verifier stops: is the evidence enough?
+
+        The acceptance role proposes accept / verify_more / repair / escalate;
+        Alloy post-processes deterministically. Only escalate (including low
+        confidence and a failed call) reaches the judge, and guard alone can
+        finalise `done`."""
+        iteration = state.get("iteration", 0)
+        ctx.set_stage("acceptance", iteration=iteration)
+        spec = ctx.recipe.role("acceptance")
+        verification = ctx.recipe.verification
+        iteration_checks = int(state.get("iteration_checks", 0) or 0)
+        checks = _checks_of(state, iteration)
+        stop_raw = state.get("verifier_stop")
+        stop = VerifierAction.model_validate(stop_raw) if stop_raw else None
+        changed_tests = [
+            path for path in ctx.worktrees.changed_files(ctx.worktree) if is_test_path(path)
+        ]
+        verdict = await classify(
+            ctx, "acceptance", spec,
+            acceptance_prompt(
+                ctx.bead.acceptance_criteria, ctx.diff(), changed_tests, checks, stop_raw,
+            ),
+            model_cls=AcceptanceVerdict,
+            default=AcceptanceVerdict(decision="escalate", reason="acceptance role failed"),
+            iteration=iteration,
+        )
+        if verdict.decision == "accept" and \
+                verdict.confidence < verification.min_acceptance_confidence:
+            verdict = AcceptanceVerdict(
+                decision="escalate",
+                reason=f"{verdict.reason}; confidence below threshold",
+                confidence=verdict.confidence,
+            )
+        if verdict.decision == "verify_more" and \
+                iteration_checks >= verification.max_checks_per_iteration:
+            verdict = AcceptanceVerdict(
+                decision="escalate",
+                reason=f"{verdict.reason}; verifier check budget exhausted",
+                confidence=verdict.confidence,
+            )
+
+        update: dict[str, Any] = {"stage": "acceptance", "acceptance": verdict.model_dump()}
+        risks = "; ".join(stop.remaining_risks) if stop and stop.remaining_risks else ""
+        row = dict(
+            iteration=iteration,
+            implementer=state.get("implementer") or ctx.role_spec("implement", state).runner,
+            change_summary=state.get("change_summary", ""),
+            checks=_checks_headline(checks),
+        )
+        if verdict.decision == "accept":
+            update.update(
+                acceptance_route="guard",
+                decision=JudgeDecision(
+                    decision="done",
+                    reason=f"acceptance gate: {verdict.reason}",
+                    confidence=verdict.confidence,
+                ).model_dump(),
+            )
+        elif verdict.decision == "repair":
+            instructions = f"The acceptance gate asked for a repair: {verdict.reason}."
+            if risks:
+                instructions += f" Remaining risks: {risks}"
+            reason = f"acceptance gate asked for a repair: {verdict.reason}"
+            update.update(
+                acceptance_route="guard",
+                decision=JudgeDecision(
+                    decision="retry", reason=reason, next_instructions=instructions,
+                    confidence=verdict.confidence,
+                ).model_dump(),
+                attempts=[Attempt(**row, decision="repair", reason=reason).model_dump()],
+            )
+        elif verdict.decision == "verify_more":
+            instructions = f"The acceptance gate found this unverified: {verdict.reason}"
+            if risks:
+                instructions += f" Remaining risks: {risks}"
+            update.update(
+                acceptance_route="verification_loop",
+                verifier_stop=None,
+                instructions=instructions,
+            )
+        else:
+            update["acceptance_route"] = "judge"
+        return update
+
+    def route_after_acceptance(state: TddState) -> str:
+        return state.get("acceptance_route") or "judge"
 
     async def judge(state: TddState) -> dict[str, Any]:
         ctx.set_stage("judge", iteration=state.get("iteration", 0))
@@ -1388,12 +1523,35 @@ def build_graph(ctx: RunContext):
                 next_instructions=proposed.next_instructions or "Make the failing tests pass.",
                 confidence=proposed.confidence,
             )
+        elif proposed.decision == "done" and not ctx.worktrees.has_changes(ctx.worktree):
+            decision = JudgeDecision(
+                decision="retry",
+                reason="done proposed while the diff is empty; overridden by Alloy",
+                next_instructions=proposed.next_instructions
+                or "The worktree has no changes; implement the task.",
+                confidence=proposed.confidence,
+            )
+
+        iteration = state.get("iteration", 0)
+        recorded: dict[str, Any] = {}
+        if not any(row.get("iteration") == iteration for row in state.get("attempts") or []):
+            # The iteration ends here without a judge or repair row (e.g. the
+            # acceptance gate accepted): record it once, with guard's verdict.
+            recorded["attempts"] = [Attempt(
+                iteration=iteration,
+                implementer=state.get("implementer") or ctx.role_spec("implement", state).runner,
+                change_summary=state.get("change_summary", ""),
+                checks=_checks_headline(_checks_of(state, iteration)),
+                decision=decision.decision,
+                reason=decision.reason,
+            ).model_dump()]
 
         if decision.decision in ("done", "abort", "human"):
-            return {"stage": "guard", "decision": decision.model_dump()}
+            return {"stage": "guard", "decision": decision.model_dump(), **recorded}
 
         if breach:
             return {
+                **recorded,
                 "stage": "guard",
                 "limit_hit": breach,
                 "decision": JudgeDecision(
@@ -1415,10 +1573,14 @@ def build_graph(ctx: RunContext):
             )
 
         if decision.decision == "consilium":
-            return {"stage": "guard", "decision": decision.model_dump(), "retries_on_tier": 0}
+            return {
+                "stage": "guard", "decision": decision.model_dump(), "retries_on_tier": 0,
+                **recorded,
+            }
 
         retries = state.get("retries_on_tier", 0) + 1
         update: dict[str, Any] = {
+            **recorded,
             "stage": "guard",
             "instructions": decision.next_instructions,
             "decision": decision.model_dump(),
@@ -1578,6 +1740,7 @@ def build_graph(ctx: RunContext):
     graph.add_node("triage", triage)
     graph.add_node("remediate", remediate)
     graph.add_node("verification_loop", verification_loop)
+    graph.add_node("acceptance_gate", acceptance_gate)
     graph.add_node("judge", judge)
     graph.add_node("guard", guard)
     graph.add_node("critic", critic, input_schema=CriticInput)
@@ -1601,7 +1764,12 @@ def build_graph(ctx: RunContext):
     )
     graph.add_conditional_edges("remediate", route_after_remediate, ["implement", "human_gate"])
     graph.add_conditional_edges(
-        "verification_loop", route_after_verification, ["judge", "guard", "human_gate"]
+        "verification_loop", route_after_verification,
+        ["acceptance_gate", "guard", "human_gate"],
+    )
+    graph.add_conditional_edges(
+        "acceptance_gate", route_after_acceptance,
+        ["guard", "verification_loop", "judge"],
     )
     graph.add_edge("judge", "guard")
     graph.add_conditional_edges(
@@ -1636,6 +1804,8 @@ def initial_state(ctx: RunContext) -> TddState:
         last_check=None,
         last_instructions="",
         verify_route=None,
+        acceptance=None,
+        acceptance_route=None,
         attempts=[],
         reported_bugs=[],
         triaged_titles=[],
