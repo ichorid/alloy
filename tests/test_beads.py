@@ -356,3 +356,84 @@ def test_create_bug_invalid_priority_string_raises_beads_error(client, beads_pro
                 bd.META_DISCOVERED_IN_RUN: "run-bad-priority",
             },
         )
+
+
+# -- fake-bd read helpers (alloy-byo.1) ------------------------------------
+
+
+@pytest.fixture
+def read_client(fake_bd):
+    return BeadsClient(repo=fake_bd.repo, binary=str(fake_bd.binary))
+
+
+def test_blocked_returns_beads_with_blocked_by(read_client, fake_bd):
+    fake_bd.configure({
+        "blocked": [
+            {
+                "id": "beads-1",
+                "title": "blocked task",
+                "status": "open",
+                "blocked_by": ["a", "b"],
+            },
+        ],
+    })
+
+    beads = read_client.blocked()
+
+    assert len(beads) == 1
+    assert beads[0].id == "beads-1"
+    assert beads[0].blocked_by == ["a", "b"]
+
+
+def test_children_passes_parent_and_all_and_returns_open_and_closed(read_client, fake_bd):
+    fake_bd.configure({
+        "beads": [
+            {"id": "child-open", "title": "open child", "status": "open", "parent": "E"},
+            {"id": "child-closed", "title": "closed child", "status": "closed", "parent": "E"},
+            {"id": "other", "title": "other parent", "status": "open", "parent": "F"},
+        ],
+    })
+
+    children = read_client.children("E")
+
+    assert {bead.id for bead in children} == {"child-open", "child-closed"}
+    list_calls = [call for call in fake_bd.calls if call["command"] == "list"]
+    assert list_calls, "children() should invoke bd list"
+    assert any(
+        "--parent" in call["argv"]
+        and "E" in call["argv"]
+        and "--all" in call["argv"]
+        for call in list_calls
+    )
+
+
+def test_epic_for_returns_none_for_bead_without_parent(read_client, fake_bd):
+    fake_bd.configure({
+        "shows": {
+            "orphan": {"id": "orphan", "title": "root task", "issue_type": "task"},
+        },
+    })
+
+    assert read_client.epic_for("orphan") is None
+
+
+def test_epic_for_returns_epic_id_for_grandchild(read_client, fake_bd):
+    fake_bd.configure({
+        "shows": {
+            "epic-1": {"id": "epic-1", "title": "Big Epic", "issue_type": "epic"},
+            "child-1": {
+                "id": "child-1",
+                "title": "Child",
+                "issue_type": "task",
+                "parent": "epic-1",
+            },
+            "grand-1": {
+                "id": "grand-1",
+                "title": "Grandchild",
+                "issue_type": "task",
+                "parent": "child-1",
+            },
+        },
+    })
+
+    assert read_client.epic_for("grand-1") == "epic-1"
