@@ -35,6 +35,7 @@ from alloy.models import (
     CHECK_HINTS_KEY,
     CONTRADICTION_KEY_PREFIX,
     MEMORY_RENDER_HEADER,
+    REGRESSION_KEY_PREFIX,
     LESSON_KEY_PREFIX,
     AcceptanceVerdict,
     AgentResult,
@@ -61,6 +62,7 @@ from alloy.models import (
     extract_bug_reports,
     format_calibration,
     format_check_hints,
+    format_regression_areas,
     memory_hygiene,
     merge_review_plan,
     next_level,
@@ -107,6 +109,7 @@ class TddState(TypedDict, total=False):
     memory_calibration: str                    # stored alloy:calibration body, fixed at run start
     memory_keys: list[str]                     # every stored memory key, fixed at run start
     memory_lessons: dict[str, str]             # stored alloy:lesson:* bodies, fixed at run start
+    memory_regressions: dict[str, str]         # refreshed after an unmerged remediation
     complexity: str
     complexity_source: str
     retries_on_tier: int
@@ -1045,6 +1048,12 @@ def _evidence_packet(state: TddState, ctx: RunContext, diff: str) -> str:
             f"## Attempt history\n{_render_history(state.get('attempts', [])) or '(none)'}",
         ]
     )
+    regressions = format_regression_areas(
+        state.get("memory_regressions") or {},
+        (state.get("context") or {}).get("relevant_files") or [],
+    )
+    if regressions:
+        volatile = f"{regressions}\n\n{volatile}"
     return str(
         assemble(
             "",
@@ -1621,6 +1630,14 @@ def build_graph(ctx: RunContext):
                 f"{bug_id}; do not undo it; continue with the task."
             )
             return {**update, "instructions": "\n".join(notes)}
+        if ctx.beads is not None and ctx.recipe.memory.enabled:
+            try:
+                update["memory_regressions"] = {
+                    key: body for key, body in ctx.beads.memories().items()
+                    if key.startswith(REGRESSION_KEY_PREFIX)
+                }
+            except Exception:
+                log.warning("could not refresh regression memories", exc_info=True)
         return {
             **update,
             "resume_to": "implement",
@@ -2377,6 +2394,10 @@ def initial_state(ctx: RunContext) -> TddState:
         memory_calibration=memory.body_of(CALIBRATION_KEY) if memory is not None else "",
         memory_keys=sorted(memory.entries) if memory is not None else [],
         memory_lessons=existing_lessons(memory),
+        memory_regressions={
+            key: entry.body for key, entry in memory.entries.items()
+            if key.startswith(REGRESSION_KEY_PREFIX)
+        } if memory is not None else {},
         iteration=0,
         consiliums=0,
         retries_on_tier=0,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from datetime import datetime
 
@@ -10,8 +11,10 @@ import pytest
 from typer.testing import CliRunner
 
 from alloy import beads as bd
+from alloy.checkpoints import open_checkpointer
 from alloy.cli import app
 from alloy.engine import Engine, EngineError
+from alloy.models import parse_provenance
 from support import load_config
 from conftest import (
     bd_create,
@@ -97,7 +100,8 @@ async def test_a_run_is_recorded_with_every_agent_call(
     calls = engine.store.agent_calls(result.run_id)
 
     assert [call["role"] for call in calls] == [
-        "context", "estimate", "tests", "implement", "verifier", "acceptance", "judge"
+        "context", "estimate", "tests", "implement", "verifier", "acceptance", "judge",
+        "harvest",
     ]
     for call in calls:
         assert call["prompt_hash"]
@@ -105,7 +109,7 @@ async def test_a_run_is_recorded_with_every_agent_call(
         assert call["duration_s"] >= 0
     record = engine.store.get_run(result.run_id)
     assert record["status"] == "done"
-    assert record["agent_calls"] == 7
+    assert record["agent_calls"] == 8
 
 
 async def test_failure_marks_the_bead_failed_and_keeps_the_worktree(
@@ -297,7 +301,8 @@ async def test_rerunning_a_cancelled_bead_starts_from_a_clean_graph(
     assert result.run_id != abandoned.run_id
     assert result.outcome == "done"
     assert [call["role"] for call in fake_harnesses.calls] == [
-        "context", "estimate", "tests", "implement", "verifier", "acceptance", "judge"
+        "context", "estimate", "tests", "implement", "verifier", "acceptance", "judge",
+        "harvest",
     ]
     assert engine.store.get_run(result.run_id)["iteration"] == 1
 
@@ -379,3 +384,66 @@ async def test_resume_reconciles_inflight_calls_before_reassigning_pid(
     assert "reconcile" in order
     assert "pid_reassign" in order
     assert order.index("reconcile") < order.index("pid_reassign")
+
+
+# -- alloy:regression from unmerged remediations (alloy-4ef.13) ---------------
+
+
+REGRESSION_PREFIX_KEY = "alloy:regression:src"
+BUG_WHERE = "src/alloy/verify.py:12"
+BUG_TITLE = "verify() mishandles empty input"
+
+
+def _bug_description_with_where(title: str, where: str) -> str:
+    return (
+        f"title: {title}\n"
+        f"where: {where}\n"
+        f"evidence: merge gate rejected the fix\n"
+        f"blocks_task (reporter's opinion): True\n"
+    )
+
+
+async def test_unmerged_remediation_remembers_alloy_regression_prefix(
+    engine, beads_project, fake_harnesses,
+):
+    """Unmerged remediation writes alloy:regression:<top-level path> with bug title."""
+    from test_engine_run_child import (
+        _bug_script,
+        _parent_context,
+        _paused_parent_with_wip,
+    )
+
+    parent_id, parent_run_id, _, _ = await _paused_parent_with_wip(
+        engine, beads_project, fake_harnesses,
+    )
+    bug_id = bd_create(beads_project, BUG_TITLE, alloy_recipe="tdd-loop")
+    engine.beads.claim(bug_id)
+    subprocess.run(
+        ["bd", "update", bug_id, "-d", _bug_description_with_where(BUG_TITLE, BUG_WHERE)],
+        cwd=str(beads_project), check=True, capture_output=True, text=True,
+    )
+
+    async def gate_reject(bead, diff: str):
+        return False, "too-broad: touches verify internals"
+
+    fake_harnesses.reset_calls()
+    fake_harnesses.configure(_bug_script())
+
+    async with open_checkpointer(engine.paths.workflows_db) as checkpointer:
+        parent_ctx = await _parent_context(engine, parent_id, parent_run_id, checkpointer)
+        result = await engine.run_child(
+            bug_id, parent=parent_ctx, merge_gate=gate_reject,
+        )
+
+    assert result.outcome == "failed"
+
+    memories = engine.beads.memories()
+    assert REGRESSION_PREFIX_KEY in memories, (
+        f"expected {REGRESSION_PREFIX_KEY} after unmerged remediation; "
+        f"got keys: {sorted(memories)}"
+    )
+    body, run_id, bead_id, at = parse_provenance(memories[REGRESSION_PREFIX_KEY])
+    assert BUG_TITLE in body
+    assert run_id == result.run_id
+    assert bead_id == bug_id
+    assert at is not None
