@@ -8,6 +8,7 @@ No Textual involved -- see tests/test_monitor_view.py for the pilot tests.
 
 from __future__ import annotations
 
+from alloy.monitor.icons import icon
 from alloy.monitor.render import COLUMNS, header_line, run_rows
 
 EMPTY_TOKENS = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
@@ -723,3 +724,90 @@ def test_title_line_nerd_includes_alloy_glyph_within_width_budget():
     line = title_line(_powerline_acceptance_snapshot(), 100, "nerd")
     assert "\uf0c3" in line
     assert cell_len(line) <= 100
+
+
+# -- alloy-3g0.5: column alignment and mode-aware tests cell ------------------
+
+
+def test_right_aligned_columns_constant():
+    from alloy.monitor.render import RIGHT_ALIGNED
+
+    assert RIGHT_ALIGNED == frozenset({"iter", "cons", "tests", "elapsed", "tokens"})
+
+
+def test_column_align_right_for_numeric_columns():
+    from alloy.monitor.render import column_align
+
+    for name in ("iter", "cons", "tests", "elapsed", "tokens"):
+        assert column_align(name) == "right"
+
+
+def test_column_align_left_for_text_columns():
+    from alloy.monitor.render import column_align
+
+    for name in ("bead", "status", "stage", "now"):
+        assert column_align(name) == "left"
+
+
+def test_run_rows_nerd_formats_tests_summary_with_pass_and_fail_counts():
+    ok = icon("test_ok", "nerd")
+    fail = icon("test_fail", "nerd")
+    snapshot = _snapshot(runs=[_run(tests_summary="3 passed, 1 failed")])
+
+    row = run_rows(snapshot, mode="nerd")[0]
+
+    assert row[7] == f"{ok}3 {fail}1"
+
+
+def test_run_rows_nerd_formats_tests_summary_with_pass_only():
+    ok = icon("test_ok", "nerd")
+    snapshot = _snapshot(runs=[_run(tests_summary="3 passed")])
+
+    row = run_rows(snapshot, mode="nerd")[0]
+
+    assert row[7] == f"{ok}3"
+
+
+def test_run_rows_nerd_leaves_unparseable_tests_summary_verbatim():
+    snapshot = _snapshot(runs=[_run(tests_summary="flaky")])
+
+    row = run_rows(snapshot, mode="nerd")[0]
+
+    assert row[7] == "flaky"
+
+
+def test_run_rows_nerd_checks_with_exit_code_zero_shows_ok_glyph_and_total():
+    ok = icon("test_ok", "nerd")
+    run = _run(tests_summary=None)
+    run["checks"] = {"total": 14, "last": {"exit_code": 0}}
+
+    row = run_rows(_snapshot(runs=[run]), mode="nerd")[0]
+
+    assert row[7] == f"{ok}14"
+
+
+def test_run_rows_nerd_checks_with_exit_code_one_shows_fail_glyph_and_total():
+    fail = icon("test_fail", "nerd")
+    run = _run(tests_summary=None)
+    run["checks"] = {"total": 14, "last": {"exit_code": 1}}
+
+    row = run_rows(_snapshot(runs=[run]), mode="nerd")[0]
+
+    assert row[7] == f"{fail}14"
+
+
+def test_run_rows_ascii_checks_still_shows_n_checks():
+    run = _run(tests_summary=None)
+    run["checks"] = {"total": 14, "last": {"exit_code": 0}}
+
+    row = run_rows(_snapshot(runs=[run]))[0]
+
+    assert row[7] == "14 checks"
+
+
+def test_run_rows_ascii_mode_keeps_tests_summary_verbatim():
+    snapshot = _snapshot(runs=[_run(tests_summary="3 passed, 1 failed")])
+
+    row = run_rows(snapshot, mode="ascii")[0]
+
+    assert row[7] == "3 passed, 1 failed"

@@ -15,9 +15,12 @@ from rich.cells import cell_len
 
 from alloy.limits import HARNESSES
 from alloy.monitor.icons import icon
+from alloy.verify import parse_counts
 
 COLUMNS = ("parent", "bead", "recipe", "status", "stage", "iter", "cons", "tests", "elapsed", "now",
            "tokens", "judge", "complexity")
+
+RIGHT_ALIGNED = frozenset({"iter", "cons", "tests", "elapsed", "tokens"})
 
 COMFORTABLE_WIDTH = 80
 WIDE_WIDTH = 100
@@ -45,6 +48,11 @@ _COLOR_DIM = "#8b949e"
 def column_tier(name: str) -> str:
     """Return the width tier for a column key: always, comfortable, or wide."""
     return _COLUMN_TIERS.get(name, "always")
+
+
+def column_align(name: str) -> str:
+    """Horizontal alignment for a runs-table column key."""
+    return "right" if name in RIGHT_ALIGNED else "left"
 
 
 def visible_columns(width: int) -> tuple[str, ...]:
@@ -180,9 +188,9 @@ def _fit_cell_width(text: str, width: int) -> str:
     return out + "\u2026" + " " * max(0, width - cell_len(out + "\u2026"))
 
 
-def run_rows(snapshot: dict[str, Any]) -> list[tuple[str, ...]]:
+def run_rows(snapshot: dict[str, Any], mode: str | None = None) -> list[tuple[str, ...]]:
     """One tuple per `runs[]` entry, in `COLUMNS` order."""
-    return [_row(run) for run in snapshot.get("runs") or []]
+    return [_row(run, mode) for run in snapshot.get("runs") or []]
 
 
 def status_color(status: str) -> str:
@@ -264,7 +272,7 @@ def _limits_window_segment(win: dict[str, Any], *, align_bar: bool = False) -> s
     return segment
 
 
-def _row(run: dict[str, Any]) -> tuple[str, ...]:
+def _row(run: dict[str, Any], mode: str | None = None) -> tuple[str, ...]:
     return (
         _text(run.get("parent_bead_id")),
         _text(run.get("bead_id")),
@@ -273,7 +281,7 @@ def _row(run: dict[str, Any]) -> tuple[str, ...]:
         _text(run.get("stage")),
         f"{_text(run.get('iteration'))}/{_text(run.get('max_iterations'))}",
         f"{_text(run.get('consiliums'))}/{_text(run.get('max_consiliums'))}",
-        _tests(run),
+        _tests(run, mode),
         _elapsed(run.get("elapsed_minutes")),
         _now(run.get("current_calls") or []),
         _tokens(run.get("tokens") or {}),
@@ -286,13 +294,31 @@ def _text(value: Any) -> str:
     return "-" if value is None else str(value)
 
 
-def _tests(run: dict[str, Any]) -> str:
+def _tests(run: dict[str, Any], mode: str | None = None) -> str:
     """`n checks` once the verification loop has run anything, else the ledger's
-    tests summary verbatim."""
+    tests summary verbatim (ascii), or tick/cross glyphs in nerd/unicode."""
     checks = run.get("checks")
     if isinstance(checks, dict) and checks.get("total") is not None:
-        return f"{checks['total']} checks"
-    return _text(run.get("tests_summary"))
+        if mode is None or mode == "ascii":
+            return f"{checks['total']} checks"
+        total = checks["total"]
+        last = checks.get("last") or {}
+        glyph = "test_ok" if last.get("exit_code") == 0 else "test_fail"
+        return f"{icon(glyph, mode)}{total}"
+    summary = run.get("tests_summary")
+    if mode is None or mode == "ascii":
+        return _text(summary)
+    if summary is None:
+        return "-"
+    passed, failed = parse_counts(str(summary))
+    if passed is None and failed is None:
+        return str(summary)
+    parts: list[str] = []
+    if passed is not None:
+        parts.append(f"{icon('test_ok', mode)}{passed}")
+    if failed is not None:
+        parts.append(f"{icon('test_fail', mode)}{failed}")
+    return " ".join(parts)
 
 
 def _elapsed(minutes: Any) -> str:

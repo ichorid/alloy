@@ -19,6 +19,7 @@ from textual.widgets import DataTable, Footer, Header, Static
 from alloy.monitor.icons import icon, resolve_mode
 from alloy.monitor.render import (
     COLUMNS,
+    column_align,
     format_detail,
     header_line,
     limits_lines,
@@ -132,13 +133,16 @@ class MonitorApp(App[None]):
         table.clear()
         run_ids = [run["run_id"] for run in snapshot.get("runs") or []]
         visible = visible_columns(table_width)
-        for run_id, cells in zip(run_ids, run_rows(snapshot)):
+        mode = resolve_mode(interactive=True)
+        for run_id, cells in zip(run_ids, run_rows(snapshot, mode=mode)):
             by_column = dict(zip(COLUMNS, cells))
             row = []
             for column in visible:
                 value = by_column[column]
                 if column == "status":
                     value = Text(value, style=status_color(value))
+                elif column_align(column) == "right":
+                    value = Text(value, justify="right")
                 row.append(value)
             table.add_row(*row, key=run_id)
         if run_ids:
@@ -149,7 +153,6 @@ class MonitorApp(App[None]):
             else:
                 target = len(run_ids) - 1
             table.move_cursor(row=target)
-        mode = resolve_mode(interactive=True)
         self.title = title_line(snapshot, table_width, mode)
         self.query_one("#stats", Static).update(header_line(snapshot, mode))
         self._sync_panel_chrome(snapshot, mode)
@@ -220,7 +223,10 @@ class MonitorApp(App[None]):
             return False
         table.clear(columns=True)
         for column in wanted:
-            table.add_column(column, key=column)
+            label: str | Text = column
+            if column_align(column) == "right":
+                label = Text(column, justify="right")
+            table.add_column(label, key=column)
         return True
 
     @staticmethod
