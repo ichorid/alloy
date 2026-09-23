@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import operator
+import re
 from dataclasses import replace
 from typing import Annotated, Any, TypedDict
 
@@ -257,6 +258,12 @@ Alloy runs them itself and decides from the exit codes.
 tests_prompt.__test__ = False  # This prompt helper may be imported by pytest modules.
 
 
+def extract_summary(text: str) -> str:
+    """Return the last marked summary, or clipped text when no block is present."""
+    summaries = re.findall(r"<summary>(.*?)</summary>", text, re.DOTALL)
+    return summaries[-1].strip() if summaries else clip(text, 600)
+
+
 def implement_prompt(
     brief: str,
     acceptance: str,
@@ -304,8 +311,8 @@ def implement_prompt(
         "- Alloy owns task tracking, verification and git: do not run `bd`, do not "
         "commit, and do not run the whole test suite -- run the tests relevant to "
         "your change; Alloy runs the full suite when you finish.\n\n"
-        "Finish with one paragraph describing what you changed and why, and say "
-        "explicitly if you changed any test."
+        "Finish with one paragraph inside <summary> and </summary> tags describing "
+        "what you changed and why, including 'tests edited: <paths or none>'."
     )
     sections.append(BUG_PROTOCOL)
     return "\n\n".join(sections)
@@ -1150,7 +1157,7 @@ def build_graph(ctx: RunContext):
             "stage": "implement",
             "instructions": "",
             "implementer": result.runner,
-            "change_summary": result.summary,
+            "change_summary": extract_summary(result.text) if result.ok else result.summary,
         }
 
     def route_after_implement(state: TddState) -> str:
