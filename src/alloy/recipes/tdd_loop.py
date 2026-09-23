@@ -34,6 +34,7 @@ from alloy.models import (
     CALIBRATION_KEY,
     CHECK_HINTS_KEY,
     CONTRADICTION_KEY_PREFIX,
+    EMBED_STALE_KEY,
     MEMORY_RENDER_HEADER,
     REGRESSION_KEY_PREFIX,
     LESSON_KEY_PREFIX,
@@ -71,6 +72,7 @@ from alloy.models import (
     with_provenance,
 )
 from alloy.diffs import clip_diff_per_file
+from alloy.memory_embed import is_block_stale, last_review_date
 from alloy.prompts import assemble
 from alloy.runtime import RunContext
 from alloy.verify import detect_commands, normalize_command
@@ -2385,6 +2387,7 @@ def build_graph(ctx: RunContext):
 
 def initial_state(ctx: RunContext) -> TddState:
     memory = ctx.project_memory()
+    flag_stale_embed_block(ctx, memory)
     return TddState(
         bead_id=ctx.bead.id,
         run_id=ctx.run_id,
@@ -2434,6 +2437,35 @@ def initial_state(ctx: RunContext) -> TddState:
         outcome=None,
         outcome_reason="",
         limit_hit=None,
+    )
+
+
+def flag_stale_embed_block(ctx: RunContext, memory: ProjectMemory | None) -> None:
+    """Run start (alloy-4ef.20): when a managed embed block in the worktree's
+    instruction files has drifted from the run-start memory snapshot or
+    outlived its review, set ``alloy:meta:embed-stale=true`` once and leave
+    one note on the bead. Files without a block are skipped; the flag itself
+    carries no provenance because the scheduler forgets it after the review."""
+    if memory is None or ctx.beads is None or not ctx.recipe.memory.enabled:
+        return
+    spec = ctx.recipe.memory
+    reviewed = last_review_date(memory)
+    stale = [
+        name for name in spec.instruction_files
+        if (path := ctx.worktree.path / name).is_file()
+        and is_block_stale(path.read_text(encoding="utf-8"), memory, reviewed, spec)
+    ]
+    if not stale:
+        return
+    try:
+        ctx.beads.remember(EMBED_STALE_KEY, "true")
+    except Exception:
+        log.warning("could not remember %s", EMBED_STALE_KEY, exc_info=True)
+        return
+    ctx.beads.note(
+        ctx.bead.id,
+        f"alloy: run {ctx.run_id} found a stale managed memory block in "
+        + ", ".join(stale) + f"; set {EMBED_STALE_KEY}=true for review",
     )
 
 

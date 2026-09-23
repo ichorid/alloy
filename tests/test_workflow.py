@@ -19,8 +19,16 @@ from pathlib import Path
 import pytest
 
 from alloy.beads import BeadsClient
-from alloy.config import Limits, RoleSpec, VerificationSpec
-from alloy.models import parse_provenance, with_provenance
+from alloy.config import Limits, MemorySpec, RoleSpec, VerificationSpec
+from alloy.memory_embed import render_embed_block
+from alloy.models import (
+    EMBED_KEY,
+    EMBED_STALE_KEY,
+    LAST_REVIEW_KEY,
+    ProjectMemory,
+    parse_provenance,
+    with_provenance,
+)
 from alloy.store import Store
 from alloy.recipes.tdd_loop import tests_prompt, verifier_prompt
 from conftest import (
@@ -1854,6 +1862,130 @@ async def test_harvest_runner_failure_writes_no_lesson_and_outcome_stays_done(
     assert final["iteration"] == 2
     assert len(fake_workflow.calls_for("harvest")) == 1
     assert _lesson_remember_calls(fake_workflow) == []
+
+
+# -- embed block staleness at run start (alloy-4ef.20) ------------------------
+
+
+EMBED_RUN_ID = "run-embed-stale-1"
+EMBED_BEAD_ID = "alloy-4ef.20"
+EMBED_LESSON_KEY = "alloy:lesson:embed-stale"
+EMBED_LESSON_BODY = "Read memory once at run start"
+EMBED_HUMAN_KEY = "conv"
+EMBED_HUMAN_VALUE = "repo uses pathlib"
+EMBED_LAST_REVIEW = date(2026, 9, 22)
+EMBED_INITIAL_AGENTS = "# Agents\n\nFollow these rules.\n"
+
+
+def _embed_run_memories() -> dict[str, str]:
+    return {
+        EMBED_KEY: json.dumps([EMBED_HUMAN_KEY, EMBED_LESSON_KEY]),
+        LAST_REVIEW_KEY: EMBED_LAST_REVIEW.isoformat(),
+        EMBED_HUMAN_KEY: EMBED_HUMAN_VALUE,
+        EMBED_LESSON_KEY: with_provenance(
+            EMBED_LESSON_BODY, EMBED_RUN_ID, EMBED_BEAD_ID, date(2026, 9, 20),
+        ),
+    }
+
+
+def _embed_project_memory() -> ProjectMemory:
+    return ProjectMemory.from_raw(_embed_run_memories(), MemorySpec())
+
+
+def _worktree_agents(harness) -> Path:
+    return harness.worktrees.ensure(harness.bead.id).path / "AGENTS.md"
+
+
+def _write_worktree_agents(harness, file_text: str) -> Path:
+    agents = _worktree_agents(harness)
+    agents.parent.mkdir(parents=True, exist_ok=True)
+    agents.write_text(file_text, encoding="utf-8")
+    return agents
+
+
+def _fresh_embed_agents_text() -> str:
+    managed = render_embed_block(_embed_project_memory(), MemorySpec())
+    return f"{EMBED_INITIAL_AGENTS}\n{managed}\n"
+
+
+def _stale_embed_agents_text() -> str:
+    managed = render_embed_block(_embed_project_memory(), MemorySpec())
+    stale_managed = managed.replace(EMBED_LESSON_BODY, "hand-edited stale lesson body")
+    return f"{EMBED_INITIAL_AGENTS}\n{stale_managed}\n"
+
+
+def _embed_stale_remember_calls(fake_workflow: FakeWorkflow) -> list[dict]:
+    return [
+        call
+        for call in _bd_remember_calls(fake_workflow)
+        if EMBED_STALE_KEY in call.get("argv", [])
+    ]
+
+
+def _embed_stale_note_calls(fake_workflow: FakeWorkflow) -> list[dict]:
+    return [
+        call
+        for call in _bd_note_calls(fake_workflow)
+        if any("embed-stale" in str(part) for part in call.get("argv", []))
+    ]
+
+
+async def test_run_start_flags_stale_embed_block_with_one_remember_and_note(
+    project, alloy_home, fake_workflow,
+):
+    """A stale managed block in the worktree sets alloy:meta:embed-stale once at run start."""
+    fake_workflow.configure(script(), memories=_embed_run_memories())
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    _write_worktree_agents(harness, _stale_embed_agents_text())
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    remembers = _embed_stale_remember_calls(fake_workflow)
+    assert len(remembers) == 1
+    key, body = _remember_key_and_body(remembers[0])
+    assert key == EMBED_STALE_KEY
+    assert body == "true"
+    assert len(_embed_stale_note_calls(fake_workflow)) == 1
+
+
+async def test_run_start_writes_no_embed_stale_flag_when_block_is_fresh(
+    project, alloy_home, fake_workflow,
+):
+    """A matching managed block must not set alloy:meta:embed-stale at run start."""
+    fake_workflow.configure(script(), memories=_embed_run_memories())
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    _write_worktree_agents(harness, _fresh_embed_agents_text())
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    assert _embed_stale_remember_calls(fake_workflow) == []
+    assert _embed_stale_note_calls(fake_workflow) == []
+
+
+async def test_run_start_writes_no_embed_stale_flag_when_instruction_file_has_no_block(
+    project, alloy_home, fake_workflow,
+):
+    """Instruction files without a managed block are skipped at run start."""
+    fake_workflow.configure(script(), memories=_embed_run_memories())
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    _write_worktree_agents(harness, EMBED_INITIAL_AGENTS)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    assert _embed_stale_remember_calls(fake_workflow) == []
+    assert _embed_stale_note_calls(fake_workflow) == []
 
 
 # -- alloy:regression in consilium evidence packet (alloy-4ef.13) -------------
