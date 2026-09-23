@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 FAKE_SOURCE = Path(__file__).parent / "fakebin" / "_fake.py"
+FAKE_BD_SOURCE = Path(__file__).parent / "fakebin" / "_fake_bd.py"
 FAKE_RUNNERS = ("claude", "codex", "cursor-agent", "jev", "pi")
 
 PASSING_TEST = '''
@@ -152,6 +153,60 @@ class FakeHarnesses:
     def reset_calls(self) -> None:
         (self.workdir / "calls.jsonl").unlink(missing_ok=True)
         (self.workdir / "counters.json").unlink(missing_ok=True)
+
+
+@pytest.fixture
+def fake_bd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, project: Path):
+    """Put a stand-in ``bd`` first on PATH and return a control handle."""
+    bindir = tmp_path / "fakebin"
+    bindir.mkdir()
+    binary = bindir / "bd"
+    shutil.copy(FAKE_BD_SOURCE, binary)
+    binary.chmod(0o755)
+
+    workdir = tmp_path / "fake-bd-state"
+    workdir.mkdir()
+    config_path = workdir / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("ALLOY_FAKE_DIR", str(workdir))
+    monkeypatch.setenv("ALLOY_FAKE_CONFIG", str(config_path))
+
+    return FakeBdHarness(
+        bindir=bindir,
+        binary=binary,
+        workdir=workdir,
+        config_path=config_path,
+        repo=project,
+    )
+
+
+class FakeBdHarness:
+    def __init__(
+        self,
+        bindir: Path,
+        binary: Path,
+        workdir: Path,
+        config_path: Path,
+        repo: Path,
+    ) -> None:
+        self.bindir = bindir
+        self.binary = binary
+        self.workdir = workdir
+        self.config_path = config_path
+        self.repo = repo
+
+    def configure(self, config: dict) -> None:
+        self.config_path.write_text(json.dumps(config), encoding="utf-8")
+        (self.workdir / "calls.jsonl").unlink(missing_ok=True)
+
+    @property
+    def calls(self) -> list[dict]:
+        path = self.workdir / "calls.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
 # -- scripted agent behaviour ------------------------------------------------

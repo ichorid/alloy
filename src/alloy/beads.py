@@ -21,6 +21,7 @@ from alloy.models import COMPLEXITY_LEVELS, Complexity, ProjectSnapshot
 from alloy.paths import project_brief_source
 
 log = logging.getLogger(__name__)
+_memories_unavailable_logged = False
 
 BD_BINARY = "bd"
 
@@ -172,6 +173,34 @@ class BeadsClient:
         rows = self._json(["list", "--all", "--limit", "0", "--flat",
                            "--has-metadata-key", META_RECIPE])
         return [Bead.model_validate(row) for row in rows]
+
+    # -- project memory ---------------------------------------------------
+
+    def memories(self) -> dict[str, str]:
+        """Read project memories, tolerating bd versions without this command."""
+        global _memories_unavailable_logged
+
+        proc = self._run(["memories", "--json"], check=False)
+        if proc.returncode != 0:
+            if "unknown command" in proc.stderr:
+                if not _memories_unavailable_logged:
+                    log.warning("bd memories is unavailable; returning no project memories")
+                    _memories_unavailable_logged = True
+                return {}
+            raise BeadsError(
+                f"bd memories --json failed (exit {proc.returncode}): "
+                f"{proc.stderr.strip() or proc.stdout.strip()}"
+            )
+        payload = _first_json_value(proc.stdout)
+        if payload is None:
+            return {}
+        return {key: value for key, value in payload.items() if key != "schema_version"}
+
+    def remember(self, key: str, content: str) -> None:
+        self._run(["remember", content, "--key", key])
+
+    def forget(self, key: str) -> None:
+        self._run(["forget", key])
 
     # -- project context --------------------------------------------------
 
