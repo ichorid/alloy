@@ -207,6 +207,45 @@ class BeadsClient:
             current = parent_id
         return None
 
+    def epic_root(self, bead_id: str) -> str | None:
+        """Return the top-most epic ancestor's id, or None when there isn't one."""
+        try:
+            current = bead_id
+            root_epic: str | None = None
+            while True:
+                rows = self._json(["show", current])
+                if not rows:
+                    break
+                parent_id = _parent_id(rows[0])
+                if not parent_id:
+                    break
+                parent_rows = self._json(["show", parent_id])
+                if not parent_rows:
+                    break
+                parent = parent_rows[0]
+                if parent.get("issue_type") == "epic":
+                    root_epic = str(parent.get("id") or "")
+                current = parent_id
+            return root_epic
+        except BeadsError:
+            return None
+
+    def open_descendants(self, epic_id: str) -> list[Bead]:
+        """All non-closed descendants of an epic, recursing through sub-epics."""
+        try:
+            return self._open_descendants(epic_id)
+        except BeadsError:
+            return []
+
+    def _open_descendants(self, epic_id: str) -> list[Bead]:
+        result: list[Bead] = []
+        for child in self.children(epic_id):
+            if child.issue_type == "epic":
+                result.extend(self._open_descendants(child.id))
+            elif child.status != STATUS_DONE:
+                result.append(child)
+        return result
+
     # -- project memory ---------------------------------------------------
 
     def memories(self) -> dict[str, str]:
