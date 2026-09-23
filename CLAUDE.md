@@ -72,6 +72,16 @@ _Add your build and test commands here_
 
 _Add a brief overview of your project architecture_
 
+Verification is a check loop, not a fixed test command. A read-only `verifier`
+agent names one check at a time (the tests written for the bead, the wider
+suite, lint, typecheck, build or any project script), Alloy runs it in a
+subprocess and reads the exit code, and the `judge` step only says `done` when
+the required checks are green. The context role may supply `check_hints`, the
+optional `alloy_test_cmd` bead metadata is one more hint, and autodetection
+(e.g. `cargo test` next to a `Cargo.toml`) fills in when neither gives any;
+the verifier sees them under "Hints from the repository (not yet verified)"
+and decides what to run. Alloy never runs a hint on its own.
+
 The recipe's `complexity:` block defines `routing: shadow` (estimate without
 changing runners) or `routing: live` (select a tier for roles with `tiered: true`),
 ordered `tiers:` chains for `simple`, `medium`, and `complex`, optional per-entry

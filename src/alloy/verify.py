@@ -45,11 +45,19 @@ _JEST = re.compile(r"Tests:\s+(?:(\d+) failed,\s*)?(?:\d+ skipped,\s*)?(\d+) pas
 _CARGO = re.compile(r"test result: \w+\. (\d+) passed; (\d+) failed")
 
 
-def detect_command(worktree: Path) -> str | None:
+def detect_commands(worktree: Path) -> list[str]:
+    """Every command the project layout suggests, best guess first. Hints for
+    the verifier; a repo with both a pyproject and a Cargo.toml gets both."""
+    commands: list[str] = []
     for marker, command in AUTODETECT:
-        if (worktree / marker).exists():
-            return command
-    return None
+        if (worktree / marker).exists() and command not in commands:
+            commands.append(command)
+    return commands
+
+
+def detect_command(worktree: Path) -> str | None:
+    commands = detect_commands(worktree)
+    return commands[0] if commands else None
 
 
 def executable_of(command: str) -> str | None:
@@ -82,29 +90,6 @@ def normalize_command(command: str) -> str:
         return command
     replacement = shutil.which("python3") or sys.executable
     return command.replace("python", replacement, 1)
-
-
-def resolve_command(
-    worktree: Path, *, configured: str | None = None, from_context: str | None = None
-) -> str | None:
-    """Pick a test command that can actually run.
-
-    Explicit configuration beats the context agent's suggestion, which beats
-    autodetection -- but a candidate whose program is not installed loses to one
-    that is, because an unrunnable command is indistinguishable from a broken
-    test suite once it has run.
-    """
-    candidates = [
-        normalize_command(candidate)
-        for candidate in (configured, from_context, detect_command(worktree))
-        if candidate
-    ]
-    if not candidates:
-        return None
-    for candidate in candidates:
-        if is_runnable(candidate):
-            return candidate
-    return candidates[0]
 
 
 async def run_check(
@@ -168,24 +153,8 @@ async def run_check(
     )
 
 
-async def run_tests(
-    command: str,
-    worktree: Path,
-    *,
-    timeout_s: float = DEFAULT_TIMEOUT_S,
-    log_dir: Path | None = None,
-) -> CheckResult:
-    """Legacy entry point: the whole-suite regression check."""
-    return await run_check(
-        CheckRequest(command=command, purpose="regression suite", kind="regression"),
-        worktree,
-        timeout_s=timeout_s,
-        log_dir=log_dir,
-    )
-
-
 def command_env(worktree: Path) -> dict[str, str]:
-    """Environment for the test command.
+    """Environment for a check command.
 
     The worktree's own code must be what gets imported. A Python project
     installed in editable mode into a shared virtualenv points that venv at

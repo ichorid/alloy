@@ -25,7 +25,7 @@ from typing import Annotated, Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send, interrupt
 
-from alloy.beads import LABEL_BUG, LABEL_HUMAN, META_DISCOVERED_IN_RUN, META_RECIPE, META_TEST_CMD
+from alloy.beads import LABEL_BUG, LABEL_HUMAN, META_DISCOVERED_IN_RUN, META_RECIPE
 from alloy.config import RoleSpec
 from alloy.models import (
     AcceptanceVerdict,
@@ -50,6 +50,7 @@ from alloy.models import (
     next_level,
 )
 from alloy.runtime import RunContext
+from alloy.verify import detect_commands, normalize_command
 from alloy.worktree import is_test_path
 
 MAX_DIFF_CHARS = 12000
@@ -138,11 +139,11 @@ CONTEXT_SCHEMA = {
     "properties": {
         "summary": {"type": "string"},
         "relevant_files": {"type": "array", "items": {"type": "string"}},
-        "test_command": {"type": "string"},
+        "check_hints": {"type": "array", "items": {"type": "string"}},
         "conventions": {"type": "array", "items": {"type": "string"}},
         "risks": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["summary", "relevant_files", "test_command", "conventions", "risks"],
+    "required": ["summary", "relevant_files", "conventions", "risks"],
     "additionalProperties": False,
 }
 
@@ -166,7 +167,8 @@ Read the repository. Do not modify any file.
 Produce a context packet:
 - summary: how this repo is laid out and where this change belongs (<= 300 words)
 - relevant_files: paths the implementer will most likely touch or read
-- test_command: the exact shell command this repo uses to run its test suite
+- check_hints (optional): commands this repo's files, scripts or CI config suggest
+  for running tests, lint or build; a verifier decides what actually runs
 - conventions: naming, structure and style rules an outsider would get wrong
 - risks: things that could make this change break something else
 
@@ -248,7 +250,6 @@ def implement_prompt(
     brief: str,
     acceptance: str,
     context: dict[str, Any],
-    test_command: str | None,  # legacy slot, unused; removed with the context packet field
     instructions: str,
     history: list[dict[str, Any]],
     failed_check: dict[str, Any] | None = None,
@@ -626,11 +627,15 @@ def verifier_prompt(
 
 ## Repository context
 {_render_context(context)}"""
+    hints = _render_check_hints(context)
     return f"""You are choosing the next verification check for a coding task. You are read-only:
 you cannot edit code and you never run anything yourself. Do not modify any file. Alloy runs
 the one command you name, in the worktree root, exactly as written, and shows you the result.
 
 {task}
+
+## Hints from the repository (not yet verified)
+{hints}
 
 ## Baseline commands (the tests role's targeted checks; red before implementation)
 {_render_checks(baseline_checks or []) or "(none)"}
@@ -715,6 +720,15 @@ Output the instructions as prose, no preamble.
 # --------------------------------------------------------------------------
 # rendering helpers -- these are what keep state small
 # --------------------------------------------------------------------------
+
+
+def _render_check_hints(context: dict[str, Any] | None) -> str:
+    """Commands the context role, the bead or autodetection suggested. None of
+    them has run; the verifier decides whether any of them is worth running."""
+    hints = (context or {}).get("check_hints") or []
+    if not hints:
+        return "(none; find the project's own test, lint and build commands)"
+    return "\n".join(f"- `{hint}`" for hint in hints)
 
 
 def _render_context(context: dict[str, Any] | None) -> str:
@@ -930,6 +944,9 @@ def build_graph(ctx: RunContext):
         )
         reported_bugs = _capture_bugs("context", result, state, 0)
         packet = _context_from(result)
+        packet.check_hints = _check_hints(
+            packet.check_hints, ctx.bead.check_hint, (ctx.worktree.path, ctx.worktrees.repo)
+        )
         return {
             "reported_bugs": reported_bugs,
             "context": packet.compact(),
@@ -1091,7 +1108,6 @@ def build_graph(ctx: RunContext):
                 ctx.bead.task_brief(),
                 ctx.bead.acceptance_criteria,
                 state.get("context", {}),
-                None,
                 state.get("instructions", ""),
                 state.get("attempts", []),
                 last_check if repairing else None,
@@ -1145,9 +1161,7 @@ def build_graph(ctx: RunContext):
         severity = verdict.severity
         labels = [LABEL_BUG] + ([LABEL_HUMAN] if severity == "needs-human" else [])
         metadata = {
-            key: ctx.bead.metadata[key]
-            for key in (META_RECIPE, META_TEST_CMD)
-            if ctx.bead.metadata.get(key)
+            key: ctx.bead.metadata[key] for key in (META_RECIPE,) if ctx.bead.metadata.get(key)
         }
         metadata[META_DISCOVERED_IN_RUN] = ctx.run_id
         bug_id = ctx.beads.create_bug(
@@ -1948,6 +1962,23 @@ def initial_state(ctx: RunContext) -> TddState:
         outcome_reason="",
         limit_hit=None,
     )
+
+
+def _check_hints(from_context: list[str], bead_hint: str | None, roots) -> list[str]:
+    """The operator's `alloy_test_cmd` hint comes first; autodetection from the
+    project layout (the worktree, then the repository it was cut from) fills in
+    only when the context role suggested nothing."""
+    hints = [normalize_command(hint) for hint in from_context if hint]
+    if not hints:
+        for root in roots:
+            for command in detect_commands(root):
+                command = normalize_command(command)
+                if command not in hints:
+                    hints.append(command)
+    if bead_hint:
+        bead_hint = normalize_command(bead_hint)
+        hints = [bead_hint] + [hint for hint in hints if hint != bead_hint]
+    return hints
 
 
 def _context_from(result) -> ContextPacket:

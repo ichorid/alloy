@@ -218,11 +218,6 @@ class RunContext:
             index=index,
         )
 
-    async def verify(self, command: str) -> CheckResult:
-        return await self.run_check(
-            CheckRequest(command=command, purpose="regression suite", kind="regression")
-        )
-
     def diff(self, *, stat_only: bool = False) -> str:
         return self.worktrees.diff(self.worktree, stat_only=stat_only)
 

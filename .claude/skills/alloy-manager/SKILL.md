@@ -91,7 +91,7 @@ git -C <worktree-path> diff main...HEAD   # or against the appropriate base bran
 ```
 
 Judge the diff against the bead's own acceptance criteria, not against your
-general taste — the recipe already ran a deterministic test command, so
+general taste — the recipe already ran the verifier's checks deterministically, so
 review is about things tests don't catch: did it actually address the
 bead's intent, is the approach reasonable, does it touch anything outside its
 declared scope. Three outcomes:

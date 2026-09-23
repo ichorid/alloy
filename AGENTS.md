@@ -11,14 +11,18 @@ Two systems, two timescales:
   readiness, and which recipe to run. This is where you plan.
 - **Alloy (`alloy`) owns execution.** It picks up one READY bead at a time,
   runs it in its own git worktree through a checkpointed agent loop (context →
-  write failing tests → implement → verify → judge), and writes status back
+  write failing tests → implement → verifier-chosen checks → judge), and writes status back
   onto the bead. It does **not** plan, decompose, or prioritize — that's your
   job, done entirely in Beads before you ever call `alloy run`.
 
-**Alloy runs one bead at a time.** A bead must be small enough to verify with
-one test command and finish inside a recipe's limits (default: 5 iterations,
-90 minutes, 20 agent calls — see `alloy recipes`). If a task can't be checked
-by running a test suite, it isn't a good Alloy bead.
+**Alloy runs one bead at a time.** A bead must be small enough that a handful
+of checks can prove it, and it must finish inside a recipe's limits (default: 5
+iterations, 90 minutes, 20 agent calls — see `alloy recipes`). Verification is
+a loop, not a fixed command: a read-only `verifier` agent names one check at a
+time (the tests written for the bead, the wider suite, lint, typecheck, build
+or any project script), Alloy runs it in a subprocess and reads the exit code,
+and the verifier stops when the evidence is sufficient. If a task can't be
+checked by commands the verifier can run, it isn't a good Alloy bead.
 
 ## From a spec to running work
 
@@ -59,9 +63,12 @@ Never hand a whole feature to Alloy as one bead. Decompose first:
    of the spec section. The `judge`/`guard` step in the recipe only accepts
    `done` when verification is objectively green — vague acceptance text just
    burns iterations against the bead's limits.
-5. Optionally pin the test command if autodetection might guess wrong:
+5. Optionally suggest a check hint. Alloy never runs it by itself; the
+   verifier sees it under "Hints from the repository (not yet verified)" next
+   to what the context role and project-layout autodetection suggested, and
+   decides which checks actually run:
    ```bash
-   bd update <bead-id> --set-metadata alloy_test_cmd="pytest -q tests/oauth"
+   bd update <bead-id> --set-metadata alloy_test_cmd='pytest -q tests/oauth'
    ```
 
 ## Alloy commands
@@ -126,7 +133,8 @@ alloy start
 ## Rules to not break
 
 - Never set `alloy_recipe` or run `alloy run` on an epic bead — only on leaf
-  work that has its own acceptance criteria and test command.
+  work that has its own acceptance criteria, provable by checks the verifier
+  can run.
 - Don't try to push a bead to `done` yourself. `guard` is the only thing that
   can accept `done`, and it refuses while tests are red. If a run reaches
   `waiting-human`, use `alloy resume <bead-id> -m "..."` with guidance, don't

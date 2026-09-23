@@ -223,7 +223,9 @@ class ContextPacket(BaseModel):
 
     summary: str = ""
     relevant_files: list[str] = Field(default_factory=list)
-    test_command: str | None = None
+    check_hints: list[str] = Field(default_factory=list)
+    """Commands the repository suggests for tests, lint or build. Hints for the
+    verifier, never something Alloy runs on its own."""
     conventions: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
 
@@ -231,7 +233,7 @@ class ContextPacket(BaseModel):
         return {
             "summary": clip(self.summary, 1500),
             "relevant_files": self.relevant_files[:25],
-            "test_command": self.test_command,
+            "check_hints": self.check_hints[:10],
             "conventions": self.conventions[:10],
             "risks": self.risks[:10],
         }
@@ -272,7 +274,7 @@ class CheckResult(BaseModel):
     failed: int | None = None
 
     @property
-    def tail(self) -> str:  # legacy name, removed with the TestReport alias
+    def tail(self) -> str:  # legacy name for output_tail
         return self.output_tail
 
     @property
@@ -291,9 +293,6 @@ class CheckResult(BaseModel):
         if self.passed is None and self.failed is None:
             return f"exit {self.exit_code}"
         return f"{self.passed or 0} passed, {self.failed or 0} failed"
-
-
-TestReport = CheckResult  # legacy alias; removed by alloy-21u.7
 
 
 VERIFIER_ACTIONS: tuple[str, ...] = ("run", "stop")

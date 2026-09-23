@@ -155,12 +155,12 @@ class FakeHarnesses:
 TEST_COMMAND = f"{sys.executable} -m pytest -q"
 
 
-def context_entry(test_command: str = TEST_COMMAND) -> dict:
+def context_entry(check_hints: list[str] | None = None) -> dict:
     return {
         "structured": {
             "summary": "A small python package with a pytest suite.",
             "relevant_files": ["mypkg/__init__.py"],
-            "test_command": test_command,
+            "check_hints": [TEST_COMMAND] if check_hints is None else check_hints,
             "conventions": ["snake_case"],
             "risks": [],
         }

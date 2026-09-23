@@ -17,7 +17,8 @@ from alloy.engine import Engine, EngineError
 from alloy.procs import pid_alive
 from alloy.runners import RunnerRegistry
 from alloy.store import RUN_RUNNING
-from alloy.verify import parse_counts, run_tests, command_env
+from alloy.models import CheckRequest
+from alloy.verify import parse_counts, run_check, command_env
 from conftest import (
     bd_create,
     context_entry,
@@ -76,11 +77,11 @@ def test_worktree_src_is_first_on_pythonpath(tmp_path: Path, monkeypatch):
     assert entries[-1] == "/elsewhere"
 
 
-async def test_the_test_command_sees_the_worktree_pythonpath(tmp_path: Path):
+async def test_a_check_sees_the_worktree_pythonpath(tmp_path: Path):
     (tmp_path / "src").mkdir()
-    report = await run_tests("echo $PYTHONPATH", tmp_path, timeout_s=10)
+    report = await run_check(CheckRequest(command="echo $PYTHONPATH"), tmp_path, timeout_s=10)
     assert report.ok
-    assert report.tail.startswith(str(tmp_path / "src"))
+    assert report.output_tail.startswith(str(tmp_path / "src"))
 
 
 # -- journal 8: harness process trees die with the caller ---------------------
