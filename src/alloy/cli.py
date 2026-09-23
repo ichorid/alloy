@@ -33,6 +33,7 @@ from alloy.memory_schedule import (
 from alloy.models import (
     ProjectMemory, ReviewPlan, memory_inventory, utcnow, with_provenance,
 )
+from alloy.limits import probe_all
 from alloy.monitor import build_snapshot
 from alloy.monitor.app import MonitorApp
 from alloy.monitor.render import COLUMNS, header_line, run_rows
@@ -428,6 +429,35 @@ def monitor(
         console.print(table)
         return
     MonitorApp(snapshot_source=lambda: build_snapshot(engine), interval=interval).run()
+
+
+@app.command()
+def limits(
+    repo: Optional[Path] = RepoOption,
+    root: Optional[Path] = RootOption,
+    json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+) -> None:
+    """Probe installed harness usage limits and refresh limits.json."""
+    engine = _engine(repo, root)
+    samples = probe_all(engine.paths, RunnerRegistry(), home=Path.home())
+    if json:
+        _emit(samples, True)
+        return
+    table = Table(show_header=True, header_style="bold")
+    for column in ("harness", "window", "used", "resets", "as of", "note"):
+        table.add_column(column)
+    for harness, sample in sorted(samples.items()):
+        note = sample.get("error") or sample.get("status") or ""
+        as_of = sample.get("as_of") or ""
+        windows = sample.get("windows") or []
+        if not windows:
+            table.add_row(harness, "", "", "", as_of, note)
+            continue
+        for win in windows:
+            used = f"{win['used_percent']:.0f}%"
+            resets = win.get("resets_at") or ""
+            table.add_row(harness, win.get("label", ""), used, resets, as_of, note)
+    console.print(table)
 
 
 @app.command()
