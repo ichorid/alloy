@@ -57,6 +57,10 @@ class AlloyPaths:
         return self.root / "scheduler.pid"
 
     @property
+    def scheduler_session(self) -> Path:
+        return self.root / "scheduler.json"
+
+    @property
     def scheduler_log(self) -> Path:
         return self.root / "scheduler.log"
 

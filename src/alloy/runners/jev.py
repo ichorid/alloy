@@ -79,7 +79,15 @@ class JevRunner:
                     return key
         return os.environ.get("TYPESAFE_API_KEY")
 
+    def _fake_harness_mode(self) -> bool:
+        return bool(os.environ.get("ALLOY_FAKE_CONFIG"))
+
     def available(self) -> bool:
+        # Tests drive agents through fake CLIs ($ALLOY_FAKE_CONFIG); the HTTP
+        # adapter must defer to each role's CLI fallback so calls land in the
+        # fake harness ledger the workflow tests assert on.
+        if self._fake_harness_mode():
+            return False
         return self._resolve_api_key() is not None
 
     # -- execution ------------------------------------------------------
@@ -95,6 +103,10 @@ class JevRunner:
         on_spawn: Callable[[int], None] | None = None,  # no subprocess: nothing to report
         resume_session: str | None = None,  # stateless HTTP call: nothing to resume
     ) -> AgentResult:
+        if self._fake_harness_mode():
+            raise RunnerUnavailable(
+                "jev: disabled under fake harness tests (use role fallback)"
+            )
         api_key = self._resolve_api_key()
         if not api_key:
             raise RunnerUnavailable(
