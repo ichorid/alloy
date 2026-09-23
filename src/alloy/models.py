@@ -444,11 +444,16 @@ class Attempt(BaseModel):
     checks: str = ""
     decision: str = ""
     reason: str = ""
+    changed_tests: list[str] = Field(default_factory=list)
 
     def render(self) -> str:
+        edited = (
+            f"   tests edited: {', '.join(self.changed_tests)}\n" if self.changed_tests else ""
+        )
         return (
             f"#{self.iteration} via {self.implementer}: {clip(self.change_summary, 300)}\n"
             f"   checks: {self.checks}\n"
+            f"{edited}"
             f"   judge: {self.decision} -- {clip(self.reason, 200)}"
         )
 
