@@ -236,6 +236,10 @@ class ContextPacket(BaseModel):
     verifier, never something Alloy runs on its own."""
     conventions: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
+    memory_contradictions: list[str] = Field(default_factory=list)
+    """Project memories the repository contradicts, each ``key: why``. Flagged
+    for a reviewer under alloy:review:contradiction:<key>; the disputed memory
+    itself is never touched."""
 
     def compact(self) -> dict[str, Any]:
         return {
@@ -244,6 +248,7 @@ class ContextPacket(BaseModel):
             "check_hints": self.check_hints[:10],
             "conventions": self.conventions[:10],
             "risks": self.risks[:10],
+            "memory_contradictions": self.memory_contradictions[:5],
         }
 
 
@@ -640,6 +645,7 @@ def _render_block(entries: list[MemoryEntry]) -> str:
 # ---------------------------------------------------------------------------
 
 CHECK_HINTS_KEY = "alloy:check-hints"
+CONTRADICTION_KEY_PREFIX = "alloy:review:contradiction:"
 """The verifier's runnable check commands from the last DONE run on this repo."""
 
 # ---------------------------------------------------------------------------

@@ -30,6 +30,7 @@ from alloy.beads import LABEL_BUG, LABEL_HUMAN, META_DISCOVERED_IN_RUN, META_REC
 from alloy.config import RoleSpec
 from alloy.models import (
     CHECK_HINTS_KEY,
+    CONTRADICTION_KEY_PREFIX,
     LESSON_KEY_PREFIX,
     AcceptanceVerdict,
     AgentResult,
@@ -93,6 +94,8 @@ class TddState(TypedDict, total=False):
     context: dict[str, Any]
     memory_block: str                          # rendered project memory, fixed at run start
     memory_check_hints: str                    # stored alloy:check-hints body, fixed at run start
+    memory_keys: list[str]                     # every stored memory key, fixed at run start
+    memory_lessons: dict[str, str]             # stored alloy:lesson:* bodies, fixed at run start
     complexity: str
     complexity_source: str
     retries_on_tier: int
@@ -164,6 +167,7 @@ CONTEXT_SCHEMA = {
         "check_hints": {"type": "array", "items": {"type": "string"}},
         "conventions": {"type": "array", "items": {"type": "string"}},
         "risks": {"type": "array", "items": {"type": "string"}},
+        "memory_contradictions": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["summary", "relevant_files", "conventions", "risks"],
     "additionalProperties": False,
@@ -209,6 +213,8 @@ Produce a context packet:
   for running tests, lint or build; a verifier decides what actually runs
 - conventions: naming, structure and style rules an outsider would get wrong
 - risks: things that could make this change break something else
+- memory_contradictions (optional): project memory entries the repository
+  contradicts, each 'key: why'; the memory is left as is and flagged for review
 
 {BUG_PROTOCOL}"""
 
@@ -1048,11 +1054,50 @@ def build_graph(ctx: RunContext):
             packet.check_hints, ctx.bead.check_hint, (ctx.worktree.path, ctx.worktrees.repo),
             memory_hints=parse_check_hints(state.get("memory_check_hints", "")),
         )
+        record_memory_contradictions(
+            packet.compact()["memory_contradictions"], state.get("memory_keys") or []
+        )
         return {
             "reported_bugs": reported_bugs,
             "context": packet.compact(),
             "stage": "context",
         }
+
+    def record_memory_contradictions(
+        contradictions: list[str], memory_keys: list[str]
+    ) -> None:
+        """Flag each ``key: why`` the context role reported against an existing
+        project memory as alloy:review:contradiction:<key> for a reviewer, and
+        leave one note on the bead. Entries for keys outside the run-start
+        memory snapshot are dropped; the disputed memory itself is never
+        modified or deleted."""
+        if not contradictions or ctx.beads is None or not ctx.recipe.memory.enabled:
+            return
+        known = set(memory_keys)
+        flagged: list[str] = []
+        for entry in contradictions:
+            key, sep, why = entry.partition(": ")
+            if not sep:
+                key, sep, why = entry.partition(":")
+            key, why = key.strip(), why.strip()
+            if not sep or not key or key not in known or key in flagged:
+                continue
+            body = f"{key}: {why}" if why else key
+            try:
+                ctx.beads.remember(
+                    f"{CONTRADICTION_KEY_PREFIX}{key}",
+                    with_provenance(body, ctx.run_id, ctx.bead.id, utcnow().date()),
+                )
+            except Exception:
+                log.warning("could not remember contradiction for %s", key, exc_info=True)
+                continue
+            flagged.append(key)
+        if flagged:
+            ctx.beads.note(
+                ctx.bead.id,
+                f"alloy: run {ctx.run_id} context flagged memory contradiction(s) for review: "
+                + ", ".join(f"{CONTRADICTION_KEY_PREFIX}{key}" for key in flagged),
+            )
 
     async def estimate(state: TddState) -> dict[str, Any]:
         ctx.set_stage("estimate")
@@ -2047,7 +2092,7 @@ def build_graph(ctx: RunContext):
             prompt = harvest_prompt(
                 _evidence_packet(state, ctx, ctx.diff()),
                 human_note=state.get("human_note", ""),
-                existing_lessons=existing_lessons(ctx.project_memory()),
+                existing_lessons=state.get("memory_lessons") or {},
             )
         except Exception:
             log.warning("harvest skipped", exc_info=True)
@@ -2159,6 +2204,8 @@ def initial_state(ctx: RunContext) -> TddState:
         title=ctx.bead.title,
         memory_block=memory.render() if memory is not None else "",
         memory_check_hints=memory.body_of(CHECK_HINTS_KEY) if memory is not None else "",
+        memory_keys=sorted(memory.entries) if memory is not None else [],
+        memory_lessons=existing_lessons(memory),
         iteration=0,
         consiliums=0,
         retries_on_tier=0,
