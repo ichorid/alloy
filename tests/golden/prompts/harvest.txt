@@ -47,8 +47,5 @@ FAILED
    checks: [targeted] red
    judge: retry -- still failing
 
-## Human note
-(none)
-
 ## Existing repository lessons
 - alloy:lesson:prior-a: Run targeted tests before the full suite.

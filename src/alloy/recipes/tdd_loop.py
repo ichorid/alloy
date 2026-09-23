@@ -792,10 +792,11 @@ def harvest_prompt(
     lessons = "\n".join(
         f"- {key}: {body}" for key, body in sorted((existing_lessons or {}).items())
     )
+    guidance = human_note.strip()
     volatile = (
         f"{evidence}\n\n"
-        f"## Human note\n{human_note.strip() or '(none)'}\n\n"
-        f"## Existing repository lessons\n{lessons or '(none)'}"
+        + (f"## Human guidance\n{guidance}\n\n" if guidance else "")
+        + f"## Existing repository lessons\n{lessons or '(none)'}"
     )
     return assemble(HARVEST_STATIC, "", "", "", volatile).text
 

@@ -432,9 +432,6 @@ _HARVEST_EVIDENCE = (GOLDEN_DIR / "evidence_packet.txt").read_text(encoding="utf
 
 _HARVEST_VOLATILE = f"""{_HARVEST_EVIDENCE}
 
-## Human note
-(none)
-
 ## Existing repository lessons
 - alloy:lesson:prior-a: Run targeted tests before the full suite."""
 
@@ -833,6 +830,27 @@ def test_implement_repair_prompt_excludes_volatile_markers_from_stable_layers():
 
     assert prompt.startswith(stable + LAYER_SEPARATOR)
     _assert_markers_absent_from_stable_prefix(stable)
+
+
+def test_harvest_prompt_omits_human_guidance_when_note_empty():
+    prompt = harvest_prompt(
+        _HARVEST_EVIDENCE,
+        human_note="",
+        existing_lessons=HARVEST_EXISTING_LESSONS,
+    )
+    assert "## Human guidance" not in prompt
+    assert "## Human note" not in prompt
+
+
+def test_harvest_prompt_includes_human_guidance_when_note_set():
+    prompt = harvest_prompt(
+        _HARVEST_EVIDENCE,
+        human_note="use NFKD",
+        existing_lessons=HARVEST_EXISTING_LESSONS,
+    )
+    assert "## Human guidance" in prompt
+    assert "use NFKD" in prompt
+    assert "## Human note" not in prompt
 
 
 def test_evidence_packet_matches_layer_joined_golden():
