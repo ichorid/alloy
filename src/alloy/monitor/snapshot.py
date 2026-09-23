@@ -62,6 +62,7 @@ def build_snapshot(engine: Engine) -> dict[str, Any]:
         "session_totals": _session_totals(finished_records),
         "queue": _queue(engine),
         "runs": runs,
+        "epics": _epics(engine, runs, active_ids),
     }
 
 
@@ -151,6 +152,39 @@ def _build_queue(engine: Engine) -> dict[str, Any]:
     return {"ready": ready, "ready_total": len(dispatchable), "blocked": blocked}
 
 
+def _epics(
+    engine: Engine,
+    runs: list[dict[str, Any]],
+    active_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Progress summary for every epic referenced by active or finished runs."""
+    epic_ids = {run["epic_id"] for run in runs if run["epic_id"]}
+    if not epic_ids:
+        return []
+    try:
+        active_runs = [run for run in runs if run["run_id"] in active_ids]
+        entries: list[dict[str, Any]] = []
+        for epic_id in sorted(epic_ids):
+            children = engine.beads.children(epic_id)
+            done_ids = [child.id for child in children if child.status == bd.STATUS_DONE]
+            epic_runs = [run for run in active_runs if run["epic_id"] == epic_id]
+            bead = engine.beads.show(epic_id)
+            entries.append(
+                {
+                    "epic_id": epic_id,
+                    "title": bead.title if bead else None,
+                    "total": len(children),
+                    "done": len(done_ids),
+                    "done_ids": done_ids,
+                    "running": len(epic_runs),
+                    "judge": sum(1 for run in epic_runs if run["stage"] == "judge"),
+                }
+            )
+        return entries
+    except (bd.BeadsError, OSError):
+        return []
+
+
 def _run_entry(
     engine: Engine, record: dict[str, Any], limits: dict[str, Any]
 ) -> dict[str, Any]:
@@ -199,7 +233,15 @@ def _run_entry(
         "models_used": _models_used(engine, run_id, limits),
         "worktree": record["worktree"],
         "branch": record["branch"],
+        "epic_id": _epic_id(engine, record["bead_id"]),
     }
+
+
+def _epic_id(engine: Engine, bead_id: str) -> str | None:
+    try:
+        return engine.beads.epic_for(bead_id)
+    except (bd.BeadsError, OSError):
+        return None
 
 
 def _models_used(
