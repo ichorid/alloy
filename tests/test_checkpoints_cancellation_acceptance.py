@@ -36,8 +36,6 @@ def _run_node_and_call_seconds(nodeid: str) -> float:
             "-m",
             "pytest",
             "-q",
-            "-o",
-            "addopts=",
             "-p",
             "no:xdist",
             nodeid,
