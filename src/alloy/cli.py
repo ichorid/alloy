@@ -36,6 +36,7 @@ from alloy.models import (
 from alloy.limits import probe_all
 from alloy.monitor import build_snapshot
 from alloy.monitor.app import MonitorApp
+from alloy.monitor.icons import resolve_mode
 from alloy.monitor.render import COLUMNS, header_line, limits_lines, run_rows
 from alloy.paths import AlloyPaths
 from alloy.runners import BUILTIN, RunnerRegistry, RunnerUnavailable
@@ -468,7 +469,7 @@ def monitor(
         return
     if once:
         snapshot = build_snapshot(engine)
-        console.print(header_line(snapshot))
+        console.print(header_line(snapshot, resolve_mode(interactive=False)))
         for line in limits_lines(snapshot):
             console.print(line)
         table = Table(show_header=True, header_style="bold")

@@ -669,3 +669,57 @@ def test_visible_columns_below_comfortable_width_also_omits_recipe():
         name for name in COLUMNS if name not in {"parent", "stage", "cons", "complexity", "recipe"}
     )
     assert visible_columns(79) == expected
+
+
+# -- alloy-3g0.2: Powerline title and stats lines -----------------------------
+
+
+_PRIVATE_USE_MIN = 0xE000
+_PRIVATE_USE_MAX = 0xF8FF
+
+
+def _powerline_acceptance_snapshot() -> dict:
+    return _snapshot(
+        scheduler={"running": True, "pid": 48213},
+        ready_count=4,
+        lifetime={"done": 128, "failed": 3, "cancelled": 1},
+    )
+
+
+def _contains_private_use_area(text: str) -> bool:
+    return any(_PRIVATE_USE_MIN <= ord(ch) <= _PRIVATE_USE_MAX for ch in text)
+
+
+def test_header_line_ascii_matches_legacy_format_for_acceptance_fixture():
+    snap = _powerline_acceptance_snapshot()
+    expected = (
+        "scheduler running (pid 48213)  |  ready 4 (capped at 1000)  |  "
+        "done 128  failed 3  cancelled 1"
+    )
+    assert header_line(snap, "ascii") == expected
+
+
+def test_header_line_nerd_uses_powerline_arrow_and_counts_without_pipe_separators():
+    line = header_line(_powerline_acceptance_snapshot(), "nerd")
+    assert "\ue0b0" in line
+    assert "pid 48213" in line
+    assert "ready 4" in line
+    assert "128" in line
+    assert "3" in line
+    assert "1" in line
+    assert "|" not in line
+
+
+def test_header_line_unicode_avoids_private_use_area():
+    line = header_line(_powerline_acceptance_snapshot(), "unicode")
+    assert not _contains_private_use_area(line)
+
+
+def test_title_line_nerd_includes_alloy_glyph_within_width_budget():
+    from rich.cells import cell_len
+
+    from alloy.monitor.render import title_line
+
+    line = title_line(_powerline_acceptance_snapshot(), 100, "nerd")
+    assert "\uf0c3" in line
+    assert cell_len(line) <= 100

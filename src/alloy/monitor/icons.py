@@ -39,6 +39,10 @@ _ICONS: Final[dict[str, tuple[str, str, str]]] = {
     "tokens": ("\uf1c0", "\u25c6", "T"),         # database
     "complexity": ("\uf2db", "\u2582", "C"),    # chip, ▂
     "keyboard": ("\uf11c", "\u2328", "K"),
+    "alloy": ("\uf0c3", "\u2697", "A"),          # flask, ⚗
+    "folder": ("\uf07b", "\ud83d\udcc1", "/"),   # folder, 📁
+    "refresh": ("\uf021", "\u21bb", "R"),        # sync
+    "arrow_left": ("\ue0b2", "\u2039", "<"),     # powerline left
 }
 
 

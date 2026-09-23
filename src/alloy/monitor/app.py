@@ -16,6 +16,7 @@ from textual.binding import Binding
 from textual.events import Resize
 from textual.widgets import DataTable, Footer, Header, Static
 
+from alloy.monitor.icons import resolve_mode
 from alloy.monitor.render import (
     COLUMNS,
     format_detail,
@@ -23,6 +24,7 @@ from alloy.monitor.render import (
     limits_lines,
     run_rows,
     status_color,
+    title_line,
     visible_columns,
 )
 
@@ -128,7 +130,9 @@ class MonitorApp(App[None]):
             else:
                 target = len(run_ids) - 1
             table.move_cursor(row=target)
-        self.query_one("#stats", Static).update(header_line(snapshot))
+        mode = resolve_mode(interactive=True)
+        self.title = title_line(snapshot, table_width, mode)
+        self.query_one("#stats", Static).update(header_line(snapshot, mode))
         self._refresh_limits_widget()
         self._refresh_detail(width=table_width)
 
@@ -177,7 +181,8 @@ class MonitorApp(App[None]):
         limits_widget.update("\n".join(lines))
 
     def _show_failure(self, exc_type: str) -> None:
-        text = header_line(self._snapshot) if self._snapshot is not None else ""
+        mode = resolve_mode(interactive=True)
+        text = header_line(self._snapshot, mode) if self._snapshot is not None else ""
         self.query_one("#stats", Static).update(f"{text}  |  refresh failed: {exc_type}".strip(" |"))
 
     def _sync_runs_table_columns(self, width: int | None = None) -> bool:

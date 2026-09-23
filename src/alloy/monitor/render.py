@@ -8,9 +8,13 @@ they are unit-testable and shared by the live view and `alloy monitor --once`.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
+from rich.cells import cell_len
+
 from alloy.limits import HARNESSES
+from alloy.monitor.icons import icon
 
 COLUMNS = ("parent", "bead", "recipe", "status", "stage", "iter", "cons", "tests", "elapsed", "now",
            "tokens", "judge", "complexity")
@@ -53,8 +57,16 @@ def visible_columns(width: int) -> tuple[str, ...]:
     return tuple(name for name in COLUMNS if name not in hidden)
 
 
-def header_line(snapshot: dict[str, Any]) -> str:
+def header_line(snapshot: dict[str, Any], mode: str | None = None) -> str:
     """One-line stats summary: scheduler, ready queue and lifetime totals."""
+    if mode is None or mode == "ascii":
+        return _header_line_ascii(snapshot)
+    if mode == "nerd":
+        return _header_line_styled(snapshot, "nerd")
+    return _header_line_styled(snapshot, "unicode")
+
+
+def _header_line_ascii(snapshot: dict[str, Any]) -> str:
     scheduler = snapshot.get("scheduler") or {}
     if scheduler.get("running"):
         sched = f"scheduler running (pid {scheduler.get('pid')})"
@@ -70,6 +82,69 @@ def header_line(snapshot: dict[str, Any]) -> str:
         line += (f"  |  this session: done {session.get('done', 0)}"
                  f" failed {session.get('failed', 0)} cancelled {session.get('cancelled', 0)}")
     return line
+
+
+def _header_line_styled(snapshot: dict[str, Any], mode: str) -> str:
+    scheduler = snapshot.get("scheduler") or {}
+    lifetime = snapshot.get("lifetime") or {}
+    arrow = icon("arrow", mode)
+    if scheduler.get("running"):
+        sched = f" {icon('scheduler', mode)} scheduler pid {scheduler.get('pid')}"
+    else:
+        sched = f" {icon('scheduler', mode)} scheduler stopped"
+    ready = f" {icon('queue', mode)} ready {snapshot.get('ready_count', 0)}"
+    totals = (
+        f"  {icon('done', mode)} {lifetime.get('done', 0)}"
+        f"  {icon('test_fail', mode)} {lifetime.get('failed', 0)}"
+        f"  {icon('blocked', mode)} {lifetime.get('cancelled', 0)}"
+    )
+    line = f"{sched}{arrow}{ready}{arrow}{totals}"
+    if "session_totals" in snapshot:
+        session = snapshot["session_totals"] or {}
+        line += (
+            f"   {icon('arrow_thin', mode)} session "
+            f"done {session.get('done', 0)} failed {session.get('failed', 0)}"
+            f" cancelled {session.get('cancelled', 0)}"
+        )
+    return line
+
+
+def title_line(snapshot: dict[str, Any], width: int, mode: str) -> str:
+    """Powerline title row: alloy branding, monitor label, repo path."""
+    arrow = icon("arrow", mode)
+    repo = _display_repo(snapshot.get("repo"))
+    left = f" {icon('alloy', mode)} alloy {arrow} monitor {arrow} {icon('folder', mode)} {repo} {arrow}"
+    now = datetime.now().astimezone().strftime("%H:%M:%S")
+    right = (
+        f"{icon('arrow_left', mode)} {icon('refresh', mode)} 1s "
+        f"{icon('arrow_left', mode)} {icon('clock', mode)} {now} "
+    )
+    budget = max(0, width - cell_len(right))
+    return _fit_cell_width(left, budget) + right
+
+
+def _display_repo(repo: Any) -> str:
+    if not repo:
+        return "-"
+    text = str(repo)
+    home = Path.home()
+    try:
+        return "~" + str(Path(text).relative_to(home))
+    except ValueError:
+        return text
+
+
+def _fit_cell_width(text: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    if cell_len(text) <= width:
+        return text + " " * (width - cell_len(text))
+    out = ""
+    for ch in text:
+        if cell_len(out + ch) > width - 1:
+            break
+        out += ch
+    return out + "\u2026" + " " * max(0, width - cell_len(out + "\u2026"))
 
 
 def run_rows(snapshot: dict[str, Any]) -> list[tuple[str, ...]]:
