@@ -31,10 +31,17 @@ ROLE_MARKERS = [
 def find_prompt(argv: list[str]) -> tuple[str, str]:
     """The prompt is whichever argument carries a role marker; a schema argument
     sits alongside it and must not be mistaken for it."""
-    for arg in argv:
+    candidates = [sys.stdin.read()] if "-" in argv else argv
+    for arg in candidates:
         for role, marker in ROLE_MARKERS:
             if marker in arg:
                 return role, arg
+    prompt = candidates[0] if "-" in argv else sys.stdin.read()
+    if prompt:
+        for role, marker in ROLE_MARKERS:
+            if marker in prompt:
+                return role, prompt
+        return "unknown", prompt
     candidates = [a for a in argv if not a.startswith("-")]
     return "unknown", max(candidates, key=len) if candidates else ""
 

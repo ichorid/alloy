@@ -131,6 +131,7 @@ class CLIRunner:
     binary: str = ""
     default_model: str | None = None
     supports_native_schema: bool = False
+    stdin_prompt_threshold = 60_000
 
     def __init__(
         self,
@@ -170,6 +171,17 @@ class CLIRunner:
         only passed to subclasses that declare them, so adapters without an
         effort or resume flag need not know."""
         raise NotImplementedError
+
+    def build_command_stdin(
+        self,
+        *,
+        model: str | None,
+        structured_schema: dict | None,
+        effort: str | None = None,
+        resume_session: str | None = None,
+    ) -> list[str] | None:
+        """Arguments for a prompt on stdin, or None if unsupported."""
+        return None
 
     def build_prompt(self, prompt: str, structured_schema: dict | None) -> str:
         if structured_schema and not self.supports_native_schema:
@@ -213,12 +225,25 @@ class CLIRunner:
 
         model = model or self.default_model
         effective_prompt = self.build_prompt(prompt, structured_schema)
-        build_kwargs: dict[str, Any] = {"model": model, "structured_schema": structured_schema}
-        if effort is not None and _accepts_kwarg(self.build_command, "effort"):
-            build_kwargs["effort"] = effort
-        if resume_session is not None and _accepts_kwarg(self.build_command, "resume_session"):
-            build_kwargs["resume_session"] = resume_session
-        argv = [binary_path, *self.build_command(effective_prompt, **build_kwargs)]
+        command = None
+        stdin_prompt = None
+        if len(effective_prompt) > self.stdin_prompt_threshold:
+            stdin_kwargs: dict[str, Any] = {"model": model, "structured_schema": structured_schema}
+            if effort is not None and _accepts_kwarg(self.build_command_stdin, "effort"):
+                stdin_kwargs["effort"] = effort
+            if resume_session is not None and _accepts_kwarg(self.build_command_stdin, "resume_session"):
+                stdin_kwargs["resume_session"] = resume_session
+            command = self.build_command_stdin(**stdin_kwargs)
+            if command is not None:
+                stdin_prompt = effective_prompt.encode("utf-8")
+        if command is None:
+            build_kwargs: dict[str, Any] = {"model": model, "structured_schema": structured_schema}
+            if effort is not None and _accepts_kwarg(self.build_command, "effort"):
+                build_kwargs["effort"] = effort
+            if resume_session is not None and _accepts_kwarg(self.build_command, "resume_session"):
+                build_kwargs["resume_session"] = resume_session
+            command = self.build_command(effective_prompt, **build_kwargs)
+        argv = [binary_path, *command]
         digest = prompt_hash(effective_prompt)
         started = utcnow()
         clock = time.monotonic()
@@ -231,7 +256,7 @@ class CLIRunner:
             process = await asyncio.create_subprocess_exec(
                 *argv,
                 cwd=str(cwd),
-                stdin=asyncio.subprocess.DEVNULL,
+                stdin=asyncio.subprocess.PIPE if stdin_prompt is not None else asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
@@ -243,7 +268,9 @@ class CLIRunner:
         try:
             if on_spawn is not None:
                 on_spawn(process.pid)
-            raw_out, raw_err = await asyncio.wait_for(process.communicate(), timeout=limit_s)
+            raw_out, raw_err = await asyncio.wait_for(
+                process.communicate(input=stdin_prompt), timeout=limit_s
+            )
         except asyncio.TimeoutError:
             timed_out = True
             raw_out, raw_err = b"", b""

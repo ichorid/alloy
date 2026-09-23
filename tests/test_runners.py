@@ -474,3 +474,180 @@ async def test_run_context_drops_resume_session_on_fallback(
     ]
     assert json.loads(implement_calls[0]["usage_json"])["resumed"] is True
     assert json.loads(implement_calls[1]["usage_json"])["resumed"] is False
+
+
+# -- oversized stdin prompts (alloy-5wb.6) ------------------------------------
+
+
+IMPLEMENT_MARKER = "Implement the smallest change."
+STDIN_PROMPT_THRESHOLD = 60_000
+OVERSIZED_PROMPT_LEN = 200_000
+
+
+def _prompt_with_marker(total_len: int) -> str:
+    if total_len < len(IMPLEMENT_MARKER):
+        raise ValueError(f"total_len must be at least {len(IMPLEMENT_MARKER)}")
+    return IMPLEMENT_MARKER + ("x" * (total_len - len(IMPLEMENT_MARKER)))
+
+
+def _prompt_in_argv(call: dict, prompt: str) -> bool:
+    return any(arg == prompt for arg in call["argv"])
+
+
+def _codex_argv_uses_stdin_sentinel(argv: list[str]) -> bool:
+    return bool(argv) and argv[-1] == "-"
+
+
+def _claude_argv_uses_stdin_prompt_flag(argv: list[str]) -> bool:
+    """Claude reads the prompt from stdin when ``-p`` is not followed by text."""
+    if "-p" not in argv:
+        return False
+    p_idx = argv.index("-p")
+    if p_idx + 1 >= len(argv):
+        return True
+    return argv[p_idx + 1].startswith("-")
+
+
+def test_cli_runner_stdin_prompt_threshold_on_codex_and_claude():
+    codex = RunnerRegistry().get("codex")
+    claude = RunnerRegistry().get("claude")
+    assert codex.stdin_prompt_threshold == STDIN_PROMPT_THRESHOLD
+    assert claude.stdin_prompt_threshold == STDIN_PROMPT_THRESHOLD
+
+
+def test_codex_build_command_stdin_replaces_trailing_prompt_with_dash():
+    runner = RunnerRegistry().get("codex")
+    argv = runner.build_command_stdin(
+        model="gpt-5.6-terra", structured_schema=None, effort="high"
+    )
+    assert argv is not None
+    assert argv[-1] == "-"
+    assert "ignored" not in argv
+    idx = argv.index("-c")
+    assert argv[idx + 1] == 'model_reasoning_effort="high"'
+
+
+def test_codex_build_command_stdin_honours_resume_session():
+    runner = RunnerRegistry().get("codex")
+    argv = runner.build_command_stdin(
+        model=None, structured_schema=None, resume_session="abc"
+    )
+    assert argv is not None
+    assert argv[:3] == ["exec", "resume", "abc"]
+    assert argv[-1] == "-"
+    assert "ignored" not in argv
+
+
+def test_claude_build_command_stdin_leaves_p_flag_without_prompt_argument():
+    runner = RunnerRegistry().get("claude")
+    argv = runner.build_command_stdin(
+        model="sonnet", structured_schema=None, effort="low"
+    )
+    assert argv is not None
+    assert "ignored" not in argv
+    assert _claude_argv_uses_stdin_prompt_flag(argv)
+    resume_idx = argv.index("--effort")
+    assert argv[resume_idx + 1] == "low"
+
+
+def test_claude_build_command_stdin_honours_resume_session():
+    runner = RunnerRegistry().get("claude")
+    argv = runner.build_command_stdin(
+        model="sonnet", structured_schema=None, resume_session="abc"
+    )
+    assert argv is not None
+    resume_idx = argv.index("--resume")
+    assert argv[resume_idx + 1] == "abc"
+    assert resume_idx < argv.index("-p")
+    assert _claude_argv_uses_stdin_prompt_flag(argv)
+    assert "ignored" not in argv
+
+
+async def test_codex_oversized_prompt_delivered_via_stdin(
+    fake_harnesses, project, tmp_path
+):
+    prompt = _prompt_with_marker(OVERSIZED_PROMPT_LEN)
+    assert len(prompt) > STDIN_PROMPT_THRESHOLD
+    fake_harnesses.configure({"implement": {"text": "ok"}})
+    registry = RunnerRegistry(log_dir=tmp_path / "logs")
+    result = await registry.get("codex").run(prompt, project)
+    assert result.ok
+    call = fake_harnesses.calls_for("implement")[0]
+    assert IMPLEMENT_MARKER in call["prompt"]
+    assert _codex_argv_uses_stdin_sentinel(call["argv"])
+    assert not _prompt_in_argv(call, prompt)
+
+
+async def test_claude_oversized_prompt_delivered_via_stdin(
+    fake_harnesses, project, tmp_path
+):
+    prompt = _prompt_with_marker(OVERSIZED_PROMPT_LEN)
+    assert len(prompt) > STDIN_PROMPT_THRESHOLD
+    fake_harnesses.configure({"implement": {"text": "ok"}})
+    registry = RunnerRegistry(log_dir=tmp_path / "logs")
+    result = await registry.get("claude").run(prompt, project)
+    assert result.ok
+    call = fake_harnesses.calls_for("implement")[0]
+    assert IMPLEMENT_MARKER in call["prompt"]
+    assert _claude_argv_uses_stdin_prompt_flag(call["argv"])
+    assert not _prompt_in_argv(call, prompt)
+
+
+async def test_codex_oversized_prompt_with_resume_records_session(
+    fake_harnesses, project, tmp_path
+):
+    prompt = _prompt_with_marker(OVERSIZED_PROMPT_LEN)
+    fake_harnesses.configure({"implement": {"text": "ok"}})
+    registry = RunnerRegistry(log_dir=tmp_path / "logs")
+    result = await registry.get("codex").run(
+        prompt, project, resume_session="abc"
+    )
+    assert result.ok
+    call = fake_harnesses.calls_for("implement")[0]
+    assert IMPLEMENT_MARKER in call["prompt"]
+    assert call["resume"] == "abc"
+    assert _codex_argv_uses_stdin_sentinel(call["argv"])
+
+
+async def test_claude_oversized_prompt_with_resume_records_session(
+    fake_harnesses, project, tmp_path
+):
+    prompt = _prompt_with_marker(OVERSIZED_PROMPT_LEN)
+    fake_harnesses.configure({"implement": {"text": "ok"}})
+    registry = RunnerRegistry(log_dir=tmp_path / "logs")
+    result = await registry.get("claude").run(
+        prompt, project, resume_session="abc"
+    )
+    assert result.ok
+    call = fake_harnesses.calls_for("implement")[0]
+    assert IMPLEMENT_MARKER in call["prompt"]
+    assert call["resume"] == "abc"
+    assert _claude_argv_uses_stdin_prompt_flag(call["argv"])
+
+
+async def test_codex_subthreshold_prompt_stays_in_argv(
+    fake_harnesses, project, tmp_path
+):
+    prompt = _prompt_with_marker(1_000)
+    assert len(prompt) <= STDIN_PROMPT_THRESHOLD
+    fake_harnesses.configure({"implement": {"text": "ok"}})
+    registry = RunnerRegistry(log_dir=tmp_path / "logs")
+    result = await registry.get("codex").run(prompt, project)
+    assert result.ok
+    call = fake_harnesses.calls_for("implement")[0]
+    assert _prompt_in_argv(call, prompt)
+    assert not _codex_argv_uses_stdin_sentinel(call["argv"])
+
+
+async def test_claude_subthreshold_prompt_stays_in_argv(
+    fake_harnesses, project, tmp_path
+):
+    prompt = _prompt_with_marker(1_000)
+    assert len(prompt) <= STDIN_PROMPT_THRESHOLD
+    fake_harnesses.configure({"implement": {"text": "ok"}})
+    registry = RunnerRegistry(log_dir=tmp_path / "logs")
+    result = await registry.get("claude").run(prompt, project)
+    assert result.ok
+    call = fake_harnesses.calls_for("implement")[0]
+    assert _prompt_in_argv(call, prompt)
+    assert not _claude_argv_uses_stdin_prompt_flag(call["argv"])
