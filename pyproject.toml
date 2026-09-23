@@ -32,7 +32,7 @@ packages = ["src/alloy"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-# Run in parallel by default (pytest-xdist). Use `pytest -n 0` for a serial run.
+# Run in parallel by default (pytest-xdist). Use `pytest -n 0` or `pytest -p no:xdist` for a serial run.
 addopts = ["-n", "auto"]
 # The checkout being tested must be the one imported. The venv's editable
 # install points at the main checkout, so inside an Alloy worktree a bare
