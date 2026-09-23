@@ -25,6 +25,7 @@ ROLE_MARKERS = [
     ("judge", "You are judging whether"),
     ("critic", "You are one of several independent critics"),
     ("synthesize", "Several independent critics reviewed"),
+    ("harvest", "You are harvesting a durable lesson"),
 ]
 
 

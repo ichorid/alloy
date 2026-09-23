@@ -71,6 +71,11 @@ def _cmd_remember(config: dict, argv: list[str]) -> int:
     return 0
 
 
+def _cmd_note(config: dict, argv: list[str]) -> int:
+    _record("note", argv)
+    return 0
+
+
 def _cmd_forget(config: dict, argv: list[str]) -> int:
     _record("forget", argv)
     if len(argv) < 2:
@@ -95,6 +100,7 @@ def main() -> int:
     handlers = {
         "memories": _cmd_memories,
         "remember": _cmd_remember,
+        "note": _cmd_note,
         "forget": _cmd_forget,
     }
     handler = handlers.get(command)

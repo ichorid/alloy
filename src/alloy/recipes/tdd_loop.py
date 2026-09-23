@@ -30,6 +30,7 @@ from alloy.beads import LABEL_BUG, LABEL_HUMAN, META_DISCOVERED_IN_RUN, META_REC
 from alloy.config import RoleSpec
 from alloy.models import (
     CHECK_HINTS_KEY,
+    LESSON_KEY_PREFIX,
     AcceptanceVerdict,
     AgentResult,
     Attempt,
@@ -40,9 +41,11 @@ from alloy.models import (
     ComplexityEstimate,
     ContextPacket,
     Critique,
+    HarvestAnswer,
     JudgeDecision,
     Outcome,
     utcnow,
+    ProjectMemory,
     ProjectSnapshot,
     ScopeVerdict,
     TestsOutput,
@@ -759,6 +762,47 @@ def synthesize_prompt(evidence: str, critiques: list[dict[str, Any]]) -> str:
     )
     volatile = f"{evidence}\n\n## Independent opinions\n{rendered}"
     return assemble(SYNTHESIZE_STATIC, "", "", "", volatile).text
+
+
+HARVEST_STATIC = """You are harvesting a durable lesson from a finished coding task run.
+You are read-only: do not modify any file.
+
+Review the evidence from this run, any human guidance, and the repository lessons
+already recorded. Return a structured answer with scope, key, lesson and confidence:
+- scope "repo" -- a lesson worth remembering for future runs on this repository
+- scope "task" -- an insight specific to this bead only
+- scope "none" -- nothing worth recording
+
+Choose a short snake_case key when scope is repo. Prefer updating an existing lesson
+key when the new insight refines the same theme."""
+
+
+def harvest_prompt(
+    evidence: str,
+    *,
+    human_note: str = "",
+    existing_lessons: dict[str, str] | None = None,
+) -> str:
+    lessons = "\n".join(
+        f"- {key}: {body}" for key, body in sorted((existing_lessons or {}).items())
+    )
+    volatile = (
+        f"{evidence}\n\n"
+        f"## Human note\n{human_note.strip() or '(none)'}\n\n"
+        f"## Existing repository lessons\n{lessons or '(none)'}"
+    )
+    return assemble(HARVEST_STATIC, "", "", "", volatile).text
+
+
+def existing_lessons(memory: ProjectMemory | None) -> dict[str, str]:
+    """The live alloy:lesson:* entries, key -> provenance-stripped body."""
+    if memory is None:
+        return {}
+    return {
+        key: entry.body
+        for key, entry in memory.entries.items()
+        if key.startswith(LESSON_KEY_PREFIX)
+    }
 
 
 # --------------------------------------------------------------------------
@@ -1992,6 +2036,62 @@ def build_graph(ctx: RunContext):
         except Exception:
             log.warning("could not remember %s", CHECK_HINTS_KEY, exc_info=True)
 
+    async def harvest(state: TddState) -> dict[str, Any]:
+        """Ask the harvest role for a durable lesson from this run and persist
+        it as alloy:lesson:<key> when it clears the bar. Runs after `finish`
+        and never touches `outcome`: a failed or malformed answer, or one
+        below the bar, writes nothing."""
+        default = HarvestAnswer(scope="none")
+        try:
+            spec = ctx.recipe.role("harvest")
+            prompt = harvest_prompt(
+                _evidence_packet(state, ctx, ctx.diff()),
+                human_note=state.get("human_note", ""),
+                existing_lessons=existing_lessons(ctx.project_memory()),
+            )
+        except Exception:
+            log.warning("harvest skipped", exc_info=True)
+            return {}
+        answer = await classify(
+            ctx, "harvest", spec, prompt,
+            model_cls=HarvestAnswer, default=default, iteration=state.get("iteration", 0),
+        )
+        if answer is default:
+            log.info("harvest wrote nothing: %s", default.reason)
+            return {}
+        remember_lesson(state, answer)
+        return {}
+
+    def remember_lesson(state: TddState, answer: HarvestAnswer) -> None:
+        """Persist a repo-scoped lesson when memory is on, bd is bound, the
+        confidence clears memory.harvest_min_confidence, and the run finished
+        DONE or FAILED after at least two implement iterations."""
+        if ctx.beads is None or not ctx.recipe.memory.enabled:
+            return
+        if answer.scope != "repo":
+            return
+        if answer.confidence < ctx.recipe.memory.harvest_min_confidence:
+            return
+        if state.get("outcome") not in (Outcome.DONE.value, Outcome.FAILED.value):
+            return
+        if state.get("iteration", 0) < 2:
+            return
+        key = answer.memory_key()
+        body = answer.lesson.strip()
+        if not key or not body:
+            return
+        try:
+            ctx.beads.remember(
+                key, with_provenance(body, ctx.run_id, ctx.bead.id, utcnow().date())
+            )
+            ctx.beads.note(
+                ctx.bead.id,
+                f"alloy: run {ctx.run_id} harvested repository lesson {key} "
+                f"(confidence {answer.confidence:.2f})",
+            )
+        except Exception:
+            log.warning("could not remember %s", key, exc_info=True)
+
     graph = StateGraph(TddState)
     graph.add_node("context", gather_context)
     graph.add_node("estimate", estimate)
@@ -2009,6 +2109,7 @@ def build_graph(ctx: RunContext):
     graph.add_node("synthesize", synthesize)
     graph.add_node("human_gate", human_gate)
     graph.add_node("finish", finish)
+    graph.add_node("harvest", harvest)
 
     graph.add_edge(START, "context")
     graph.add_edge("context", "estimate")
@@ -2044,7 +2145,8 @@ def build_graph(ctx: RunContext):
     graph.add_edge("critic", "synthesize")
     graph.add_edge("synthesize", "implement")
     graph.add_conditional_edges("human_gate", route_after_human, ["implement", "tests"])
-    graph.add_edge("finish", END)
+    graph.add_edge("finish", "harvest")
+    graph.add_edge("harvest", END)
 
     return graph.compile(checkpointer=ctx.checkpointer)
 

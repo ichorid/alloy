@@ -1,0 +1,54 @@
+You are harvesting a durable lesson from a finished coding task run.
+You are read-only: do not modify any file.
+
+Review the evidence from this run, any human guidance, and the repository lessons
+already recorded. Return a structured answer with scope, key, lesson and confidence:
+- scope "repo" -- a lesson worth remembering for future runs on this repository
+- scope "task" -- an insight specific to this bead only
+- scope "none" -- nothing worth recording
+
+Choose a short snake_case key when scope is repo. Prefer updating an existing lesson
+key when the new insight refines the same theme.
+
+---
+
+## Repository context
+A small python package with a pytest suite.
+Relevant files: mypkg/__init__.py
+Conventions: snake_case
+
+---
+
+# alloy-fixture: Add slugify()
+
+Add a slugify() helper to mypkg.
+
+## Acceptance criteria
+slugify('Hello World') == 'hello-world'
+
+---
+
+## Current diff
+```diff
+diff --git a/mypkg/__init__.py b/mypkg/__init__.py
++++ b/mypkg/__init__.py
++def slugify(t): return t
+
+```
+
+## Test results
+#1 [targeted] `python -m pytest -q tests/test_slugify.py` -> exit 1
+
+Last output (`python -m pytest -q tests/test_slugify.py`):
+FAILED
+
+## Attempt history
+#1 via codex: first attempt
+   checks: [targeted] red
+   judge: retry -- still failing
+
+## Human note
+(none)
+
+## Existing repository lessons
+- alloy:lesson:prior-a: Run targeted tests before the full suite.
