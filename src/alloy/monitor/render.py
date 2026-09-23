@@ -160,6 +160,7 @@ def detail_lines(run: dict[str, Any], log_dir: str | None = None) -> list[str]:
                      f"({_text(tokens.get('input_tokens'))}/{_text(tokens.get('output_tokens'))})")
     for entry in run.get("models_used") or []:
         lines.append(_models_used_line(entry))
+    lines.append(f"bead: {_text(run.get('bead_id'))}")
     lines.append(f"worktree: {_text(run.get('worktree'))}")
     lines.append(f"branch: {_text(run.get('branch'))}")
     if log_dir is not None:
