@@ -10,6 +10,7 @@ explicitly needs one (the CLI end-to-end tests use `beads_project`).
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,7 +24,7 @@ from alloy.limits import window, write_cache
 from alloy.models import AgentResult
 from alloy.monitor import build_snapshot
 from alloy.paths import AlloyPaths
-from alloy.store import RUN_RUNNING, Store
+from alloy.store import RUN_CANCELLED, RUN_DONE, RUN_FAILED, RUN_RUNNING, Store
 from conftest import (
     bd_create,
     context_entry,
@@ -39,7 +40,7 @@ from support import make_harness
 
 TOP_LEVEL_KEYS = {
     "root", "repo", "scheduler", "ready_count", "ready_capped_at", "lifetime", "runs",
-    "limits",
+    "limits", "session", "session_totals",
 }
 RUN_ENTRY_KEYS = {
     "bead_id", "run_id", "recipe", "status", "stage", "iteration", "max_iterations",
@@ -613,3 +614,132 @@ def test_build_snapshot_never_probes_limits(
     snapshot = build_snapshot(engine)
 
     assert set(snapshot["limits"].keys()) == {"claude", "codex"}
+
+
+# -- monitor session: finished runs + session_totals (alloy-w9d.9) -----------
+
+
+def _write_scheduler_session(
+    paths: AlloyPaths,
+    *,
+    started_at: str,
+    pid: int,
+    ended_at: str | None = None,
+) -> None:
+    payload = {"pid": pid, "started_at": started_at, "ended_at": ended_at}
+    paths.scheduler_session.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _finish_terminal_run(
+    store: Store,
+    run_id: str,
+    *,
+    status: str,
+    ended_at: str,
+    repo: Path,
+) -> None:
+    store.create_run(
+        run_id=run_id,
+        bead_id=f"bead-{run_id}",
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=repo,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    store.update_run(run_id, status=status, ended_at=ended_at, outcome=status)
+
+
+def test_snapshot_session_appends_finished_runs_and_session_totals(project, alloy_home):
+    """Acceptance: active first, then done/failed since session start; pre-session cancelled omitted."""
+    session_start = _iso(2026, 9, 23, 10, 0, 0)
+    engine = _engine(project, alloy_home)
+    _write_scheduler_session(
+        engine.paths,
+        started_at=session_start,
+        pid=os.getpid(),
+        ended_at=None,
+    )
+    _active_run(engine, "run-active")
+    _finish_terminal_run(
+        engine.store,
+        "run-done",
+        status=RUN_DONE,
+        ended_at=_iso(2026, 9, 23, 10, 1, 0),
+        repo=project,
+    )
+    _finish_terminal_run(
+        engine.store,
+        "run-failed",
+        status=RUN_FAILED,
+        ended_at=_iso(2026, 9, 23, 10, 2, 0),
+        repo=project,
+    )
+    _finish_terminal_run(
+        engine.store,
+        "run-cancelled",
+        status=RUN_CANCELLED,
+        ended_at=_iso(2026, 9, 23, 9, 59, 0),
+        repo=project,
+    )
+
+    snapshot = build_snapshot(engine)
+
+    assert snapshot["session"] == {
+        "started_at": session_start,
+        "ended_at": None,
+        "pid": os.getpid(),
+    }
+    assert snapshot["session_totals"] == {"done": 1, "failed": 1, "cancelled": 0}
+    assert [row["run_id"] for row in snapshot["runs"]] == [
+        "run-active",
+        "run-done",
+        "run-failed",
+    ]
+
+
+def test_snapshot_without_scheduler_session_file_lists_only_active_runs(project, alloy_home):
+    """Acceptance: no scheduler.json -> null session, zero session_totals, active runs only."""
+    engine = _engine(project, alloy_home)
+    _active_run(engine, "run-active")
+    _finish_terminal_run(
+        engine.store,
+        "run-done",
+        status=RUN_DONE,
+        ended_at=_iso(2026, 9, 23, 10, 1, 0),
+        repo=project,
+    )
+
+    snapshot = build_snapshot(engine)
+
+    assert snapshot["session"] == {"started_at": None, "ended_at": None, "pid": None}
+    assert snapshot["session_totals"] == {"done": 0, "failed": 0, "cancelled": 0}
+    assert [row["run_id"] for row in snapshot["runs"]] == ["run-active"]
+
+
+def test_snapshot_finished_run_entry_has_full_shape_and_empty_current_calls(project, alloy_home):
+    """Acceptance: appended finished runs use _run_entry with empty current_calls and terminal status."""
+    session_start = _iso(2026, 9, 23, 10, 0, 0)
+    engine = _engine(project, alloy_home)
+    _write_scheduler_session(
+        engine.paths,
+        started_at=session_start,
+        pid=os.getpid(),
+        ended_at=None,
+    )
+    _finish_terminal_run(
+        engine.store,
+        "run-done",
+        status=RUN_DONE,
+        ended_at=_iso(2026, 9, 23, 10, 1, 0),
+        repo=project,
+    )
+
+    snapshot = build_snapshot(engine)
+
+    assert len(snapshot["runs"]) == 1
+    run = snapshot["runs"][0]
+    assert set(run.keys()) == RUN_ENTRY_KEYS
+    assert run["current_calls"] == []
+    assert run["status"] == RUN_DONE
