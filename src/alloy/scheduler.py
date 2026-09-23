@@ -26,7 +26,7 @@ from alloy.memory_schedule import (
     MEMORY_REVIEW_RECIPE, apply_review, dirty_instruction_files, embed_instruction_files,
     review_bead_for_note, review_due, review_plan, review_run_id,
 )
-from alloy.models import EMBED_STALE_KEY, ProjectMemory, utcnow
+from alloy.models import DEFAULT_RECIPE_KEY, EMBED_STALE_KEY, ProjectMemory, utcnow
 from alloy.store import RUN_RUNNING, RUN_WAITING_HUMAN
 
 DEFAULT_POLL_SECONDS = 15.0
@@ -49,6 +49,8 @@ class Scheduler:
     _stopping: bool = field(default=False, init=False)
     _cancel_requested: bool = field(default=False, init=False)
     _current: "asyncio.Task | None" = field(default=None, init=False)
+    _default_recipe: str | None = field(default=None, init=False)
+    _unknown_default_recipe: str | None = field(default=None, init=False)
 
     # -- lifecycle --------------------------------------------------------
 
@@ -103,7 +105,7 @@ class Scheduler:
             return False
         log.info("picked %s (%s, P%d)", bead.id, bead.title, bead.priority)
         try:
-            await self._run_current(bead.id)
+            await self._run_current(bead.id, recipe_name=bead.recipe or self._default_recipe)
         except asyncio.CancelledError:
             if self._cancel_requested:
                 return False  # the operator stopped this run; serve() exits next
@@ -135,9 +137,14 @@ class Scheduler:
             log.exception("%s failed after auto-resume", bead_id)
         return True
 
-    async def _run_current(self, bead_id: str, *, resume: bool = False):
+    async def _run_current(
+        self, bead_id: str, *, resume: bool = False, recipe_name: str | None = None,
+    ):
         """Run one bead as a task we can cancel from a signal handler."""
-        coro = self.engine.resume(bead_id, "") if resume else self.engine.run(bead_id)
+        coro = (
+            self.engine.resume(bead_id, "") if resume
+            else self.engine.run(bead_id, recipe_name=recipe_name)
+        )
         self._current = asyncio.ensure_future(coro)
         try:
             return await self._current
@@ -206,12 +213,26 @@ class Scheduler:
     # -- selection --------------------------------------------------------
 
     def next_task(self) -> bd.Bead | None:
-        """Highest-priority ready bead that carries a recipe Alloy knows."""
+        """Highest-priority ready bead with a known assigned or default recipe."""
         from alloy import recipes
 
         known = set(recipes.names())
-        for bead in self.engine.beads.ready(recipe=self.recipe_filter):
-            if bead.recipe in known:
+        self._default_recipe = None
+        default = (
+            self.engine.beads.memories().get(DEFAULT_RECIPE_KEY)
+            if self.recipe_filter is None else None
+        )
+        if default and default not in known:
+            if default != self._unknown_default_recipe:
+                log.warning("ignoring unknown default recipe %r from %s", default, DEFAULT_RECIPE_KEY)
+            self._unknown_default_recipe = default
+        else:
+            self._unknown_default_recipe = None
+            self._default_recipe = default or None
+        for bead in self.engine.beads.ready(
+            recipe=self.recipe_filter, include_unassigned=self._default_recipe is not None,
+        ):
+            if (bead.recipe or self._default_recipe) in known:
                 return bead
         return None
 

@@ -153,12 +153,15 @@ class BeadsClient:
             raise BeadsError(f"bead {bead_id} not found")
         return Bead.model_validate(rows[0])
 
-    def ready(self, *, recipe: str | None = None, limit: int = 50) -> list[Bead]:
+    def ready(
+        self, *, recipe: str | None = None, limit: int = 50,
+        include_unassigned: bool = False,
+    ) -> list[Bead]:
         """Open beads with no active blockers, highest priority first."""
         args = ["ready", "--sort", "priority", "--limit", str(limit)]
         if recipe:
             args += ["--metadata-field", f"{META_RECIPE}={recipe}"]
-        else:
+        elif not include_unassigned:
             args += ["--has-metadata-key", META_RECIPE]
         beads = [Bead.model_validate(row) for row in self._json(args)]
         beads.sort(key=lambda b: (b.priority, b.id))
