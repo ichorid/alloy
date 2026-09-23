@@ -18,12 +18,14 @@ from alloy import beads as bd
 from alloy.config import ConfigError, RecipeConfig
 from alloy.engine import Engine
 from alloy.limits import installed_harnesses, read_cache, unavailable
+from alloy.models import DEFAULT_RECIPE_KEY
 from alloy.runners import RunnerRegistry
 from alloy.scheduler import read_pid, read_session
 from alloy.store import RUN_CANCELLED, RUN_DONE, RUN_FAILED
 from alloy.verify import checks_summary
 
 READY_CAP = 1000
+QUEUE_READY_CAP = 50
 LIFETIME_STATUSES = (RUN_DONE, RUN_FAILED, RUN_CANCELLED)
 
 
@@ -58,6 +60,7 @@ def build_snapshot(engine: Engine) -> dict[str, Any]:
         "limits": limits,
         "session": session,
         "session_totals": _session_totals(finished_records),
+        "queue": _queue(engine),
         "runs": runs,
     }
 
@@ -98,6 +101,54 @@ def _ready_count(engine: Engine) -> int:
         return len(engine.beads.ready(limit=READY_CAP))
     except (bd.BeadsError, OSError):
         return 0  # the queue is unknowable without bd; the runs are still worth showing
+
+
+def _queue(engine: Engine) -> dict[str, Any]:
+    try:
+        return _build_queue(engine)
+    except (bd.BeadsError, OSError):
+        return {"ready": [], "ready_total": 0, "blocked": []}
+
+
+def _build_queue(engine: Engine) -> dict[str, Any]:
+    """Dispatchable ready beads (Scheduler order) plus blocked beads."""
+    from alloy import recipes
+
+    known = set(recipes.names())
+    default = engine.beads.memories().get(DEFAULT_RECIPE_KEY)
+    if default and default not in known:
+        default = None
+    default_recipe = default or None
+
+    dispatchable: list[bd.Bead] = []
+    for bead in engine.beads.ready(
+        include_unassigned=default_recipe is not None,
+        limit=READY_CAP,
+    ):
+        if (bead.recipe or default_recipe) in known:
+            dispatchable.append(bead)
+
+    ready = [
+        {
+            "bead_id": bead.id,
+            "title": bead.title,
+            "recipe": bead.recipe or default_recipe,
+            "priority": bead.priority,
+            "complexity": bead.complexity_override,
+            "epic_id": engine.beads.epic_for(bead.id),
+        }
+        for bead in dispatchable[:QUEUE_READY_CAP]
+    ]
+    blocked = [
+        {
+            "bead_id": bead.id,
+            "title": bead.title,
+            "blocked_by": list(bead.blocked_by),
+            "epic_id": engine.beads.epic_for(bead.id),
+        }
+        for bead in engine.beads.blocked()
+    ]
+    return {"ready": ready, "ready_total": len(dispatchable), "blocked": blocked}
 
 
 def _run_entry(
