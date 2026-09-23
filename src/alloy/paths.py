@@ -10,6 +10,7 @@ manual inspection all start from the same place::
       worktrees/<bead>/ isolated git checkout per task
       recipes/          user-supplied recipe configs (override built-ins)
       scheduler.pid     daemon lockfile
+      limits.json       last harness usage-limit samples (alloy.limits)
 """
 
 from __future__ import annotations
@@ -58,6 +59,10 @@ class AlloyPaths:
     @property
     def scheduler_log(self) -> Path:
         return self.root / "scheduler.log"
+
+    @property
+    def limits_cache(self) -> Path:
+        return self.root / "limits.json"
 
     def run_logs(self, run_id: str) -> Path:
         return self.logs / run_id
