@@ -96,6 +96,14 @@ transcripts go under Alloy's logs without run-ledger entries.
 `alloy status <bead-id> --json` includes `complexity`, `complexity_source`, and
 `dispatch_tier` (null in shadow mode).
 
+Shipped recipes set `landing: {mode: auto, target: main}`. After a successful
+run the scheduler invokes `alloy land <bead-id>`: trial-merge into the bead
+branch, re-verify, merge into the primary checkout on `landing.target`, close
+the bead, and remove the worktree. Recipes with `landing: {mode: off}` stop at
+`review-ready`; land manually with `alloy land <bead-id>` when ready. Epic
+children share one worktree (`alloy/<epic-id>`); each child closes on success
+and the epic lands when every descendant is closed.
+
 ```bash
 bd update <id> --set-metadata alloy_complexity=complex
 alloy recipes --probe                     # probe all recipes' distinct tier entries

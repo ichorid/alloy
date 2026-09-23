@@ -89,6 +89,7 @@ alloy status [<bead-id>] --json       # what's running, stage, iteration count, 
 alloy logs <bead-id>                  # every agent call in the run + transcript paths
 alloy resume <bead-id> -m "<message>" # continue a paused/crashed run with guidance
 alloy cancel <bead-id>                # stop the run's process; bead returns to ready, worktree kept
+alloy land <bead-id>                  # trial-merge, re-verify, merge into landing.target (default main)
 alloy start [--poll SECS] [--recipe N]  # scheduler: poll Beads, run READY work, concurrency 1
 alloy stop [--now]                    # stop the scheduler after the current task (--now: cancel it too)
 alloy monitor [--once [--json]]       # live htop-style view of every active run; --once prints one snapshot
@@ -187,11 +188,16 @@ alloy start
   can accept `done`, and it refuses while tests are red. If a run reaches
   `waiting-human`, use `alloy resume <bead-id> -m "..."` with guidance, don't
   edit the bead status directly.
-- Each bead gets its own worktree/branch (`alloy/<bead-id>`) and lands at
-  `review-ready`, not auto-merged (`cleanup_worktree_on_success: false`). For
-  a multi-bead feature, decide up front whether later beads' worktrees should
-  branch off an earlier bead's branch or off main — Alloy does not stack
-  branches for you.
+- Standalone beads sit at `review-ready` until landing. Recipes opt in via
+  `landing: {mode: off|auto, target: <branch>}`; shipped `tdd-loop` and
+  `tdd-loop-jev` set `landing: {mode: auto, target: main}`, so the scheduler
+  runs `alloy land` after a successful run. Landing is never set via
+  `alloy_recipe` metadata. Epic children share one worktree/branch
+  (`alloy/<epic-id>`); children close on success and the epic lands when all
+  descendants are closed. `cleanup_worktree_on_success: false` keeps the
+  worktree until land removes it. For stacked features, decide up front
+  whether later beads' worktrees branch off an earlier bead's branch or off
+  main — Alloy does not stack branches for you.
 - `.beads/` is a Dolt database with its own version control — do not commit it
   into the project's git repo. If you want a reviewable, git-friendly record
   of issues, enable `bd config set export.auto true` and use the resulting
