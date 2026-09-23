@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 
 import pytest
 from typer.testing import CliRunner
@@ -149,6 +150,27 @@ async def test_human_gate_parks_the_bead_and_resume_completes_it(
     assert resumed.run_id == paused.run_id  # same run, not a new one
     assert engine.beads.show(bead_id).status == bd.STATUS_REVIEW_READY
     assert "use NFKD" in fake_harnesses.calls_for("implement")[1]["prompt"]
+
+
+async def test_tests_role_session_limit_parks_with_retry_at(
+    engine, beads_project, fake_harnesses
+):
+    """A harness 'resets H:MMam/pm' message schedules timed auto-resume metadata."""
+    limit_msg = "You've hit your session limit · resets 1:20am"
+    fake_harnesses.configure(script(tests=[{"exit": 1, "stderr": limit_msg}]))
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+
+    paused = await engine.run(bead_id)
+
+    assert paused.outcome == "waiting-human"
+    assert "resets 1:20am" in paused.interrupt["reason"]
+    assert paused.interrupt.get("retry_at")
+    datetime.fromisoformat(paused.interrupt["retry_at"])
+
+    record = engine.store.get_run(paused.run_id)
+    assert record["status"] == "waiting-human"
+    assert record.get("retry_at")
+    datetime.fromisoformat(record["retry_at"])
 
 
 async def test_a_bead_without_a_recipe_is_refused(engine, beads_project, fake_harnesses):

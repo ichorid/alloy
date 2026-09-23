@@ -583,6 +583,13 @@ def test_runs_table_has_parent_run_id_column(store: Store):
     assert "parent_run_id" in columns
 
 
+def test_runs_table_has_retry_at_column(store: Store):
+    """alloy-5wb.4: scheduled harness auto-resume time for waiting-human runs."""
+    with store.connect() as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(runs)")}
+    assert "retry_at" in columns
+
+
 def test_children_of_lists_direct_child_runs(store: Store):
     _make_run(store, "parent")
     _make_run(store, "child-a")

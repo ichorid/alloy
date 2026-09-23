@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 
 import pytest
 
 from alloy import beads as bd
+from alloy.models import utcnow
 from alloy.engine import Engine
 from alloy.scheduler import Scheduler, read_pid
 from conftest import (
@@ -203,3 +205,65 @@ def dead_pid() -> int:
     process = subprocess.Popen([sys.executable, "-c", "pass"])
     process.wait(timeout=30)
     return process.pid
+
+
+# -- timed auto-resume (alloy-5wb.4) --------------------------------------
+
+
+SESSION_LIMIT_MSG = "You've hit your session limit · resets 1:20am"
+
+
+async def _park_at_session_limit(engine, beads_project):
+    bead_id = bd_create(beads_project, "session limit", alloy_recipe="tdd-loop")
+    paused = await engine.run(bead_id)
+    assert paused.outcome == "waiting-human"
+    return bead_id, paused
+
+
+async def test_scheduler_tick_auto_resumes_when_retry_at_is_past(
+    scheduler, beads_project, fake_harnesses
+):
+    """One tick resumes a parked run whose retry_at has elapsed and clears it."""
+    fake_harnesses.configure(
+        script(
+            tests=[
+                {"exit": 1, "stderr": SESSION_LIMIT_MSG},
+                write_tests_entry(),
+            ],
+        )
+    )
+    bead_id, paused = await _park_at_session_limit(scheduler.engine, beads_project)
+    past = (utcnow() - timedelta(minutes=1)).isoformat()
+    scheduler.engine.store.update_run(paused.run_id, retry_at=past)
+
+    # No reset_calls() here: it would also rewind the script counters, and the
+    # resumed tests call must reach the second (successful) scripted entry.
+    tests_calls_before = len(fake_harnesses.calls_for("tests"))
+    assert await scheduler.tick() is True
+
+    assert scheduler.engine.beads.show(bead_id).status == bd.STATUS_REVIEW_READY
+    record = scheduler.engine.store.get_run(paused.run_id)
+    assert record["status"] == "done"
+    assert record.get("retry_at") is None
+    assert len(fake_harnesses.calls_for("tests")) > tests_calls_before
+
+
+async def test_scheduler_tick_leaves_parked_run_when_retry_at_is_future(
+    scheduler, beads_project, fake_harnesses
+):
+    """A future retry_at must not be resumed early."""
+    fake_harnesses.configure(
+        script(tests=[{"exit": 1, "stderr": SESSION_LIMIT_MSG}])
+    )
+    bead_id, paused = await _park_at_session_limit(scheduler.engine, beads_project)
+    future = (utcnow() + timedelta(hours=1)).isoformat()
+    scheduler.engine.store.update_run(paused.run_id, retry_at=future)
+
+    fake_harnesses.reset_calls()
+    assert await scheduler.tick() is False
+
+    assert scheduler.engine.beads.show(bead_id).status == bd.STATUS_WAITING_HUMAN
+    record = scheduler.engine.store.get_run(paused.run_id)
+    assert record["status"] == "waiting-human"
+    assert record.get("retry_at") == future
+    assert fake_harnesses.calls == []

@@ -15,11 +15,13 @@ import signal
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from alloy import beads as bd
 from alloy.engine import Engine, EngineError
-from alloy.store import RUN_RUNNING
+from alloy.models import utcnow
+from alloy.store import RUN_RUNNING, RUN_WAITING_HUMAN
 
 DEFAULT_POLL_SECONDS = 15.0
 
@@ -84,6 +86,9 @@ class Scheduler:
         """Claim and run at most one ready task. True if work was started."""
         if len(self._running()) >= self.concurrency:
             return False
+        due = self.due_resume()
+        if due is not None:
+            return await self._resume_due(due)
         bead = self.next_task()
         if bead is None:
             return False
@@ -102,9 +107,29 @@ class Scheduler:
             return True
         return True
 
-    async def _run_current(self, bead_id: str):
+    async def _resume_due(self, record: dict) -> bool:
+        """journal 38: the harness said when it would be back; that time has passed."""
+        bead_id = record["bead_id"]
+        log.info("resuming %s (run %s, retry_at %s passed)",
+                 bead_id, record["run_id"], record.get("retry_at"))
+        try:
+            await self._run_current(bead_id, resume=True)
+        except asyncio.CancelledError:
+            if self._cancel_requested:
+                return False
+            raise
+        except EngineError as exc:
+            log.warning("%s could not be resumed: %s", bead_id, exc)
+            self.engine.store.update_run(record["run_id"], retry_at=None)
+            return False
+        except Exception:
+            log.exception("%s failed after auto-resume", bead_id)
+        return True
+
+    async def _run_current(self, bead_id: str, *, resume: bool = False):
         """Run one bead as a task we can cancel from a signal handler."""
-        self._current = asyncio.ensure_future(self.engine.run(bead_id))
+        coro = self.engine.resume(bead_id, "") if resume else self.engine.run(bead_id)
+        self._current = asyncio.ensure_future(coro)
         try:
             return await self._current
         finally:
@@ -120,6 +145,17 @@ class Scheduler:
         for bead in self.engine.beads.ready(recipe=self.recipe_filter):
             if bead.recipe in known:
                 return bead
+        return None
+
+    def due_resume(self) -> dict | None:
+        """The oldest waiting-human run whose scheduled retry_at has passed."""
+        now = utcnow()
+        for run in self.engine.store.active_runs():
+            if run["status"] != RUN_WAITING_HUMAN or not run.get("retry_at"):
+                continue
+            retry_at = _parse_iso(run["retry_at"])
+            if retry_at is not None and retry_at <= now:
+                return run
         return None
 
     def _running(self) -> list[dict]:
@@ -164,6 +200,15 @@ class Scheduler:
         with contextlib.suppress(FileNotFoundError):
             if read_pid(self.pidfile) == os.getpid():
                 self.pidfile.unlink()
+
+
+def _parse_iso(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    # A naive time is local wall-clock time (the form "resets 1:20am" gives).
+    return parsed if parsed.tzinfo is not None else parsed.astimezone()
 
 
 def read_pid(pidfile: Path) -> int | None:

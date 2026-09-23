@@ -12,7 +12,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
@@ -26,6 +26,7 @@ from alloy.models import (
     RunnerUnavailable,
     utcnow,
 )
+from alloy.limits import parse_retry_at
 from alloy.paths import project_brief
 from alloy.runners import RunnerRegistry
 from alloy.store import Store
@@ -148,6 +149,12 @@ class RunContext:
             # Recorded in usage_json so `alloy logs` can show which calls
             # continued an earlier session.
             result.usage = {**(result.usage or {}), "resumed": resume_session is not None}
+            if not result.ok and result.retry_at is None:
+                # journal 38: "resets 1:20am" is local wall-clock time; keep it
+                # timezone-aware so the scheduler can compare it with utcnow().
+                retry_at = parse_retry_at(result.error or result.text, now=datetime.now())
+                if retry_at is not None:
+                    result.retry_at = retry_at.astimezone()
             self.store.finish_call(
                 call_id, run_id=self.run_id, bead_id=self.bead.id, role=role,
                 iteration=iteration, result=result,
