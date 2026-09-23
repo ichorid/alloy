@@ -120,7 +120,7 @@ async def test_recover_adopts_runs_whose_process_died(
 
     assert recovered == [bead_id]
     assert engine.beads.show(bead_id).status == bd.STATUS_REVIEW_READY
-    assert [call["role"] for call in fake_harnesses.calls] == ["implement", "verifier", "acceptance", "judge"]
+    assert [call["role"] for call in fake_harnesses.calls] == ["implement", "verifier", "acceptance", "judge", "harvest"]
 
 
 async def test_serve_writes_and_removes_its_pidfile(scheduler):

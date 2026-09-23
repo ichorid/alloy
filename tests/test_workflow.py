@@ -29,6 +29,7 @@ from conftest import (
     acceptance_entry,
     context_entry,
     critic_entry,
+    harvest_entry,
     implement_empty_diff_entry,
     implement_entry,
     judge_entry,
@@ -69,7 +70,8 @@ async def test_done_decision_finishes_after_one_iteration(
     assert final["outcome"] == "done"
     assert final["iteration"] == 1
     assert [call["role"] for call in fake_harnesses.calls] == [
-        "context", "estimate", "tests", "implement", "verifier", "acceptance", "judge"
+        "context", "estimate", "tests", "implement", "verifier", "acceptance", "judge",
+        "harvest",
     ]
 
 
@@ -395,7 +397,7 @@ async def test_failing_tests_role_pauses_for_a_human_before_burning_an_implement
     assert final["outcome"] == "done"
     assert [call["role"] for call in fake_harnesses.calls] == [
         "context", "estimate", "tests", "tests", "tests", "implement", "verifier",
-        "acceptance", "judge",
+        "acceptance", "judge", "harvest",
     ]
     # Cursor and its fallback fail before the gate; resume retries Cursor.
     assert [call["runner"] for call in fake_harnesses.calls_for("tests")] == [
@@ -1611,3 +1613,159 @@ async def test_verifier_prompt_lists_remembered_check_hints_before_autodetect(
     autodetect_pos = hints.index(AUTODETECT_PYTEST)
     assert targeted_pos < autodetect_pos
     assert regression_pos < autodetect_pos
+
+
+# -- harvest lesson persistence (alloy-4ef.10) --------------------------------
+
+
+HARVEST_LESSON_KEY = "lesson-x"
+LESSON_MEMORY_KEY = f"alloy:lesson:{HARVEST_LESSON_KEY}"
+LESSON_BODY = "Always verify slugify with targeted tests before the full suite."
+
+
+def _lesson_remember_calls(fake_workflow: FakeWorkflow) -> list[dict]:
+    return [
+        call
+        for call in _bd_remember_calls(fake_workflow)
+        if LESSON_MEMORY_KEY in call.get("argv", [])
+    ]
+
+
+def _bd_note_calls(fake_workflow: FakeWorkflow) -> list[dict]:
+    return [call for call in fake_workflow.calls if call.get("command") == "note"]
+
+
+def _harvest_two_iteration_script(**overrides):
+    base = script(
+        implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
+        judge=[
+            judge_entry("retry", "targeted check still red"),
+            judge_entry("done"),
+        ],
+        harvest=harvest_entry(
+            scope="repo",
+            key=HARVEST_LESSON_KEY,
+            lesson=LESSON_BODY,
+            confidence=0.9,
+        ),
+    )
+    base.update(overrides)
+    return base
+
+
+async def test_done_two_iteration_run_remembers_repo_lesson_with_provenance(
+    project, alloy_home, fake_workflow
+):
+    """High-confidence repo harvest after DONE with iteration>=2 writes one lesson."""
+    fake_workflow.configure(_harvest_two_iteration_script())
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    assert final["iteration"] == 2
+    assert len(fake_workflow.calls_for("harvest")) == 1
+    remembers = _lesson_remember_calls(fake_workflow)
+    assert len(remembers) == 1
+
+    key, stored = _remember_key_and_body(remembers[0])
+    assert key == LESSON_MEMORY_KEY
+    body, run_id, bead_id, at = parse_provenance(stored)
+    assert run_id == harness.run_id
+    assert bead_id == harness.bead.id
+    assert at is not None
+    assert body == LESSON_BODY
+
+    notes = [
+        note for note in _bd_note_calls(fake_workflow) if HARVEST_LESSON_KEY in note["argv"][2]
+    ]
+    assert len(notes) == 1
+
+
+async def test_harvest_task_scope_writes_no_lesson(
+    project, alloy_home, fake_workflow
+):
+    """scope 'task' must not persist alloy:lesson:* even after two iterations."""
+    fake_workflow.configure(
+        _harvest_two_iteration_script(
+            harvest=harvest_entry(scope="task", confidence=0.9),
+        ),
+    )
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    assert len(fake_workflow.calls_for("harvest")) == 1
+    assert _lesson_remember_calls(fake_workflow) == []
+
+
+async def test_harvest_low_confidence_writes_no_lesson(
+    project, alloy_home, fake_workflow
+):
+    """confidence below harvest_min_confidence must not write a repo lesson."""
+    fake_workflow.configure(
+        _harvest_two_iteration_script(
+            harvest=harvest_entry(scope="repo", confidence=0.5),
+        ),
+    )
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    assert len(fake_workflow.calls_for("harvest")) == 1
+    assert _lesson_remember_calls(fake_workflow) == []
+
+
+async def test_done_single_iteration_run_writes_no_lesson(
+    project, alloy_home, fake_workflow
+):
+    """A DONE run with only one implement iteration must not harvest a lesson."""
+    fake_workflow.configure(
+        script(
+            harvest=harvest_entry(scope="repo", confidence=0.9),
+        ),
+    )
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    assert final["iteration"] == 1
+    assert len(fake_workflow.calls_for("harvest")) == 1
+    assert _lesson_remember_calls(fake_workflow) == []
+
+
+async def test_harvest_runner_failure_writes_no_lesson_and_outcome_stays_done(
+    project, alloy_home, fake_workflow
+):
+    """A failed harvest call must not write memory or change the run outcome."""
+    fake_workflow.configure(
+        _harvest_two_iteration_script(
+            harvest={"exit": 1, "is_error": True, "text": "harvest runner failed"},
+        ),
+    )
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    assert final["iteration"] == 2
+    assert len(fake_workflow.calls_for("harvest")) == 1
+    assert _lesson_remember_calls(fake_workflow) == []

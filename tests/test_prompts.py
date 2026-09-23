@@ -30,6 +30,7 @@ from alloy.recipes.tdd_loop import (
     context_prompt,
     critic_prompt,
     estimate_prompt,
+    harvest_prompt,
     implement_prompt,
     judge_prompt,
     synthesize_prompt,
@@ -117,7 +118,12 @@ PROMPT_ROLES = (
     "judge",
     "critic",
     "synthesize",
+    "harvest",
 )
+
+HARVEST_EXISTING_LESSONS = {
+    "alloy:lesson:prior-a": "Run targeted tests before the full suite.",
+}
 
 TDD_LOOP_ROLE_MARKERS = tuple(
     (role, marker)
@@ -410,6 +416,28 @@ root cause: wrong algo
 evidence: test fails
 suggested fix: fix it"""
 
+_HARVEST_STATIC = """You are harvesting a durable lesson from a finished coding task run.
+You are read-only: do not modify any file.
+
+Review the evidence from this run, any human guidance, and the repository lessons
+already recorded. Return a structured answer with scope, key, lesson and confidence:
+- scope "repo" -- a lesson worth remembering for future runs on this repository
+- scope "task" -- an insight specific to this bead only
+- scope "none" -- nothing worth recording
+
+Choose a short snake_case key when scope is repo. Prefer updating an existing lesson
+key when the new insight refines the same theme."""
+
+_HARVEST_EVIDENCE = (GOLDEN_DIR / "evidence_packet.txt").read_text(encoding="utf-8")
+
+_HARVEST_VOLATILE = f"""{_HARVEST_EVIDENCE}
+
+## Human note
+(none)
+
+## Existing repository lessons
+- alloy:lesson:prior-a: Run targeted tests before the full suite."""
+
 
 def expected_golden(role: str) -> str:
     builders = {
@@ -441,6 +469,7 @@ def expected_golden(role: str) -> str:
         ),
         "critic": lambda: _join_layers(_CRITIC_STATIC, volatile=_CRITIC_VOLATILE),
         "synthesize": lambda: _join_layers(_SYNTHESIZE_STATIC, volatile=_SYNTHESIZE_VOLATILE),
+        "harvest": lambda: _join_layers(_HARVEST_STATIC, volatile=_HARVEST_VOLATILE),
     }
     return builders[role]()
 
@@ -499,6 +528,12 @@ def _fixture_prompt(role: str) -> str:
         return critic_prompt(EVIDENCE)
     if role == "synthesize":
         return synthesize_prompt(EVIDENCE, CRITIQUES)
+    if role == "harvest":
+        return harvest_prompt(
+            _HARVEST_EVIDENCE,
+            human_note="",
+            existing_lessons=HARVEST_EXISTING_LESSONS,
+        )
     raise KeyError(role)
 
 

@@ -449,6 +449,23 @@ def scope_entry(
     }
 
 
+def harvest_entry(
+    *,
+    scope: str = "repo",
+    key: str = "lesson-x",
+    lesson: str = "Always verify slugify with targeted tests before the full suite.",
+    confidence: float = 0.9,
+) -> dict:
+    return {
+        "structured": {
+            "scope": scope,
+            "key": key,
+            "lesson": lesson,
+            "confidence": confidence,
+        }
+    }
+
+
 @pytest.fixture
 def happy_path_script() -> dict:
     """Context, tests, one implementation, judge says done."""

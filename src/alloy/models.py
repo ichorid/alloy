@@ -642,6 +642,48 @@ def _render_block(entries: list[MemoryEntry]) -> str:
 CHECK_HINTS_KEY = "alloy:check-hints"
 """The verifier's runnable check commands from the last DONE run on this repo."""
 
+# ---------------------------------------------------------------------------
+# alloy:lesson:<key> (alloy-4ef.10)
+# ---------------------------------------------------------------------------
+
+LESSON_KEY_PREFIX = f"{_MEMORY_LESSON_PREFIX}:"
+"""Namespace of the repo-level lessons the harvest role writes."""
+
+HARVEST_SCOPES: tuple[str, ...] = ("repo", "task", "none")
+HarvestScope = Literal["repo", "task", "none"]
+
+
+class HarvestAnswer(BaseModel):
+    """The harvest role's answer: is there a lesson worth keeping, and for whom?"""
+
+    scope: HarvestScope
+    key: str = ""
+    lesson: str = ""
+    confidence: float = 0.0
+    reason: str = ""
+
+    @classmethod
+    def schema_for_agents(cls) -> dict[str, Any]:
+        # `scope` first: Jev classifies on the first enum-valued property.
+        return {
+            "type": "object",
+            "properties": {
+                "scope": {"type": "string", "enum": list(HARVEST_SCOPES)},
+                "key": {"type": "string"},
+                "lesson": {"type": "string"},
+                "confidence": {"type": "number"},
+            },
+            "required": ["scope", "key", "lesson", "confidence"],
+            "additionalProperties": False,
+        }
+
+    def memory_key(self) -> str:
+        """The full alloy:lesson:<key> memory key, or "" when no key was named.
+        A key that already carries the namespace (an existing lesson) is kept."""
+
+        key = self.key.strip().removeprefix(LESSON_KEY_PREFIX).strip()
+        return f"{LESSON_KEY_PREFIX}{key}" if key else ""
+
 MAX_CHECK_HINTS = 8
 
 
