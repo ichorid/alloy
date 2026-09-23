@@ -545,7 +545,9 @@ async def test_epic_child_base_commit_starts_after_sibling_commit(
     await engine.run(child_y)
 
     epic_worktree = engine.paths.worktree_for(epic_id)
-    sibling_head = _commit_all(epic_worktree, f"{child_y}: y marker")
+    manager = WorktreeManager(repo=engine.repo, root=engine.paths.worktrees)
+    # _settle committed Y's work on the owner branch; X's base is that HEAD.
+    sibling_head = manager.head(epic_worktree)
 
     fake_harnesses.reset_calls()
     fake_harnesses.configure(
@@ -570,7 +572,7 @@ async def test_epic_child_judge_diff_lists_only_this_childs_files(
         script(implement=[_implement_write("mypkg/y_marker.py", "Y = 1\n")])
     )
     await engine.run(child_y)
-    _commit_all(engine.paths.worktree_for(epic_id), f"{child_y}: y marker")
+    # _settle already committed Y's marker on alloy/<epic>; no manual commit.
 
     fake_harnesses.reset_calls()
     fake_harnesses.configure(
@@ -668,7 +670,9 @@ async def test_epic_child_resume_restores_recorded_base_commit(
         script(implement=[_implement_write("mypkg/y_marker.py", "Y = 1\n")])
     )
     await engine.run(child_y)
-    sibling_head = _commit_all(engine.paths.worktree_for(epic_id), f"{child_y}: y marker")
+    # _settle committed Y's work on the owner branch; X's base is that HEAD.
+    manager = WorktreeManager(repo=engine.repo, root=engine.paths.worktrees)
+    sibling_head = manager.head(engine.paths.worktree_for(epic_id))
 
     fake_harnesses.reset_calls()
     fake_harnesses.configure(
@@ -705,3 +709,136 @@ async def test_epic_child_resume_restores_recorded_base_commit(
     manager = WorktreeManager(repo=engine.repo, root=engine.paths.worktrees)
     worktree = _worktree_from_run(engine, paused.run_id, owner_id=epic_id)
     assert manager.changed_files(worktree) == ["mypkg/x_marker.py"]
+
+
+# -- epic child settle (alloy-vrh.5) ----------------------------------------
+
+
+def _latest_commit_message(worktree_path: Path) -> str:
+    proc = subprocess.run(
+        ["git", "log", "-1", "--format=%s"],
+        cwd=str(worktree_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout.strip()
+
+
+def _worktree_is_clean(worktree_path: Path) -> bool:
+    proc = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=str(worktree_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout.strip() == ""
+
+
+def _files_in_head_commit(worktree_path: Path) -> list[str]:
+    proc = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=str(worktree_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
+async def test_epic_child_success_commits_on_owner_branch_and_closes(
+    engine, beads_project, fake_harnesses,
+):
+    """Successful epic child: commit on alloy/<epic>, child closed, owner tree kept clean."""
+    epic_id = _create_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
+    child_id = _epic_child(engine.beads, epic_id, "add token endpoint")
+    child_path = "mypkg/token.py"
+    child_content = "TOKEN = 'abc'\n"
+
+    epic_worktree = engine.paths.worktree_for(epic_id)
+
+    fake_harnesses.configure(
+        script(implement=[_implement_write(child_path, child_content)])
+    )
+    result = await engine.run(child_id)
+
+    bead = engine.beads.show(child_id)
+    assert result.outcome == "done"
+    assert epic_worktree.is_dir()
+    assert _latest_commit_message(epic_worktree).startswith(f"{child_id}:")
+    assert child_path in _files_in_head_commit(epic_worktree)
+    assert bead.status == bd.STATUS_DONE
+    assert _worktree_is_clean(epic_worktree)
+
+
+async def test_worktree_owner_bead_success_commits_on_owner_branch_and_closes(
+    engine, beads_project, fake_harnesses,
+):
+    """Beads with alloy_worktree_owner commit on the owner branch and close."""
+    owner_id = bd_create(beads_project, "landed feature", alloy_recipe="tdd-loop")
+    fake_harnesses.configure(script())
+    await engine.run(owner_id)
+
+    owner_worktree = engine.paths.worktree_for(owner_id)
+    repair_id = bd_create(
+        beads_project,
+        "fix landing conflict",
+        alloy_recipe="tdd-loop",
+        alloy_worktree_owner=owner_id,
+    )
+    repair_path = "mypkg/repair.py"
+    repair_content = "FIXED = True\n"
+
+    repair_tests = write_tests_entry(
+        baseline_checks=[
+            {
+                "command": f"{sys.executable} -m pytest -q tests/test_repair_marker.py",
+                "purpose": "Confirm repair marker tests fail before implementation",
+            }
+        ],
+    )
+    repair_tests["write"].append(
+        {
+            "path": "tests/test_repair_marker.py",
+            "content": "from mypkg.repair import fixed\n\n\n"
+            "def test_repair_marker():\n    assert fixed() is True\n",
+        }
+    )
+    fake_harnesses.reset_calls()
+    fake_harnesses.configure(
+        script(
+            tests=repair_tests,
+            implement=[
+                _implement_write(repair_path, repair_content),
+                _implement_write(
+                    "mypkg/repair.py",
+                    "def fixed() -> bool:\n    return True\n",
+                ),
+            ],
+        )
+    )
+    result = await engine.run(repair_id)
+
+    bead = engine.beads.show(repair_id)
+    assert result.outcome == "done"
+    assert owner_worktree.is_dir()
+    assert _latest_commit_message(owner_worktree).startswith(f"{repair_id}:")
+    assert "mypkg/repair.py" in _files_in_head_commit(owner_worktree)
+    assert bead.status == bd.STATUS_DONE
+    assert _worktree_is_clean(owner_worktree)
+
+
+async def test_standalone_bead_success_stays_review_ready(
+    engine, beads_project, fake_harnesses,
+):
+    """Beads without a shared owner still land at review-ready with worktree kept."""
+    bead_id = bd_create(beads_project, "standalone task", alloy_recipe="tdd-loop")
+
+    fake_harnesses.configure(script())
+    result = await engine.run(bead_id)
+
+    bead = engine.beads.show(bead_id)
+    assert result.outcome == "done"
+    assert bead.status == bd.STATUS_REVIEW_READY
+    assert engine.paths.worktree_for(bead_id).is_dir()
