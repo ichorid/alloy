@@ -82,6 +82,13 @@ class MergeResult:
     conflict_files: list[str]
 
 
+@dataclass(frozen=True)
+class LandResult:
+    ok: bool
+    sha: str
+    reason: str
+
+
 def branch_name(bead_id: str) -> str:
     return f"{BRANCH_PREFIX}/{bead_id}"
 
@@ -225,6 +232,34 @@ class WorktreeManager:
         _git(["merge", "--abort"], worktree.path, check=False)
         files = [line for line in conflicts.stdout.splitlines() if line.strip()]
         return MergeResult(False, files)
+
+    def trial_merge(self, worktree: Worktree, target: str) -> MergeResult:
+        """Merge `target` into the worktree's branch with a merge commit; on
+        conflict, abort and leave the tree exactly where it was."""
+        proc = _git(["merge", "--no-ff", "--no-edit", target], worktree.path, check=False)
+        if proc.returncode == 0:
+            return MergeResult(True, [])
+        conflicts = _git(["diff", "--name-only", "--diff-filter=U"], worktree.path, check=False)
+        _git(["merge", "--abort"], worktree.path, check=False)
+        files = [line for line in conflicts.stdout.splitlines() if line.strip()]
+        return MergeResult(False, files)
+
+    def merge_into_primary(self, branch: str, target: str) -> LandResult:
+        """Merge `branch` into the primary checkout on `target`; refuse when
+        the primary is on another branch or git would overwrite local changes."""
+        current = _git(["rev-parse", "--abbrev-ref", "HEAD"], self.repo, check=False).stdout.strip()
+        if current != target:
+            return LandResult(
+                False, "",
+                f"primary checkout is on '{current}', expected '{target}'",
+            )
+        proc = _git(["merge", "--no-ff", "--no-edit", branch], self.repo, check=False)
+        if proc.returncode == 0:
+            sha = _git(["rev-parse", "HEAD"], self.repo, check=False).stdout.strip()
+            return LandResult(True, sha, "")
+        _git(["merge", "--abort"], self.repo, check=False)
+        reason = proc.stderr.strip() or proc.stdout.strip()
+        return LandResult(False, "", reason)
 
     # -- internals --------------------------------------------------------
 
