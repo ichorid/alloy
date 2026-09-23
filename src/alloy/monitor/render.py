@@ -286,12 +286,27 @@ def _row(run: dict[str, Any], mode: str | None = None) -> tuple[str, ...]:
         _now(run.get("current_calls") or []),
         _tokens(run.get("tokens") or {}),
         _judge(run.get("judge")),
-        _text(run.get("complexity")),
+        _complexity(run.get("complexity"), mode),
     )
 
 
 def _text(value: Any) -> str:
     return "-" if value is None else str(value)
+
+
+_COMPLEXITY_BARS = {
+    "simple": "▂",
+    "medium": "▂▄",
+    "complex": "▂▄▆",
+}
+
+
+def _complexity(value: Any, mode: str | None = None) -> str:
+    if mode is None or mode == "ascii":
+        return _text(value)
+    if value is None:
+        return "-"
+    return _COMPLEXITY_BARS.get(str(value), "-")
 
 
 def _tests(run: dict[str, Any], mode: str | None = None) -> str:

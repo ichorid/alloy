@@ -811,3 +811,37 @@ def test_run_rows_ascii_mode_keeps_tests_summary_verbatim():
     row = run_rows(snapshot, mode="ascii")[0]
 
     assert row[7] == "3 passed, 1 failed"
+
+
+# -- alloy-3g0.6: complexity glyph bar in nerd/ascii modes ---------------------
+
+
+def test_run_rows_nerd_simple_complexity_shows_one_block_glyph():
+    row = run_rows(_snapshot(runs=[_run(complexity="simple")]), mode="nerd")[0]
+
+    assert row[12] == "▂"
+
+
+def test_run_rows_nerd_medium_complexity_shows_two_block_glyph():
+    row = run_rows(_snapshot(runs=[_run(complexity="medium")]), mode="nerd")[0]
+
+    assert row[12] == "▂▄"
+
+
+def test_run_rows_nerd_complex_complexity_shows_three_block_glyph():
+    row = run_rows(_snapshot(runs=[_run(complexity="complex")]), mode="nerd")[0]
+
+    assert row[12] == "▂▄▆"
+
+
+def test_run_rows_nerd_none_complexity_shows_dash():
+    row = run_rows(_snapshot(runs=[_run(complexity=None)]), mode="nerd")[0]
+
+    assert row[12] == "-"
+
+
+def test_run_rows_ascii_mode_keeps_complexity_as_word():
+    for level in ("simple", "medium", "complex"):
+        row = run_rows(_snapshot(runs=[_run(complexity=level)]), mode="ascii")[0]
+
+        assert row[12] == level
