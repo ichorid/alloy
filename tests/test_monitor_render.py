@@ -8,7 +8,7 @@ No Textual involved -- see tests/test_monitor_view.py for the pilot tests.
 
 from __future__ import annotations
 
-from alloy.monitor.render import header_line, run_rows
+from alloy.monitor.render import COLUMNS, header_line, run_rows
 
 EMPTY_TOKENS = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
 
@@ -45,6 +45,7 @@ def _run(
     worktree="/home/vader/.alloy/worktrees/alloy-a1b2",
     branch="alloy/alloy-a1b2",
     parent_run_id=None,
+    parent_bead_id=None,
     complexity=None,
 ) -> dict:
     return {
@@ -66,6 +67,7 @@ def _run(
         "worktree": worktree,
         "branch": branch,
         "parent_run_id": parent_run_id,
+        "parent_bead_id": parent_bead_id,
         "complexity": complexity,
     }
 
@@ -91,7 +93,7 @@ def _judge(raw_decision="retry", raw_confidence=0.61, effective_decision="retry"
     }
 
 
-COLUMN_COUNT = 12  # bead, recipe, status, stage, i/max, c/max, tests, elapsed, now, tokens, judge, complexity
+COLUMN_COUNT = 13  # parent, bead, recipe, status, stage, i/max, c/max, tests, elapsed, now, tokens, judge, complexity
 
 
 # -- run_rows -----------------------------------------------------------------
@@ -119,10 +121,10 @@ def test_row_identifies_bead_recipe_status_and_stage():
 
     row = run_rows(snapshot)[0]
 
-    assert row[0] == "alloy-a1b2"
-    assert row[1] == "tdd-loop-jev"
-    assert row[2] == "running"
-    assert row[3] == "implement"
+    assert row[1] == "alloy-a1b2"
+    assert row[2] == "tdd-loop-jev"
+    assert row[3] == "running"
+    assert row[4] == "implement"
 
 
 def test_row_formats_iteration_and_consilium_progress_as_i_over_max():
@@ -130,8 +132,8 @@ def test_row_formats_iteration_and_consilium_progress_as_i_over_max():
 
     row = run_rows(snapshot)[0]
 
-    assert row[4] == "2/5"
-    assert row[5] == "1/3"
+    assert row[5] == "2/5"
+    assert row[6] == "1/3"
 
 
 def test_row_with_no_current_calls_shows_a_dash_in_the_now_column():
@@ -139,7 +141,7 @@ def test_row_with_no_current_calls_shows_a_dash_in_the_now_column():
 
     row = run_rows(snapshot)[0]
 
-    assert row[8] == "-"
+    assert row[9] == "-"
 
 
 def test_row_with_two_current_calls_joins_them_with_a_plus_in_the_now_column():
@@ -151,11 +153,11 @@ def test_row_with_two_current_calls_joins_them_with_a_plus_in_the_now_column():
 
     row = run_rows(snapshot)[0]
 
-    assert " + " in row[8]
-    assert "implement" in row[8]
-    assert "codex" in row[8]
-    assert "critic" in row[8]
-    assert "claude" in row[8]
+    assert " + " in row[9]
+    assert "implement" in row[9]
+    assert "codex" in row[9]
+    assert "critic" in row[9]
+    assert "claude" in row[9]
 
 
 def test_row_with_null_judge_shows_a_dash_in_the_judge_column():
@@ -163,7 +165,7 @@ def test_row_with_null_judge_shows_a_dash_in_the_judge_column():
 
     row = run_rows(snapshot)[0]
 
-    assert row[10] == "-"
+    assert row[11] == "-"
 
 
 def test_row_with_matching_judge_shows_only_the_single_decision():
@@ -173,8 +175,8 @@ def test_row_with_matching_judge_shows_only_the_single_decision():
 
     row = run_rows(snapshot)[0]
 
-    assert "done" in row[10]
-    assert "→" not in row[10]
+    assert "done" in row[11]
+    assert "→" not in row[11]
 
 
 def test_row_with_differing_raw_and_effective_judge_shows_both_decisions():
@@ -184,10 +186,10 @@ def test_row_with_differing_raw_and_effective_judge_shows_both_decisions():
 
     row = run_rows(snapshot)[0]
 
-    assert "done" in row[10]
-    assert "retry" in row[10]
-    assert row[10] != "done"
-    assert row[10] != "retry"
+    assert "done" in row[11]
+    assert "retry" in row[11]
+    assert row[11] != "done"
+    assert row[11] != "retry"
 
 
 def test_row_carries_the_tests_summary_verbatim():
@@ -195,7 +197,7 @@ def test_row_carries_the_tests_summary_verbatim():
 
     row = run_rows(snapshot)[0]
 
-    assert row[6] == "3 passed, 1 failed"
+    assert row[7] == "3 passed, 1 failed"
 
 
 def test_row_elapsed_column_reflects_elapsed_minutes():
@@ -203,7 +205,7 @@ def test_row_elapsed_column_reflects_elapsed_minutes():
 
     row = run_rows(snapshot)[0]
 
-    assert "7" in row[7]
+    assert "7" in row[8]
 
 
 def test_row_tokens_column_reflects_total_tokens_when_no_split_is_available():
@@ -213,7 +215,7 @@ def test_row_tokens_column_reflects_total_tokens_when_no_split_is_available():
 
     row = run_rows(snapshot)[0]
 
-    assert "8635" in row[9]
+    assert "8635" in row[10]
 
 
 # -- header_line ----------------------------------------------------------
@@ -255,20 +257,108 @@ def test_header_line_reports_lifetime_totals():
     assert "1" in line
 
 
-# -- alloy-0uc.9: child runs and complexity in render ------------------------
+# -- alloy-w9d.10: parent column, limits_lines, session totals --------------
 
 
-def test_child_run_row_is_indented_with_tree_marker():
+def test_columns_start_with_parent():
+    assert COLUMNS[0] == "parent"
+
+
+def test_parent_column_shows_parent_bead_id_for_child_run():
     parent = _run(
-        run_id="parent-run", bead_id="alloy-parent", complexity="simple",
+        run_id="parent-run", bead_id="alloy-parent", parent_bead_id=None, complexity="simple",
     )
     child = _run(
         run_id="child-run", bead_id="alloy-child", parent_run_id="parent-run",
+        parent_bead_id="alloy-parent",
     )
     rows = run_rows(_snapshot(runs=[parent, child]))
 
-    child_row = next(row for row in rows if "alloy-child" in row[0])
-    assert "└" in child_row[0]
+    child_row = next(row for row in rows if row[1] == "alloy-child")
+    parent_row = next(row for row in rows if row[1] == "alloy-parent")
+    assert child_row[0] == "alloy-parent"
+    assert "└" not in child_row[1]
+    assert parent_row[0] == "-"
+
+
+def test_top_level_run_parent_column_is_dash():
+    row = run_rows(_snapshot(runs=[_run(parent_bead_id=None)]))[0]
+    assert row[0] == "-"
+
+
+def test_limits_lines_renders_claude_windows_and_unavailable_codex():
+    from alloy.limits import window
+    from alloy.monitor.render import limits_lines
+
+    snapshot = _snapshot()
+    snapshot["limits"] = {
+        "claude": {
+            "harness": "claude",
+            "installed": True,
+            "available": True,
+            "fetched_at": "2026-09-23T10:00:00+00:00",
+            "as_of": "2026-09-23T10:00:00+00:00",
+            "source": "oauth-usage-api",
+            "error": None,
+            "status": None,
+            "windows": [
+                window("five_hour", "5h", 42.0, None),
+                window("seven_day", "weekly", 61.0, None),
+                window("seven_day_fable", "weekly fable", 12.0, None, model="fable"),
+                window("seven_day_opus", "weekly opus", 80.0, None, model="opus"),
+            ],
+        },
+        "codex": {
+            "harness": "codex",
+            "installed": True,
+            "available": False,
+            "fetched_at": "2026-09-23T10:00:00+00:00",
+            "as_of": None,
+            "source": None,
+            "error": "no local sample",
+            "status": "workspace_member_credits_depleted",
+            "windows": [],
+        },
+    }
+
+    lines = limits_lines(snapshot)
+
+    assert len(lines) == 2
+    claude_line, codex_line = lines
+    assert claude_line.index("5h 42%") < claude_line.index("weekly 61%")
+    assert claude_line.index("weekly 61%") < claude_line.index("weekly fable 12%")
+    assert claude_line.index("weekly fable 12%") < claude_line.index("weekly opus 80%")
+    assert "unavailable: no local sample" in codex_line
+    assert "[workspace_member_credits_depleted]" in codex_line
+
+
+def test_limits_lines_on_empty_limits_returns_empty_list():
+    from alloy.monitor.render import limits_lines
+
+    snapshot = _snapshot()
+    snapshot["limits"] = {}
+
+    assert limits_lines(snapshot) == []
+
+
+def test_header_line_includes_session_totals_when_present():
+    snapshot = _snapshot()
+    snapshot["session_totals"] = {"done": 1, "failed": 1, "cancelled": 0}
+
+    line = header_line(snapshot)
+
+    assert "this session: done 1 failed 1 cancelled 0" in line
+
+
+def test_header_line_omits_session_totals_when_key_absent():
+    snapshot = _snapshot(lifetime={"done": 12, "failed": 2, "cancelled": 1})
+
+    line = header_line(snapshot)
+
+    assert "this session" not in line
+
+
+# -- alloy-0uc.9: complexity in render ---------------------------------------
 
 
 def test_parent_run_row_shows_complexity_when_set():

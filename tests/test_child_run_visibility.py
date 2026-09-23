@@ -113,6 +113,40 @@ async def test_status_json_child_run_shows_parent_run_id(
     assert child_row["parent_run_id"] == parent_run_id
 
 
+async def test_status_json_child_run_includes_parent_bead_id(
+    engine, beads_project, alloy_home, fake_harnesses,
+):
+    parent_id, _, bug_id, _ = await _parent_with_finished_child(
+        engine, beads_project, fake_harnesses,
+    )
+
+    result = _invoke("status", bug_id, "--json", project=beads_project, alloy_home=alloy_home)
+
+    assert result.exit_code == 0
+    child_row = _status_bead(json.loads(result.stdout), bug_id)
+    assert child_row["parent_bead_id"] == parent_id
+
+
+async def test_status_plain_table_shows_parent_column(
+    engine, beads_project, alloy_home, fake_harnesses,
+):
+    parent_id, _, bug_id, _ = await _parent_with_finished_child(
+        engine, beads_project, fake_harnesses,
+    )
+
+    result = _invoke("status", project=beads_project, alloy_home=alloy_home)
+
+    assert result.exit_code == 0
+    output = result.stdout
+    assert "parent" in output
+    assert parent_id in output
+    assert bug_id in output
+    parent_line = next(line for line in output.splitlines() if parent_id in line and bug_id not in line)
+    child_line = next(line for line in output.splitlines() if bug_id in line)
+    assert parent_line.strip().startswith("-") or "│ -" in parent_line or parent_line.lstrip().startswith("-")
+    assert parent_id in child_line
+
+
 # -- alloy logs <parent> aggregates child calls ------------------------------
 
 

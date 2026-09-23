@@ -46,7 +46,7 @@ RUN_ENTRY_KEYS = {
     "bead_id", "run_id", "recipe", "status", "stage", "iteration", "max_iterations",
     "consiliums", "max_consiliums", "tests_summary", "checks", "elapsed_minutes",
     "current_calls", "tokens", "tokens_by_role", "judge", "worktree", "branch",
-    "parent_run_id", "complexity", "models_used",
+    "parent_run_id", "parent_bead_id", "complexity", "models_used",
 }
 CURRENT_CALL_KEYS = {
     "role", "requested_runner", "effective_runner", "requested_model",
@@ -384,6 +384,34 @@ def test_snapshot_child_run_carries_parent_run_id_and_parent_complexity(project,
     assert set(by_id) == {parent_run_id, child_run_id}
     assert by_id[child_run_id]["parent_run_id"] == parent_run_id
     assert by_id[parent_run_id]["complexity"] == "simple"
+
+
+def test_snapshot_child_run_resolves_parent_bead_id(project, alloy_home):
+    """Acceptance: child run entry carries parent_bead_id; parent entry has null."""
+    import os
+
+    from alloy.store import RUN_RUNNING
+
+    engine = _engine(project, alloy_home)
+    parent_run_id = "run-parent"
+    child_run_id = "run-child"
+    engine.store.create_run(
+        run_id=parent_run_id, bead_id="alloy-parent", thread_id=parent_run_id,
+        recipe="tdd-loop", repo=project, worktree=None, branch=None, log_dir=None,
+    )
+    engine.store.create_run(
+        run_id=child_run_id, bead_id="alloy-child", thread_id=child_run_id,
+        recipe="tdd-loop", repo=project, worktree=None, branch=None, log_dir=None,
+        parent_run_id=parent_run_id,
+    )
+    engine.store.update_run(parent_run_id, status=RUN_RUNNING, pid=os.getpid())
+    engine.store.update_run(child_run_id, status=RUN_RUNNING, pid=os.getpid())
+
+    snapshot = build_snapshot(engine)
+    by_id = {row["run_id"]: row for row in snapshot["runs"]}
+
+    assert by_id[child_run_id]["parent_bead_id"] == "alloy-parent"
+    assert by_id[parent_run_id]["parent_bead_id"] is None
 
 
 def test_cli_monitor_once_json_with_an_active_run(beads_project, alloy_home, fake_harnesses):

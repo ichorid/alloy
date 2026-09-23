@@ -117,10 +117,17 @@ def _run_entry(
     max_consiliums = config.limits.max_consiliums * budget if config else 0
 
     now = datetime.now(timezone.utc)
+    parent_run_id = record.get("parent_run_id")
+    parent_bead_id = None
+    if parent_run_id:
+        parent = engine.store.get_run(parent_run_id)
+        if parent:
+            parent_bead_id = parent["bead_id"]
     return {
         "bead_id": record["bead_id"],
         "run_id": run_id,
-        "parent_run_id": record.get("parent_run_id"),
+        "parent_run_id": parent_run_id,
+        "parent_bead_id": parent_bead_id,
         "complexity": record.get("complexity"),
         "recipe": record["recipe"],
         "status": record["status"],

@@ -36,7 +36,7 @@ from alloy.models import (
 from alloy.limits import probe_all
 from alloy.monitor import build_snapshot
 from alloy.monitor.app import MonitorApp
-from alloy.monitor.render import COLUMNS, header_line, run_rows
+from alloy.monitor.render import COLUMNS, header_line, limits_lines, run_rows
 from alloy.paths import AlloyPaths
 from alloy.runners import BUILTIN, RunnerRegistry, RunnerUnavailable
 from alloy.scheduler import Scheduler, SchedulerBusy, read_pid, signal_stop, spawn_detached
@@ -384,7 +384,7 @@ def status(
     table = Table(show_header=True, header_style="bold", expand=True)
     # One line per bead, whatever the terminal width: the title gives way
     # first, identifiers and numbers keep their minimum widths.
-    for column, min_width in (("bead", 12), ("title", 12), ("pri", 3), ("queue", 5),
+    for column, min_width in (("parent", 10), ("bead", 12), ("title", 12), ("pri", 3), ("queue", 5),
                               ("status", 9), ("stage", 9), ("agent", 14), ("iter", 4),
                               ("tests", 18), ("elapsed", 7)):
         table.add_column(column, no_wrap=True, overflow="ellipsis", min_width=min_width,
@@ -393,7 +393,8 @@ def status(
         queue = str(row["queue_position"]) if row["queue_position"] else "-"
         max_iter = row["max_iterations"] if row["max_iterations"] is not None else "-"
         table.add_row(
-            row["bead"], _truncate(row["title"], 32), str(row["priority"]), queue,
+            row.get("parent_bead_id") or "-", row["bead"], _truncate(row["title"], 32),
+            str(row["priority"]), queue,
             _coloured(row["status"] or row["bead_status"]), row["stage"] or "-",
             _agent_label(row), f"{row['iteration']}/{max_iter}",
             row["tests"] or "-", row["elapsed"],
@@ -421,6 +422,8 @@ def monitor(
     if once:
         snapshot = build_snapshot(engine)
         console.print(header_line(snapshot))
+        for line in limits_lines(snapshot):
+            console.print(line)
         table = Table(show_header=True, header_style="bold")
         for column in COLUMNS:
             table.add_column(column)
@@ -897,10 +900,18 @@ def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
         max(0, int(((reference - started).total_seconds() - paused_s) // 60)) if started else 0
     )
 
+    parent_run_id = record.get("parent_run_id")
+    parent_bead_id = None
+    if parent_run_id:
+        parent = engine.store.get_run(parent_run_id)
+        if parent:
+            parent_bead_id = parent["bead_id"]
+
     return {
         "bead": record["bead_id"],
         "run_id": record["run_id"],
-        "parent_run_id": record.get("parent_run_id"),
+        "parent_run_id": parent_run_id,
+        "parent_bead_id": parent_bead_id,
         "children": [child["run_id"] for child in engine.store.children_of(record["run_id"])],
         "remediating": (
             record["stage"].split(":", 1)[1]
@@ -932,7 +943,7 @@ def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
 
 
 _EMPTY_RUN_FIELDS: dict[str, Any] = {
-    "parent_run_id": None, "children": [], "remediating": None,
+    "parent_run_id": None, "parent_bead_id": None, "children": [], "remediating": None,
     "complexity": None, "complexity_source": None, "dispatch_tier": None,
     "run_id": None, "status": None, "stage": None, "iteration": 0,
     "max_iterations": None, "consiliums": 0, "agent_calls": 0, "tests": None,

@@ -17,6 +17,7 @@ def _run(
     *,
     current_calls=(),
     tokens_by_role=None,
+    models_used=None,
     judge=None,
     worktree="/home/vader/.alloy/worktrees/alloy-a1b2",
     branch="alloy/alloy-a1b2",
@@ -36,6 +37,7 @@ def _run(
         "current_calls": list(current_calls),
         "tokens": dict(EMPTY_TOKENS),
         "tokens_by_role": tokens_by_role or {},
+        "models_used": models_used or [],
         "judge": judge,
         "worktree": worktree,
         "branch": branch,
@@ -182,6 +184,51 @@ def test_empty_tokens_by_role_yields_no_token_lines_and_does_not_raise():
     lines = detail_lines(_run(tokens_by_role={}))
 
     assert isinstance(lines, list)
+
+
+# -- worktree / branch --------------------------------------------------------
+
+
+# -- models_used (alloy-w9d.10) -----------------------------------------------
+
+
+def test_detail_lines_models_used_includes_runner_model_calls_tokens_and_windows():
+    from alloy.limits import window
+
+    models_used = [{
+        "runner": "claude-write",
+        "model": "fable",
+        "calls": 3,
+        "total_tokens": 12000,
+        "windows": {
+            "five_hour": window("five_hour", "5h", 42.0, None),
+            "seven_day": window("seven_day", "weekly", 61.0, None),
+            "seven_day_fable": window("seven_day_fable", "weekly fable", 12.0, None, model="fable"),
+        },
+    }]
+
+    lines = detail_lines(_run(models_used=models_used))
+
+    model_line = next(line for line in lines if "claude-write:fable" in line)
+    assert "calls 3" in model_line
+    assert "12000" in model_line
+    assert "5h 42%" in model_line
+    assert "weekly fable 12%" in model_line
+
+
+def test_detail_lines_models_used_with_empty_windows_has_no_percent():
+    models_used = [{
+        "runner": "codex",
+        "model": "gpt-5",
+        "calls": 1,
+        "total_tokens": 100,
+        "windows": {},
+    }]
+
+    lines = detail_lines(_run(models_used=models_used))
+
+    model_line = next(line for line in lines if "codex:gpt-5" in line)
+    assert "%" not in model_line
 
 
 # -- worktree / branch --------------------------------------------------------

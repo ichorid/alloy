@@ -7,9 +7,12 @@ they are unit-testable and shared by the live view and `alloy monitor --once`.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
-COLUMNS = ("bead", "recipe", "status", "stage", "iter", "cons", "tests", "elapsed", "now",
+from alloy.limits import HARNESSES
+
+COLUMNS = ("parent", "bead", "recipe", "status", "stage", "iter", "cons", "tests", "elapsed", "now",
            "tokens", "judge", "complexity")
 
 
@@ -24,7 +27,12 @@ def header_line(snapshot: dict[str, Any]) -> str:
     lifetime = snapshot.get("lifetime") or {}
     totals = (f"done {lifetime.get('done', 0)}  failed {lifetime.get('failed', 0)}"
               f"  cancelled {lifetime.get('cancelled', 0)}")
-    return f"{sched}  |  {ready}  |  {totals}"
+    line = f"{sched}  |  {ready}  |  {totals}"
+    if "session_totals" in snapshot:
+        session = snapshot["session_totals"] or {}
+        line += (f"  |  this session: done {session.get('done', 0)}"
+                 f" failed {session.get('failed', 0)} cancelled {session.get('cancelled', 0)}")
+    return line
 
 
 def run_rows(snapshot: dict[str, Any]) -> list[tuple[str, ...]]:
@@ -32,9 +40,42 @@ def run_rows(snapshot: dict[str, Any]) -> list[tuple[str, ...]]:
     return [_row(run) for run in snapshot.get("runs") or []]
 
 
+def limits_lines(snapshot: dict[str, Any]) -> list[str]:
+    """One line per harness in HARNESSES order; empty when top-level limits is {}."""
+    limits = snapshot.get("limits") or {}
+    if not limits:
+        return []
+    return [_limits_line(harness, limits[harness]) for harness in HARNESSES if harness in limits]
+
+
+def _limits_line(harness: str, sample: dict[str, Any]) -> str:
+    if not sample.get("available"):
+        line = f"{harness}    unavailable: {_text(sample.get('error'))}"
+        status = sample.get("status")
+        if status:
+            line += f" [{status}]"
+        return line
+    parts = [harness]
+    for win in sample.get("windows") or []:
+        segment = f"{win['label']} {int(win['used_percent'])}%"
+        resets = _resets_hhmm(win.get("resets_at"))
+        if resets:
+            segment += f" (resets {resets})"
+        parts.append(segment)
+    line = "  ".join(parts)
+    stale = _stale_as_of(sample.get("as_of"))
+    if stale:
+        line += stale
+    status = sample.get("status")
+    if status:
+        line += f" [{status}]"
+    return line
+
+
 def _row(run: dict[str, Any]) -> tuple[str, ...]:
     return (
-        ("  └ " if run.get("parent_run_id") else "") + _text(run.get("bead_id")),
+        _text(run.get("parent_bead_id")),
+        _text(run.get("bead_id")),
         _text(run.get("recipe")),
         _text(run.get("status")),
         _text(run.get("stage")),
@@ -117,6 +158,8 @@ def detail_lines(run: dict[str, Any], log_dir: str | None = None) -> list[str]:
     for role, tokens in (run.get("tokens_by_role") or {}).items():
         lines.append(f"{role}: {_text(tokens.get('total_tokens'))} "
                      f"({_text(tokens.get('input_tokens'))}/{_text(tokens.get('output_tokens'))})")
+    for entry in run.get("models_used") or []:
+        lines.append(_models_used_line(entry))
     lines.append(f"worktree: {_text(run.get('worktree'))}")
     lines.append(f"branch: {_text(run.get('branch'))}")
     if log_dir is not None:
@@ -126,6 +169,50 @@ def detail_lines(run: dict[str, Any], log_dir: str | None = None) -> list[str]:
 
 def _runner(runner: Any, model: Any) -> str:
     return f"{_text(runner)}:{model}" if model else _text(runner)
+
+
+def _models_used_line(entry: dict[str, Any]) -> str:
+    runner = entry.get("runner")
+    model = entry.get("model")
+    label = f"{runner}:{model}" if model else _text(runner)
+    parts = [
+        f"model {label}",
+        f"calls {entry.get('calls', 0)}",
+        f"tokens {_text(entry.get('total_tokens'))}",
+    ]
+    window_parts = [
+        f"{win['label']} {int(win['used_percent'])}%"
+        for win in (entry.get("windows") or {}).values()
+    ]
+    line = "  ".join(parts)
+    if window_parts:
+        line += "  |  " + "  ".join(window_parts)
+    return line
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _resets_hhmm(resets_at: str | None) -> str | None:
+    parsed = _parse_iso(resets_at)
+    return parsed.strftime("%H:%M") if parsed else None
+
+
+def _stale_as_of(as_of: str | None) -> str:
+    parsed = _parse_iso(as_of)
+    if parsed is None:
+        return ""
+    age = (datetime.now(timezone.utc) - parsed).total_seconds()
+    if age <= 30 * 60:
+        return ""
+    return f" (as of {parsed.strftime('%H:%M')})"
 
 
 def _judge_detail(judge: dict[str, Any] | None) -> str | None:
