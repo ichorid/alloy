@@ -234,13 +234,7 @@ def probe(
         if isinstance(payload, dict):
             total = _dashboard_window(payload)
             if total is not None:
-                display = payload.get("displayMessage")
-                status_msg = display if isinstance(display, str) and display else None
-                return _available_sample(
-                    windows=[total],
-                    source=SOURCE,
-                    status=status_msg,
-                )
+                return _available_sample(windows=[total], source=SOURCE)
 
     legacy_status, legacy_body = _fetch_legacy(token, legacy_fetch)
     if legacy_status == 200:

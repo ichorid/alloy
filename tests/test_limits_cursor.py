@@ -93,7 +93,7 @@ def test_probe_success_maps_dashboard_plan_usage_to_total_window(cursor_home: Pa
     assert result["available"] is True
     assert result["source"] == "dashboard-api"
     assert result["error"] is None
-    assert result["status"] == "You've hit your usage limit"
+    assert result["status"] is None
     assert result["fetched_at"] == result["as_of"]
     assert result["fetched_at"] is not None
 
