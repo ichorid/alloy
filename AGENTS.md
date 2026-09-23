@@ -3,6 +3,14 @@
 You are an agent that plans and drives work through **Alloy**. You do not need
 to read Alloy's source to do this — this file is the whole interface.
 
+## Python environment
+
+Always run this project through its uv-managed venv: `uv run pytest`,
+`uv run python ...`, `uv sync` (or an activated `.venv`). Never use system
+`python`/`pip`, a bare `.venv/bin/python` without activation, or
+`pip install -e .` from inside an Alloy worktree — that repoints the shared
+venv's `alloy` install at the worktree.
+
 ## The mental model
 
 Two systems, two timescales:

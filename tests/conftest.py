@@ -20,6 +20,8 @@ import pytest
 
 # Longer than the cancel+await budget; short enough to drain in test cleanup.
 SIMULATED_CLOSE_STALL_S = 8.0
+# Reproduces sandbox/asyncio self-pipe denial that never completes aiosqlite.connect.
+SIMULATED_CONNECT_STALL_S = 3600.0
 
 FAKE_SOURCE = Path(__file__).parent / "fakebin" / "_fake.py"
 FAKE_BD_SOURCE = Path(__file__).parent / "fakebin" / "_fake_bd.py"
@@ -543,3 +545,14 @@ def simulate_slow_sqlite_close_under_cancel(monkeypatch: pytest.MonkeyPatch) -> 
         await real_close(self)
 
     monkeypatch.setattr(aiosqlite.Connection, "close", slow_close)
+
+
+@pytest.fixture
+def simulate_stalled_aiosqlite_connect(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``aiosqlite.connect()`` block indefinitely, like the reported sandbox stall."""
+
+    async def stalled_connect(*_args: object, **_kwargs: object) -> aiosqlite.Connection:
+        await asyncio.sleep(SIMULATED_CONNECT_STALL_S)
+        raise RuntimeError("stalled_connect should not complete in tests")
+
+    monkeypatch.setattr(aiosqlite, "connect", stalled_connect)

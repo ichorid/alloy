@@ -325,6 +325,8 @@ def test_limits_lines_renders_claude_windows_and_unavailable_codex():
 
     assert len(lines) == 2
     claude_line, codex_line = lines
+    # Labels are padded to align the bars; compare on collapsed whitespace.
+    claude_line = " ".join(claude_line.split())
     assert claude_line.index("5h") < claude_line.index("weekly 61%")
     assert claude_line.index("42%") < claude_line.index("weekly 61%")
     assert claude_line.index("weekly 61%") < claude_line.index("weekly fable 12%")
