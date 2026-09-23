@@ -224,11 +224,27 @@ class Engine:
                 self.beads.unset_metadata(bead_id, [bd.META_RECIPE])
 
         if result.outcome != Outcome.DONE.value:
-            # conflict / red: repair beads are vrh.9's job; the bead's code is
-            # not at fault, so it must not stay `failed` -- hand it back at
-            # review-ready with the reason noted.
+            # conflict / red: file (or reuse) a repair bug, mark the bead
+            # repairing, then hand it back at review-ready -- the bead's code
+            # is not at fault, so it must not stay `failed`.
+            repair_id = self._open_land_repair_bug(bead_id)
+            meta: dict[str, Any] = {bd.META_STAGE: "finished"}
+            if result.outcome in ("conflict", "red"):
+                if repair_id is None:
+                    snapshot = self.graph_snapshot_for_run(result.run_id) or {}
+                    state = snapshot.get("values") or {}
+                    repair_id = self._file_land_repair_bug(
+                        bead,
+                        outcome=result.outcome,
+                        run_id=result.run_id,
+                        target=config.landing.target,
+                        snapshot=state,
+                        reason=result.reason,
+                    )
+                meta[bd.META_LAND_STATE] = "repairing"
+                meta[bd.META_LAND_REPAIR] = repair_id
             self.beads.set_status(bead_id, bd.STATUS_REVIEW_READY)
-            self.beads.set_metadata(bead_id, {bd.META_STAGE: "finished"})
+            self.beads.set_metadata(bead_id, meta)
             self.beads.note(
                 bead_id,
                 f"alloy: landing did not complete ({result.outcome}): {result.reason}",
@@ -463,6 +479,63 @@ class Engine:
             or self.beads.epic_root(bead.id)
             or bead.id
         )
+
+    def _open_land_repair_bug(self, landed_id: str) -> str | None:
+        """Return an open repair bug id for `landed_id`, if one is already filed."""
+        repair_id = self.beads.show(landed_id).metadata.get(bd.META_LAND_REPAIR)
+        if not repair_id:
+            return None
+        try:
+            repair = self.beads.show(str(repair_id))
+        except bd.BeadsError:
+            return None
+        if repair.status == bd.STATUS_DONE:
+            return None
+        return str(repair_id)
+
+    def _file_land_repair_bug(
+        self,
+        landed: Bead,
+        *,
+        outcome: str,
+        run_id: str,
+        target: str,
+        snapshot: dict[str, Any],
+        reason: str,
+    ) -> str:
+        """File a remediation bug for a conflict or red land run."""
+        branch = branch_name(landed.id)
+        if outcome == "conflict":
+            conflict_files = list(snapshot.get("conflict_files") or [])
+            files_text = ", ".join(conflict_files) if conflict_files else "conflicting files"
+            acceptance = (
+                f"merge {target} into {branch} and resolve conflicts in {files_text}; "
+                "the checks green on the merged tree"
+            )
+            title = f"Resolve landing conflict for {landed.id}"
+        elif outcome == "red":
+            last_check = snapshot.get("last_check") or {}
+            command = str(last_check.get("command") or reason)
+            acceptance = f"make {command} exit 0 on {branch} (trial merge already committed)"
+            title = f"Fix landing check for {landed.id}"
+        else:
+            raise EngineError(f"cannot file a land repair bug for outcome {outcome!r}")
+        metadata = {
+            bd.META_RECIPE: "tdd-loop",
+            bd.META_WORKTREE_OWNER: landed.id,
+            bd.META_DISCOVERED_IN_RUN: run_id,
+        }
+        bug_id = self.beads.create_bug(
+            title=title,
+            description=acceptance,
+            acceptance=acceptance,
+            discovered_from=landed.id,
+            priority=1,
+            labels=[bd.LABEL_BUG],
+            metadata=metadata,
+        )
+        self.beads.add_dependency(landed.id, bug_id)
+        return bug_id
 
     async def _execute(
         self,
