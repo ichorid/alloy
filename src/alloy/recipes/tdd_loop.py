@@ -49,14 +49,22 @@ from alloy.models import (
     extract_bug_reports,
     next_level,
 )
+from alloy.diffs import clip_diff_per_file
 from alloy.runtime import RunContext
 from alloy.verify import detect_commands, normalize_command
 from alloy.worktree import is_test_path
 
 MAX_DIFF_CHARS = 12000
+PER_FILE_DIFF_CHARS = 4000
+"""Per-file budget inside MAX_DIFF_CHARS so one generated file cannot hide the rest."""
 PROJECT_CONTEXT_CHARS = 6000
 """Hard cap on the project context packet handed to the scope and triage roles."""
 log = logging.getLogger(__name__)
+
+
+def clip_diff(diff: str) -> str:
+    """The diff as every prompt sees it: per-file clipped, then capped overall."""
+    return clip_diff_per_file(diff, per_file=PER_FILE_DIFF_CHARS, total=MAX_DIFF_CHARS)
 
 
 def reset_or_extend(
@@ -277,7 +285,7 @@ def implement_prompt(
             f"`{check.command}` -> exit {check.exit_code} ({check.headline()})\n\n"
             f"{check.output_tail}"
         )
-        sections.append(f"## Current diff\n```diff\n{clip(diff, MAX_DIFF_CHARS)}\n```")
+        sections.append(f"## Current diff\n```diff\n{clip_diff(diff)}\n```")
         if previous_instructions:
             sections.append(f"## Previous repair instructions\n{previous_instructions}")
     if history:
@@ -419,7 +427,7 @@ def scope_prompt(
         f"## Parent acceptance criteria\n{parent_acceptance or '(none stated)'}",
         f"## The bug being fixed\n{bug_brief}",
         f"## Diffstat\n{diffstat}",
-        f"## The fix\n```diff\n{clip(diff, MAX_DIFF_CHARS)}\n```",
+        f"## The fix\n```diff\n{clip_diff(diff)}\n```",
         "Choose exactly one verdict:\n"
         "- \"merge\"         -- the change is what this defect requires and nothing more; "
         "it fits what the project brief and bead graph say the project is doing\n"
@@ -522,7 +530,7 @@ you only decide what happens next.
 
 ## Current diff
 ```diff
-{clip(diff, MAX_DIFF_CHARS)}
+{clip_diff(diff)}
 ```
 
 ## Test results
@@ -565,7 +573,7 @@ criterion, or may encode the same misunderstanding as the implementation.
 
 ## Current diff
 ```diff
-{clip(diff, MAX_DIFF_CHARS)}
+{clip_diff(diff)}
 ```
 
 ## Tests changed by the implementer
@@ -647,7 +655,7 @@ the one command you name, in the worktree root, exactly as written, and shows yo
 
 ## Current diff
 ```diff
-{clip(diff, MAX_DIFF_CHARS)}
+{clip_diff(diff)}
 ```
 
 ## Checks run so far in this run
@@ -802,7 +810,7 @@ def _evidence_packet(state: TddState, ctx: RunContext, diff: str) -> str:
             ctx.bead.task_brief(),
             f"## Acceptance criteria\n{ctx.bead.acceptance_criteria or '(none stated)'}",
             f"## Repository context\n{_render_context(state.get('context'))}",
-            f"## Current diff\n```diff\n{clip(diff, MAX_DIFF_CHARS)}\n```",
+            f"## Current diff\n```diff\n{clip_diff(diff)}\n```",
             f"## Test results\n"
             f"{_render_results(_checks_of(state, state.get('iteration', 0)), state.get('verifier_stop'))}",
             f"## Attempt history\n{_render_history(state.get('attempts', [])) or '(none)'}",
