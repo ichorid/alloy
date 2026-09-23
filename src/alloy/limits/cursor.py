@@ -1,13 +1,14 @@
-"""Cursor usage limits from the cursor.com usage API.
+"""Cursor usage limits from the Cursor dashboard API.
 
 Component A4 of docs/plans/monitor-limits.md. Cursor keeps its session JWT
-in `~/.config/cursor/auth.json`; the `sub` claim (`<provider>|<user_id>`)
-names the account, and `user_id::token` in the `WorkosCursorSessionToken`
-cookie authorises `https://cursor.com/api/usage`. The per-model entries are
-reduced to one `total` window for the current billing cycle:
-100 * sum(numRequests) / sum(maxRequestUsage) over entries with a positive
-`maxRequestUsage`, resetting one month after `startOfMonth`. `probe` is pure
-over the injected `home` and `fetch`; only `default_fetch` touches the network.
+in `~/.config/cursor/auth.json`; the same token powers
+``cursor-agent status`` and the dashboard Connect endpoint behind the CLI
+``/usage`` view. ``probe`` POSTs to
+``api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`` and
+maps ``planUsage.totalPercentUsed`` to one ``total`` cycle window.
+``billingCycleEnd`` (epoch ms) becomes ``resets_at``. When the dashboard
+response has no plan usage, the legacy ``cursor.com/api/usage`` cookie
+endpoint is tried for older personal-plan shapes.
 """
 
 from __future__ import annotations
@@ -25,13 +26,17 @@ from typing import Any
 from alloy.limits import unavailable, window
 
 HARNESS = "cursor"
-USAGE_URL = "https://cursor.com/api/usage"
-SOURCE = "usage-api"
+DASHBOARD_USAGE_URL = (
+    "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
+)
+LEGACY_USAGE_URL = "https://cursor.com/api/usage"
+SOURCE = "dashboard-api"
+_LEGACY_SOURCE = "usage-api"
 _COOKIE_NAME = "WorkosCursorSessionToken"
 _TIMEOUT_SECONDS = 10.0
 
 Fetch = Callable[[str, dict[str, str]], tuple[int, str]]
-"""GET `url` with `headers`; returns (HTTP status, body text)."""
+"""Call the usage endpoint; returns (HTTP status, body text)."""
 
 
 def credentials_path(home: Path) -> Path:
@@ -40,7 +45,19 @@ def credentials_path(home: Path) -> Path:
 
 
 def default_fetch(url: str, headers: dict[str, str]) -> tuple[int, str]:
-    """urllib GET with a short timeout. Status 0 means no HTTP response at all."""
+    """POST with a short timeout. Status 0 means no HTTP response at all."""
+    request = urllib.request.Request(url, data=b"{}", headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+            return response.status, response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, OSError):
+        return 0, ""
+
+
+def default_legacy_fetch(url: str, headers: dict[str, str]) -> tuple[int, str]:
+    """GET for the legacy cursor.com usage endpoint."""
     request = urllib.request.Request(url, headers=headers, method="GET")
     try:
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
@@ -64,11 +81,7 @@ def _read_token(home: Path) -> str | None:
 
 
 def _jwt_user_id(token: str) -> str | None:
-    """`<user_id>` from the JWT `sub` claim (`<provider>|<user_id>`); unverified.
-
-    None when the token is not a three-segment JWT, the payload is not
-    base64url JSON, or `sub` is missing.
-    """
+    """`<user_id>` from the JWT `sub` claim (`<provider>|<user_id>`); unverified."""
     segments = token.split(".")
     if len(segments) != 3:
         return None
@@ -83,6 +96,16 @@ def _jwt_user_id(token: str) -> str | None:
         return None
     user_id = sub.split("|", 1)[-1]
     return user_id or None
+
+
+def _epoch_ms_to_iso(value: Any) -> str | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        ms = float(value)
+    except ValueError:
+        return None
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
 
 
 def _add_month(value: str) -> str | None:
@@ -110,8 +133,25 @@ def _count(value: Any) -> float | None:
     return float(value)
 
 
-def _total_window(payload: dict[str, Any]) -> dict[str, Any] | None:
-    """One `total` cycle window, or None when no entry carries a positive quota."""
+def _dashboard_window(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """One `total` cycle window from GetCurrentPeriodUsage, or None."""
+    plan = payload.get("planUsage")
+    if not isinstance(plan, dict):
+        return None
+    used = plan.get("totalPercentUsed")
+    if isinstance(used, bool) or not isinstance(used, (int, float)):
+        return None
+    return window(
+        "total",
+        "cycle",
+        float(used),
+        _epoch_ms_to_iso(payload.get("billingCycleEnd")),
+        None,
+    )
+
+
+def _legacy_total_window(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """One `total` cycle window from the legacy per-model usage dict, or None."""
     used = 0.0
     quota = 0.0
     for key, entry in payload.items():
@@ -129,35 +169,12 @@ def _total_window(payload: dict[str, Any]) -> dict[str, Any] | None:
     return window("total", "cycle", 100 * used / quota, resets_at, None)
 
 
-def probe(home: Path, fetch: Fetch = default_fetch) -> dict[str, Any]:
-    """Current Cursor cycle usage as one window, or why it could not be read.
-
-    Never calls `fetch` without a decodable token. Errors: 'no credentials',
-    'bad token', 'HTTP <status>', 'bad response', 'no quota in response'.
-    """
-    token = _read_token(home)
-    if token is None:
-        return unavailable(HARNESS, "no credentials")
-    user_id = _jwt_user_id(token)
-    if user_id is None:
-        return unavailable(HARNESS, "bad token")
-    url = f"{USAGE_URL}?{urllib.parse.urlencode({'user': user_id})}"
-    headers = {
-        "Cookie": f"{_COOKIE_NAME}={user_id}%3A%3A{token}",
-        "Accept": "application/json",
-    }
-    status, body = fetch(url, headers)
-    if status != 200:
-        return unavailable(HARNESS, f"HTTP {status}")
-    try:
-        payload = json.loads(body)
-    except ValueError:
-        return unavailable(HARNESS, "bad response")
-    if not isinstance(payload, dict):
-        return unavailable(HARNESS, "bad response")
-    total = _total_window(payload)
-    if total is None:
-        return unavailable(HARNESS, "no quota in response")
+def _available_sample(
+    *,
+    windows: list[dict[str, Any]],
+    source: str,
+    status: str | None = None,
+) -> dict[str, Any]:
     as_of = datetime.now(UTC).isoformat()
     return {
         "harness": HARNESS,
@@ -165,11 +182,88 @@ def probe(home: Path, fetch: Fetch = default_fetch) -> dict[str, Any]:
         "available": True,
         "fetched_at": as_of,
         "as_of": as_of,
-        "source": SOURCE,
+        "source": source,
         "error": None,
-        "status": None,
-        "windows": [total],
+        "status": status,
+        "windows": windows,
     }
 
 
-__all__ = ["SOURCE", "USAGE_URL", "credentials_path", "default_fetch", "probe"]
+def _fetch_dashboard(token: str, fetch: Fetch) -> tuple[int, str]:
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Connect-Protocol-Version": "1",
+        "Accept": "application/json",
+    }
+    return fetch(DASHBOARD_USAGE_URL, headers)
+
+
+def _fetch_legacy(token: str, legacy_fetch: Fetch) -> tuple[int, str]:
+    user_id = _jwt_user_id(token)
+    if user_id is None:
+        return 0, ""
+    url = f"{LEGACY_USAGE_URL}?{urllib.parse.urlencode({'user': user_id})}"
+    headers = {
+        "Cookie": f"{_COOKIE_NAME}={user_id}%3A%3A{token}",
+        "Accept": "application/json",
+    }
+    return legacy_fetch(url, headers)
+
+
+def probe(
+    home: Path,
+    fetch: Fetch = default_fetch,
+    legacy_fetch: Fetch = default_legacy_fetch,
+) -> dict[str, Any]:
+    """Current Cursor cycle usage as one window, or why it could not be read.
+
+    Errors: 'no credentials', 'HTTP <status>', 'bad response',
+    'no quota in response'.
+    """
+    token = _read_token(home)
+    if token is None:
+        return unavailable(HARNESS, "no credentials")
+
+    status, body = _fetch_dashboard(token, fetch)
+    if status == 200:
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            return unavailable(HARNESS, "bad response")
+        if isinstance(payload, dict):
+            total = _dashboard_window(payload)
+            if total is not None:
+                display = payload.get("displayMessage")
+                status_msg = display if isinstance(display, str) and display else None
+                return _available_sample(
+                    windows=[total],
+                    source=SOURCE,
+                    status=status_msg,
+                )
+
+    legacy_status, legacy_body = _fetch_legacy(token, legacy_fetch)
+    if legacy_status == 200:
+        try:
+            legacy_payload = json.loads(legacy_body)
+        except ValueError:
+            return unavailable(HARNESS, "bad response")
+        if isinstance(legacy_payload, dict):
+            total = _legacy_total_window(legacy_payload)
+            if total is not None:
+                return _available_sample(windows=[total], source=_LEGACY_SOURCE)
+
+    if status not in (0, 200):
+        return unavailable(HARNESS, f"HTTP {status}")
+    return unavailable(HARNESS, "no quota in response")
+
+
+__all__ = [
+    "DASHBOARD_USAGE_URL",
+    "LEGACY_USAGE_URL",
+    "SOURCE",
+    "credentials_path",
+    "default_fetch",
+    "default_legacy_fetch",
+    "probe",
+]
