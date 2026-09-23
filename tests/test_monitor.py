@@ -18,12 +18,14 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from alloy import beads as bd
 from alloy.cli import app
 from alloy.engine import Engine
 from alloy.limits import window, write_cache
-from alloy.models import AgentResult
+from alloy.models import DEFAULT_RECIPE_KEY, AgentResult
 from alloy.monitor import build_snapshot
 from alloy.paths import AlloyPaths
+from alloy.scheduler import Scheduler
 from alloy.store import RUN_CANCELLED, RUN_DONE, RUN_FAILED, RUN_RUNNING, Store
 from conftest import (
     bd_create,
@@ -40,8 +42,11 @@ from support import make_harness
 
 TOP_LEVEL_KEYS = {
     "root", "repo", "scheduler", "ready_count", "ready_capped_at", "lifetime", "runs",
-    "limits", "session", "session_totals",
+    "limits", "session", "session_totals", "queue",
 }
+QUEUE_KEYS = {"ready", "ready_total", "blocked"}
+READY_ENTRY_KEYS = {"bead_id", "title", "recipe", "priority", "complexity", "epic_id"}
+BLOCKED_ENTRY_KEYS = {"bead_id", "title", "blocked_by", "epic_id"}
 RUN_ENTRY_KEYS = {
     "bead_id", "run_id", "recipe", "status", "stage", "iteration", "max_iterations",
     "consiliums", "max_consiliums", "tests_summary", "checks", "elapsed_minutes",
@@ -57,18 +62,76 @@ JUDGE_KEYS = {"raw", "effective", "matches_effective"}
 
 
 class FakeBeads:
-    """Stands in for `BeadsClient`; `build_snapshot` only ever calls `ready()`."""
+    """Stands in for `BeadsClient` in monitor snapshot tests."""
 
-    def __init__(self, ready_ids: tuple[str, ...] = ()) -> None:
-        self._ready = list(ready_ids)
+    def __init__(
+        self,
+        ready: tuple[str, ...] | list[bd.Bead] = (),
+        *,
+        blocked: list[bd.Bead] = (),
+        memories: dict[str, str] | None = None,
+        epics: dict[str, str | None] | None = None,
+        beads_error: bool = False,
+    ) -> None:
+        if ready and isinstance(ready[0], bd.Bead):
+            self._ready = list(ready)
+        else:
+            self._ready = [
+                bd.Bead(
+                    id=bead_id,
+                    title=bead_id,
+                    metadata={bd.META_RECIPE: "tdd-loop"},
+                )
+                for bead_id in ready
+            ]
+        self._blocked = list(blocked)
+        self._memories = dict(memories or {})
+        self._epics = dict(epics or {})
+        self._beads_error = beads_error
 
-    def ready(self, *, recipe: str | None = None, limit: int = 50):
-        return self._ready[:limit]
+    def _maybe_raise(self) -> None:
+        if self._beads_error:
+            raise bd.BeadsError("fake bd failure")
+
+    def ready(
+        self,
+        *,
+        recipe: str | None = None,
+        limit: int = 50,
+        include_unassigned: bool = False,
+    ) -> list[bd.Bead]:
+        self._maybe_raise()
+        beads = sorted(self._ready, key=lambda bead: (bead.priority, bead.id))
+        if recipe:
+            beads = [bead for bead in beads if bead.recipe == recipe]
+        elif not include_unassigned:
+            beads = [bead for bead in beads if bead.recipe]
+        return beads[:limit]
+
+    def blocked(self) -> list[bd.Bead]:
+        self._maybe_raise()
+        return list(self._blocked)
+
+    def memories(self) -> dict[str, str]:
+        self._maybe_raise()
+        return dict(self._memories)
+
+    def epic_for(self, bead_id: str, *, max_depth: int = 3) -> str | None:
+        self._maybe_raise()
+        return self._epics.get(bead_id)
 
 
-def _engine(repo: Path, alloy_home: Path, *, ready_ids: tuple[str, ...] = ()) -> Engine:
+def _engine(
+    repo: Path,
+    alloy_home: Path,
+    *,
+    beads: FakeBeads | None = None,
+    ready_ids: tuple[str, ...] = (),
+) -> Engine:
     paths = AlloyPaths.resolve(alloy_home).ensure()
-    return Engine(repo=repo, paths=paths, store=Store(paths.alloy_db), beads=FakeBeads(ready_ids))
+    if beads is None:
+        beads = FakeBeads(ready_ids)
+    return Engine(repo=repo, paths=paths, store=Store(paths.alloy_db), beads=beads)
 
 
 def script(**overrides):
@@ -771,3 +834,139 @@ def test_snapshot_finished_run_entry_has_full_shape_and_empty_current_calls(proj
     assert set(run.keys()) == RUN_ENTRY_KEYS
     assert run["current_calls"] == []
     assert run["status"] == RUN_DONE
+
+
+# -- monitor queue: ready order, blocked, truncation, error fallback (alloy-byo.2) --
+
+
+def _dispatchable_bead_ids(engine: Engine) -> list[str]:
+    """Mirror Scheduler.next_task filtering over the full ready list."""
+    scheduler = Scheduler(engine=engine)
+    from alloy import recipes
+
+    known = set(recipes.names())
+    default = (
+        engine.beads.memories().get(DEFAULT_RECIPE_KEY)
+        if scheduler.recipe_filter is None
+        else None
+    )
+    if default and default not in known:
+        default = None
+    default_recipe = default or None
+    ids: list[str] = []
+    for bead in engine.beads.ready(
+        recipe=scheduler.recipe_filter,
+        include_unassigned=default_recipe is not None,
+        limit=10_000,
+    ):
+        if (bead.recipe or default_recipe) in known:
+            ids.append(bead.id)
+    return ids
+
+
+def _queue_bead(
+    bead_id: str,
+    *,
+    title: str,
+    priority: int = 2,
+    recipe: str | None = "tdd-loop",
+    complexity: str | None = None,
+) -> bd.Bead:
+    metadata: dict[str, str] = {}
+    if recipe:
+        metadata[bd.META_RECIPE] = recipe
+    if complexity:
+        metadata[bd.META_COMPLEXITY] = complexity
+    return bd.Bead(id=bead_id, title=title, priority=priority, metadata=metadata)
+
+
+def test_snapshot_queue_ready_matches_scheduler_dispatch_order(project, alloy_home):
+    """Acceptance: queue.ready bead ids follow Scheduler.next_task dispatch order."""
+    beads = FakeBeads(
+        [
+            _queue_bead("alloy-z.3", title="third", priority=2, recipe="tdd-loop"),
+            _queue_bead("alloy-z.1", title="first", priority=0, recipe="tdd-loop"),
+            _queue_bead("alloy-z.2", title="second", priority=1, recipe="tdd-loop"),
+            _queue_bead("alloy-z.4", title="unknown recipe", priority=0, recipe="no-such"),
+            _queue_bead("alloy-z.5", title="needs default", priority=1),
+        ],
+        memories={DEFAULT_RECIPE_KEY: "tdd-loop"},
+        epics={
+            "alloy-z.1": "alloy-epic",
+            "alloy-z.2": None,
+        },
+    )
+    engine = _engine(project, alloy_home, beads=beads)
+
+    snapshot = build_snapshot(engine)
+    queue = snapshot["queue"]
+
+    assert set(queue.keys()) == QUEUE_KEYS
+    expected_ids = _dispatchable_bead_ids(engine)
+    assert [entry["bead_id"] for entry in queue["ready"]] == expected_ids
+    assert queue["ready_total"] == len(expected_ids)
+    assert expected_ids == ["alloy-z.1", "alloy-z.2", "alloy-z.5", "alloy-z.3"]
+
+    first = queue["ready"][0]
+    assert set(first.keys()) == READY_ENTRY_KEYS
+    assert first == {
+        "bead_id": "alloy-z.1",
+        "title": "first",
+        "recipe": "tdd-loop",
+        "priority": 0,
+        "complexity": None,
+        "epic_id": "alloy-epic",
+    }
+    assert queue["ready"][1]["recipe"] == "tdd-loop"
+    assert queue["ready"][2]["recipe"] == "tdd-loop"
+
+
+def test_snapshot_queue_ready_truncates_at_fifty_and_reports_ready_total(project, alloy_home):
+    """Acceptance: 60 dispatchable ready beads -> 50 listed, ready_total == 60."""
+    ready = [
+        _queue_bead(f"alloy-q.{index:02d}", title=f"task {index}", priority=2)
+        for index in range(60)
+    ]
+    engine = _engine(project, alloy_home, beads=FakeBeads(ready))
+
+    snapshot = build_snapshot(engine)
+    queue = snapshot["queue"]
+
+    assert len(queue["ready"]) == 50
+    assert queue["ready_total"] == 60
+    assert [entry["bead_id"] for entry in queue["ready"]] == _dispatchable_bead_ids(engine)[:50]
+
+
+def test_snapshot_queue_blocked_includes_blocked_by_and_epic_id(project, alloy_home):
+    """Acceptance: blocked[0].blocked_by matches the fake bd blockers."""
+    blocked = bd.Bead(
+        id="alloy-blocked.1",
+        title="waiting on deps",
+        blocked_by=["alloy-a", "alloy-b"],
+    )
+    engine = _engine(project, alloy_home, beads=FakeBeads(blocked=[blocked], epics={"alloy-blocked.1": "alloy-epic"}))
+
+    snapshot = build_snapshot(engine)
+    queue = snapshot["queue"]
+
+    assert queue["ready"] == []
+    assert queue["ready_total"] == 0
+    assert len(queue["blocked"]) == 1
+    entry = queue["blocked"][0]
+    assert set(entry.keys()) == BLOCKED_ENTRY_KEYS
+    assert entry["bead_id"] == "alloy-blocked.1"
+    assert entry["title"] == "waiting on deps"
+    assert entry["blocked_by"] == ["alloy-a", "alloy-b"]
+    assert entry["epic_id"] == "alloy-epic"
+
+
+def test_snapshot_queue_error_fallback_still_returns_runs(project, alloy_home):
+    """Acceptance: BeadsError -> empty queue shape; active runs are still present."""
+    engine = _engine(project, alloy_home, beads=FakeBeads(beads_error=True))
+    _active_run(engine, "run-active")
+
+    snapshot = build_snapshot(engine)
+
+    assert snapshot["queue"] == {"ready": [], "ready_total": 0, "blocked": []}
+    assert len(snapshot["runs"]) == 1
+    assert snapshot["runs"][0]["run_id"] == "run-active"
