@@ -863,6 +863,10 @@ LAST_REVIEW_KEY = "alloy:meta:last-review"
 MEMORY_REVIEW_LABEL = "alloy-memory-review"
 """Label on the task bead that lists pending proposals on human-owned memories."""
 
+EMBED_STALE_KEY = "alloy:meta:embed-stale"
+"""Meta flag set when the embedded block may lag the memory set; the scheduler
+treats it as a due trigger for review + embed and clears it once applied."""
+
 _EMBED_EXCLUDED_PREFIXES = _META_KEY_PREFIXES
 _EMBED_EXCLUDED_KEYS = frozenset({"alloy:calibration"})
 

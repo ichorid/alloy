@@ -3,20 +3,26 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+import json
+import subprocess
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
 from alloy import beads as bd
-from alloy.models import utcnow
 from alloy.engine import Engine
+from alloy.memory_embed import BEGIN_MARKER
+from alloy.models import EMBED_KEY, LAST_REVIEW_KEY, MEMORY_REVIEW_LABEL, utcnow
 from alloy.scheduler import Scheduler, read_pid
+from alloy.store import RUN_RUNNING
 from conftest import (
     bd_create,
     context_entry,
     critic_entry,
     implement_entry,
     judge_entry,
+    memory_reviewer_entry,
     synthesize_entry,
     write_tests_entry,
 )
@@ -267,3 +273,187 @@ async def test_scheduler_tick_leaves_parked_run_when_retry_at_is_future(
     assert record["status"] == "waiting-human"
     assert record.get("retry_at") == future
     assert fake_harnesses.calls == []
+
+
+# -- scheduler memory review + embed (alloy-4ef.19) ------------------------
+
+
+EMBED_STALE_KEY = "alloy:meta:embed-stale"
+MEMORY_CLOCK = datetime(2026, 9, 23, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _git(args: list[str], repo: Path) -> None:
+    subprocess.run(["git", *args], cwd=str(repo), check=True, capture_output=True, text=True)
+
+
+def _memory_scheduler(beads_project: Path, alloy_home: Path, *, clock: datetime = MEMORY_CLOCK) -> Scheduler:
+    engine = Engine.open(beads_project, alloy_home)
+    return Scheduler(
+        engine=engine,
+        poll_seconds=0.01,
+        once=True,
+        clock=lambda: clock,
+    )
+
+
+def _configure_memory_reviewer(fake_harnesses) -> None:
+    fake_harnesses.configure(
+        {
+            "memory_reviewer": memory_reviewer_entry(
+                verdicts=[{"action": "keep", "key": "conv", "reason": "still accurate"}],
+            ),
+        }
+    )
+
+
+def _seed_embed_memory(engine: Engine) -> None:
+    engine.beads.remember(EMBED_KEY, json.dumps(["conv"]))
+    engine.beads.remember("conv", "repo uses pathlib")
+
+
+def _commit_agents(repo: Path) -> Path:
+    agents = repo / "AGENTS.md"
+    agents.write_text("# Agents\n\nFollow these rules.\n", encoding="utf-8")
+    _git(["add", "AGENTS.md"], repo)
+    _git(["commit", "-qm", "add AGENTS.md"], repo)
+    return agents
+
+
+def _seed_finished_runs_since_review(store, count: int) -> None:
+    store.set_finished_runs_since_last_review(count)
+
+
+def _memory_reviewer_calls(fake_harnesses) -> list[dict]:
+    return fake_harnesses.calls_for("memory_reviewer")
+
+
+def _bead_notes(engine: Engine, bead_id: str) -> str:
+    rows = engine.beads._json(["show", bead_id, "--json"])
+    return str(rows[0].get("notes") or "")
+
+
+@pytest.fixture
+def memory_scheduler_setup(beads_project, alloy_home, fake_harnesses):
+    """Scheduler with injected clock and a scripted memory_reviewer harness."""
+    _configure_memory_reviewer(fake_harnesses)
+    scheduler = _memory_scheduler(beads_project, alloy_home)
+    _seed_embed_memory(scheduler.engine)
+    agents = _commit_agents(beads_project)
+    return scheduler, agents
+
+
+async def test_scheduler_tick_runs_memory_review_and_embed_when_last_review_is_stale_by_days(
+    memory_scheduler_setup, fake_harnesses,
+):
+    scheduler, agents = memory_scheduler_setup
+    stale = (MEMORY_CLOCK.date() - timedelta(days=8)).isoformat()
+    scheduler.engine.beads.remember(LAST_REVIEW_KEY, stale)
+
+    assert await scheduler.tick() is True
+    assert len(_memory_reviewer_calls(fake_harnesses)) == 1
+    assert scheduler.engine.beads.memories()[LAST_REVIEW_KEY] == MEMORY_CLOCK.date().isoformat()
+    assert BEGIN_MARKER in agents.read_text(encoding="utf-8")
+
+
+async def test_scheduler_tick_does_not_repeat_memory_review_same_calendar_day(
+    memory_scheduler_setup, fake_harnesses,
+):
+    scheduler, _agents = memory_scheduler_setup
+    stale = (MEMORY_CLOCK.date() - timedelta(days=8)).isoformat()
+    scheduler.engine.beads.remember(LAST_REVIEW_KEY, stale)
+
+    assert await scheduler.tick() is True
+    assert len(_memory_reviewer_calls(fake_harnesses)) == 1
+
+    assert await scheduler.tick() is False
+    assert len(_memory_reviewer_calls(fake_harnesses)) == 1
+
+
+async def test_scheduler_tick_runs_memory_review_when_finished_runs_exceed_threshold(
+    beads_project, alloy_home, fake_harnesses,
+):
+    _configure_memory_reviewer(fake_harnesses)
+    scheduler = _memory_scheduler(beads_project, alloy_home)
+    _seed_embed_memory(scheduler.engine)
+    _commit_agents(beads_project)
+    recent = (MEMORY_CLOCK.date() - timedelta(days=1)).isoformat()
+    scheduler.engine.beads.remember(LAST_REVIEW_KEY, recent)
+    _seed_finished_runs_since_review(scheduler.engine.store, 21)
+
+    assert await scheduler.tick() is True
+    assert len(_memory_reviewer_calls(fake_harnesses)) == 1
+    assert scheduler.engine.beads.memories()[LAST_REVIEW_KEY] == MEMORY_CLOCK.date().isoformat()
+
+
+async def test_scheduler_tick_skips_memory_review_when_not_due_by_days_or_runs(
+    beads_project, alloy_home, fake_harnesses,
+):
+    _configure_memory_reviewer(fake_harnesses)
+    scheduler = _memory_scheduler(beads_project, alloy_home)
+    _seed_embed_memory(scheduler.engine)
+    _commit_agents(beads_project)
+    recent = (MEMORY_CLOCK.date() - timedelta(days=1)).isoformat()
+    scheduler.engine.beads.remember(LAST_REVIEW_KEY, recent)
+    _seed_finished_runs_since_review(scheduler.engine.store, 5)
+
+    assert await scheduler.tick() is False
+    assert _memory_reviewer_calls(fake_harnesses) == []
+    assert scheduler.engine.beads.memories()[LAST_REVIEW_KEY] == recent
+
+
+async def test_scheduler_tick_runs_memory_review_when_embed_stale_flag_set(
+    beads_project, alloy_home, fake_harnesses,
+):
+    _configure_memory_reviewer(fake_harnesses)
+    scheduler = _memory_scheduler(beads_project, alloy_home)
+    _seed_embed_memory(scheduler.engine)
+    _commit_agents(beads_project)
+    scheduler.engine.beads.remember(LAST_REVIEW_KEY, MEMORY_CLOCK.date().isoformat())
+    scheduler.engine.beads.remember(EMBED_STALE_KEY, "true")
+    _seed_finished_runs_since_review(scheduler.engine.store, 0)
+
+    assert await scheduler.tick() is True
+    assert len(_memory_reviewer_calls(fake_harnesses)) == 1
+
+
+async def test_scheduler_tick_skips_memory_review_while_a_run_is_active(
+    beads_project, alloy_home, fake_harnesses,
+):
+    _configure_memory_reviewer(fake_harnesses)
+    scheduler = _memory_scheduler(beads_project, alloy_home)
+    stale = (MEMORY_CLOCK.date() - timedelta(days=8)).isoformat()
+    scheduler.engine.beads.remember(LAST_REVIEW_KEY, stale)
+    scheduler.engine.store.create_run(
+        run_id="busy",
+        bead_id="other",
+        thread_id="other",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+
+    assert await scheduler.tick() is False
+    assert _memory_reviewer_calls(fake_harnesses) == []
+    assert scheduler.engine.beads.memories()[LAST_REVIEW_KEY] == stale
+    assert scheduler.engine.store.get_run("busy")["status"] == RUN_RUNNING
+
+
+async def test_scheduler_tick_skips_embed_and_notes_uncommitted_when_instruction_file_dirty(
+    memory_scheduler_setup, fake_harnesses,
+):
+    scheduler, agents = memory_scheduler_setup
+    stale = (MEMORY_CLOCK.date() - timedelta(days=8)).isoformat()
+    scheduler.engine.beads.remember(LAST_REVIEW_KEY, stale)
+    agents.write_text(agents.read_text(encoding="utf-8") + "\n# uncommitted edit\n", encoding="utf-8")
+
+    assert await scheduler.tick() is True
+    assert len(_memory_reviewer_calls(fake_harnesses)) == 1
+    assert scheduler.engine.beads.memories()[LAST_REVIEW_KEY] == MEMORY_CLOCK.date().isoformat()
+    assert BEGIN_MARKER not in agents.read_text(encoding="utf-8")
+
+    review_beads = scheduler.engine.beads.open_by_label(MEMORY_REVIEW_LABEL)
+    assert review_beads
+    notes = _bead_notes(scheduler.engine, review_beads[0].id)
+    assert notes.count("uncommitted") == 1

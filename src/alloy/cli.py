@@ -27,9 +27,11 @@ from alloy.config import (
     ConfigError, MemorySpec, RecipeConfig, RoleSpec, discover_recipes, load_recipe,
 )
 from alloy.engine import Engine, EngineError
+from alloy.memory_schedule import (
+    MEMORY_REVIEW_RECIPE, apply_review, embed_instruction_files, review_plan, review_run_id,
+)
 from alloy.models import (
-    MEMORY_REVIEW_LABEL, ProjectMemory, ReviewApply, ReviewPlan, memory_inventory,
-    plan_review_apply, review_bead_text, utcnow, with_provenance,
+    ProjectMemory, ReviewPlan, memory_inventory, utcnow, with_provenance,
 )
 from alloy.monitor import build_snapshot
 from alloy.monitor.app import MonitorApp
@@ -524,75 +526,19 @@ def memory_list(
     console.print(table)
 
 
-MEMORY_REVIEW_RECIPE = "tdd-loop"
-MEMORY_REVIEW_BEAD = "memory-review"
-
-
-def _review_run_id() -> str:
-    import uuid
-
-    return f"memory-review-{uuid.uuid4().hex[:12]}"
-
-
 def _review_plan(engine: Engine, recipe_name: str, memory: ProjectMemory,
                  run_id: str) -> ReviewPlan:
-    """Run the read-only memory review under a throwaway RunContext bound to
-    the repository itself (no worktree, no bead, no ledger run row)."""
-    from alloy.recipes.tdd_loop import review_memory
-    from alloy.runtime import RunContext
-    from alloy.worktree import Worktree, WorktreeManager
-
-    config = engine.load_config(recipe_name)
-    if "memory_reviewer" not in config.roles:
-        _fail(f"recipe {recipe_name} has no memory_reviewer role")
-    log_dir = engine.paths.logs / "memory-review" / run_id
-    log_dir.mkdir(parents=True, exist_ok=True)
-    ctx = RunContext(
-        bead=bd.Bead(id=MEMORY_REVIEW_BEAD, title="alloy memory review"),
-        recipe=config,
-        run_id=run_id,
-        worktree=Worktree(bead_id=MEMORY_REVIEW_BEAD, path=engine.repo, branch="", base_commit=""),
-        worktrees=WorktreeManager(repo=engine.repo, root=engine.paths.worktrees),
-        registry=RunnerRegistry(config.runners, log_dir=log_dir),
-        store=engine.store,
-        checkpointer=None,
-        log_dir=log_dir,
-        beads=engine.beads,
-    )
-    return _run_async(review_memory(ctx, memory, today=utcnow().date()))
+    """Run the read-only memory review (see memory_schedule.review_plan)."""
+    try:
+        return _run_async(review_plan(engine, recipe_name, memory, run_id, today=utcnow().date()))
+    except ConfigError as exc:
+        _fail(str(exc))
+        raise  # unreachable: _fail exits
 
 
 def _apply_review(engine: Engine, plan: ReviewPlan, run_id: str) -> dict[str, Any]:
-    """Execute the plan: alloy-owned forgets/updates, proposal memories for
-    human-owned keys plus one open alloy-memory-review task bead listing
-    them (reused when already open), then the meta keys."""
-    apply: ReviewApply = plan_review_apply(
-        plan, run_id=run_id, bead_id=MEMORY_REVIEW_BEAD, today=utcnow().date(),
-    )
-    for key in apply.forgets:
-        engine.beads.forget(key)
-    for key, content in apply.remembers:
-        engine.beads.remember(key, content)
-    review_bead: str | None = None
-    created = False
-    if apply.proposals:
-        open_beads = engine.beads.open_by_label(MEMORY_REVIEW_LABEL)
-        if open_beads:
-            review_bead = open_beads[0].id
-        else:
-            title, description = review_bead_text(apply.proposals)
-            review_bead = engine.beads.create_task(
-                title=title, description=description, labels=[MEMORY_REVIEW_LABEL],
-            )
-            created = True
-    return {
-        "forgotten": apply.forgets,
-        "remembered": [key for key, _ in apply.remembers],
-        "proposals": apply.proposals,
-        "embed": apply.embed_keys,
-        "review_bead": review_bead,
-        "review_bead_created": created,
-    }
+    """Execute the plan (see memory_schedule.apply_review)."""
+    return apply_review(engine, plan, run_id, today=utcnow().date())
 
 
 @memory_app.command(name="review")
@@ -622,7 +568,7 @@ def memory_review(
         _fail(str(exc))
         return
     memory = ProjectMemory.from_raw(memories, config.memory)
-    run_id = _review_run_id()
+    run_id = review_run_id()
     plan = _review_plan(engine, recipe, memory, run_id)
     applied: dict[str, Any] | None = None
     if apply:
@@ -671,8 +617,6 @@ def memory_embed(
     """Render the alloy:meta:embed set into the managed block of every
     existing instruction file (memory.instruction_files) and print the files
     that changed. Never runs git."""
-    from alloy.memory_embed import render_embed_block, splice_managed_block
-
     engine = _engine(repo, root)
     try:
         memories = engine.beads.memories()
@@ -685,15 +629,8 @@ def memory_embed(
         _fail(str(exc))
         return
     memory = ProjectMemory.from_raw(memories, config.memory)
-    managed = render_embed_block(memory, config.memory)
-    for name in config.memory.instruction_files:
-        path = engine.repo / name
-        if not path.is_file():
-            continue
-        updated, changed = splice_managed_block(path.read_text(encoding="utf-8"), managed)
-        if changed:
-            path.write_text(updated, encoding="utf-8")
-            console.print(name)
+    for name in embed_instruction_files(engine.repo, memory, config.memory):
+        console.print(name)
 
 
 @app.command(name="recipes")

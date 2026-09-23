@@ -78,7 +78,16 @@ CREATE TABLE IF NOT EXISTS inflight_calls (
     pid          INTEGER
 );
 CREATE INDEX IF NOT EXISTS inflight_calls_run_idx ON inflight_calls(run_id);
+
+CREATE TABLE IF NOT EXISTS scheduler_meta (
+    key          TEXT PRIMARY KEY,
+    value        TEXT NOT NULL
+);
 """
+
+# scheduler_meta keys (alloy-4ef.19)
+META_FINISHED_RUNS_SINCE_REVIEW = "finished_runs_since_last_review"
+META_LAST_MEMORY_REVIEW_DAY = "last_memory_review_day"
 
 RUN_RUNNING = "running"
 RUN_WAITING_HUMAN = "waiting-human"
@@ -183,6 +192,39 @@ class Store:
             ended_at=utcnow().isoformat(),
             pid=None,
         )
+        self.set_finished_runs_since_last_review(self.finished_runs_since_last_review() + 1)
+
+    # -- scheduler meta (alloy-4ef.19) --------------------------------------
+
+    def _meta_get(self, key: str) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT value FROM scheduler_meta WHERE key = ?", (key,)).fetchone()
+        return str(row["value"]) if row else None
+
+    def _meta_set(self, key: str, value: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO scheduler_meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    def finished_runs_since_last_review(self) -> int:
+        """Runs finished (any terminal status) since the last applied memory review."""
+        try:
+            return int(self._meta_get(META_FINISHED_RUNS_SINCE_REVIEW) or 0)
+        except ValueError:
+            return 0
+
+    def set_finished_runs_since_last_review(self, count: int) -> None:
+        self._meta_set(META_FINISHED_RUNS_SINCE_REVIEW, str(max(0, int(count))))
+
+    def last_memory_review_day(self) -> str | None:
+        """ISO date of the last scheduler-driven memory review attempt (once-per-day gate)."""
+        return self._meta_get(META_LAST_MEMORY_REVIEW_DAY)
+
+    def set_last_memory_review_day(self, day: str) -> None:
+        self._meta_set(META_LAST_MEMORY_REVIEW_DAY, day)
 
     def mark_paused(self, run_id: str) -> None:
         """The run is waiting for a human; the clock stops here (see `elapsed`)."""
