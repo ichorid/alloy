@@ -118,6 +118,45 @@ alloy recipes --probe --recipe tdd-loop --json
 `--json` on any command gives machine-readable output — prefer it over parsing
 the table output.
 
+## Project memory
+
+Alloy stores what it learns about a repository as Beads memories and reads
+them once per run into a `## Project memory` block in every role's prompt.
+Memory informs; the guard decides. Nothing remembered can raise a limit,
+skip a check or pass a human gate.
+
+Keys starting with `alloy:` are alloy-owned and get a provenance trailer.
+Alloy writes `alloy:check-hints` (check commands offered to the verifier),
+`alloy:lesson:<key>` (harvested lessons), `alloy:human:<bead-id>` (guidance
+saved with `--remember`), `alloy:calibration` (per-tier run statistics, seen
+only by the estimator), `alloy:regression:<area>` (role-specific regression
+areas), `alloy:default:recipe` (scheduler default), `alloy:meta:*`
+(bookkeeping) and `alloy:review:*` (contradictions and proposals). Everything
+else is human-owned: write it with `bd remember`, and Alloy leaves it alone.
+
+```bash
+alloy memory list                          # inventory with owner, provenance, age and flags
+alloy memory review                        # read-only plan; nothing changes
+alloy memory review --apply                # apply alloy-owned verdicts
+alloy memory embed                         # splice the embed set into AGENTS.md and CLAUDE.md
+alloy resume <bead-id> -m "<guidance>" --remember          # store under alloy:human:<bead-id>
+alloy resume <bead-id> -m "<guidance>" --remember=<key>    # or a custom key
+```
+
+`alloy memory embed` rewrites only the region between the HTML-comment
+markers `alloy:memory:begin` and `alloy:memory:end` in each
+`memory.instruction_files` entry (default `AGENTS.md`, `CLAUDE.md`), or appends
+one when it is missing. It never runs git; commit the result yourself. Do not
+hand-edit inside the markers — the next embed overwrites it. Review is due
+every 7 days or 20 runs (`review_every_days`, `review_every_runs`); the
+scheduler runs `alloy memory review --apply` then `alloy memory embed`, and
+skips the embed while an instruction file is dirty.
+
+Prompts are five layers in fixed order — static, project, run, task,
+volatile — and `prefix_hash` (sha256 of the first three) is recorded on every
+agent call. The `prefix` column of `alloy logs` shows the truncated hash: if
+it changes mid-run, something volatile leaked into the cacheable prefix.
+
 ## Running a decomposed feature
 
 Either drive it bead-by-bead:
