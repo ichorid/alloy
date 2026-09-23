@@ -8,14 +8,24 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
+import shutil
 import subprocess
 import sys
 from dataclasses import replace
+from pathlib import Path
 
+import pytest
+
+from alloy.beads import BeadsClient
 from alloy.config import Limits, RoleSpec, VerificationSpec
+from alloy.models import parse_provenance
 from alloy.store import Store
 from alloy.recipes.tdd_loop import tests_prompt, verifier_prompt
 from conftest import (
+    FAKE_BD_SOURCE,
+    FAKE_RUNNERS,
+    FAKE_SOURCE,
     acceptance_entry,
     context_entry,
     critic_entry,
@@ -1363,3 +1373,241 @@ async def test_implement_prefix_hash_matches_across_runs_with_different_bead_bri
     hash_a = _prefix_hashes(harness_a.store, "run-a", "implement")[0]
     hash_b = _prefix_hashes(harness_b.store, "run-b", "implement")[0]
     assert hash_a == hash_b
+
+
+# -- alloy:check-hints persistence (alloy-4ef.9) -----------------------------
+
+
+CHECK_HINTS_KEY = "alloy:check-hints"
+TARGETED_PYTEST = "pytest -q tests/test_slugify.py"
+REGRESSION_PYTEST = "pytest -q"
+AUTODETECT_PYTEST = "python -m pytest -q"
+HINTS_HEADING = "## Hints from the repository (not yet verified)"
+
+
+class FakeWorkflow:
+    """Fake harness runners and fake bd sharing one bindir and config file."""
+
+    def __init__(self, bindir: Path, workdir: Path, config_path: Path) -> None:
+        self.bindir = bindir
+        self.workdir = workdir
+        self.config_path = config_path
+
+    @property
+    def bd(self) -> Path:
+        return self.bindir / "bd"
+
+    def configure(
+        self,
+        agent_script: dict,
+        *,
+        memories: dict[str, str] | None = None,
+    ) -> None:
+        config = dict(agent_script)
+        if memories is not None:
+            config["memories"] = memories
+        self.config_path.write_text(json.dumps(config), encoding="utf-8")
+        (self.workdir / "calls.jsonl").unlink(missing_ok=True)
+        (self.workdir / "counters.json").unlink(missing_ok=True)
+
+    @property
+    def calls(self) -> list[dict]:
+        path = self.workdir / "calls.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+    def calls_for(self, role: str) -> list[dict]:
+        return [call for call in self.calls if call.get("role") == role]
+
+
+@pytest.fixture
+def fake_workflow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    bindir = tmp_path / "fakebin"
+    bindir.mkdir()
+    for name in FAKE_RUNNERS:
+        target = bindir / name
+        shutil.copy(FAKE_SOURCE, target)
+        target.chmod(0o755)
+    bd_binary = bindir / "bd"
+    shutil.copy(FAKE_BD_SOURCE, bd_binary)
+    bd_binary.chmod(0o755)
+
+    workdir = tmp_path / "fake-state"
+    workdir.mkdir()
+    config_path = workdir / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("ALLOY_FAKE_DIR", str(workdir))
+    monkeypatch.setenv("ALLOY_FAKE_CONFIG", str(config_path))
+
+    return FakeWorkflow(bindir=bindir, workdir=workdir, config_path=config_path)
+
+
+def _workflow_beads(project: Path, fake_workflow: FakeWorkflow) -> BeadsClient:
+    return BeadsClient(repo=project, binary=str(fake_workflow.bd))
+
+
+def _bd_remember_calls(fake_workflow: FakeWorkflow) -> list[dict]:
+    return [call for call in fake_workflow.calls if call.get("command") == "remember"]
+
+
+def _check_hints_remember_calls(fake_workflow: FakeWorkflow) -> list[dict]:
+    return [
+        call
+        for call in _bd_remember_calls(fake_workflow)
+        if CHECK_HINTS_KEY in call.get("argv", [])
+    ]
+
+
+def _remember_key_and_body(call: dict) -> tuple[str, str]:
+    argv = call["argv"]
+    key = argv[argv.index("--key") + 1]
+    return key, argv[1]
+
+
+def _expected_check_hints_body() -> str:
+    """Runnable verifier checks, newest first, excluding exit-127 commands."""
+    return (
+        f"regression: {REGRESSION_PYTEST}\n"
+        f"targeted: {TARGETED_PYTEST}"
+    )
+
+
+def _check_hints_done_script(**overrides):
+    base = verification_script(
+        context=context_entry(check_hints=[]),
+        implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
+        verifier=[
+            verifier_run_entry(TARGETED_PYTEST, kind="targeted"),
+            verifier_run_entry(TARGETED_PYTEST, kind="targeted"),
+            verifier_run_entry(REGRESSION_PYTEST, kind="regression"),
+            verifier_run_entry("definitely-not-a-program"),
+            verifier_stop_entry("runnable checks recorded"),
+        ],
+        judge=[
+            judge_entry("retry", "targeted check still red"),
+            judge_entry("done"),
+        ],
+    )
+    base.update(overrides)
+    return base
+
+
+def _hints_section(prompt: str) -> str:
+    start = prompt.index(HINTS_HEADING)
+    rest = prompt[start:]
+    next_heading = rest.find("\n## ", len(HINTS_HEADING))
+    return rest[:next_heading] if next_heading != -1 else rest
+
+
+async def test_done_run_remembers_runnable_verifier_checks_as_alloy_check_hints(
+    project, alloy_home, fake_workflow
+):
+    """DONE finish writes alloy:check-hints once with runnable verifier commands only."""
+    fake_workflow.configure(_check_hints_done_script())
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    remembers = _check_hints_remember_calls(fake_workflow)
+    assert len(remembers) == 1
+
+    _, stored = _remember_key_and_body(remembers[0])
+    body, run_id, bead_id, at = parse_provenance(stored)
+    assert run_id == harness.run_id
+    assert bead_id == harness.bead.id
+    assert at is not None
+    assert body == _expected_check_hints_body()
+    assert "definitely-not-a-program" not in body
+
+
+async def test_failed_run_writes_no_alloy_check_hints(
+    project, alloy_home, fake_workflow
+):
+    """FAILED runs must not persist alloy:check-hints even when checks ran."""
+    fake_workflow.configure(
+        _check_hints_done_script(judge=[judge_entry("abort", "cannot finish")]),
+    )
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "failed"
+    assert _check_hints_remember_calls(fake_workflow) == []
+
+
+async def test_done_run_skips_remember_when_alloy_check_hints_unchanged(
+    project, alloy_home, fake_workflow
+):
+    """A second DONE run with the same checks does not rewrite alloy:check-hints."""
+    fake_workflow.configure(_check_hints_done_script())
+    beads = _workflow_beads(project, fake_workflow)
+    first_harness = make_harness(project, alloy_home, beads=beads, run_id="run-first")
+    try:
+        first_final = await first_harness.start()
+    finally:
+        first_harness.close()
+
+    assert first_final["outcome"] == "done"
+    first_remembers = _check_hints_remember_calls(fake_workflow)
+    assert len(first_remembers) == 1
+    _, first_body = _remember_key_and_body(first_remembers[0])
+    first_stripped, _, _, _ = parse_provenance(first_body)
+
+    fake_workflow.configure(
+        _check_hints_done_script(),
+        memories={CHECK_HINTS_KEY: first_body},
+    )
+    # A fresh bead gets a fresh worktree: the first run's fix already lives in
+    # t-1's worktree, so a second run there would find its baseline green.
+    second_harness = make_harness(
+        project, alloy_home, bead=make_bead("t-2"), beads=beads, run_id="run-second",
+    )
+    try:
+        second_final = await second_harness.start()
+    finally:
+        second_harness.close()
+
+    assert second_final["outcome"] == "done"
+    assert first_stripped == _expected_check_hints_body()
+    # configure() reset calls.jsonl before the second run: it must log no write.
+    assert _check_hints_remember_calls(fake_workflow) == []
+
+
+async def test_verifier_prompt_lists_remembered_check_hints_before_autodetect(
+    project, alloy_home, fake_workflow
+):
+    """alloy:check-hints commands precede autodetected hints in the verifier prompt."""
+    fake_workflow.configure(
+        script(
+            context=context_entry(check_hints=[]),
+            verifier=[
+                verifier_run_entry(REGRESSION_PYTEST, kind="regression"),
+                verifier_stop_entry("regression green"),
+            ],
+        ),
+        memories={CHECK_HINTS_KEY: _expected_check_hints_body()},
+    )
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    try:
+        await harness.start()
+    finally:
+        harness.close()
+
+    verifier_prompt_text = fake_workflow.calls_for("verifier")[0]["prompt"]
+    hints = _hints_section(verifier_prompt_text)
+    targeted_pos = hints.index(TARGETED_PYTEST)
+    regression_pos = hints.index(REGRESSION_PYTEST)
+    autodetect_pos = hints.index(AUTODETECT_PYTEST)
+    assert targeted_pos < autodetect_pos
+    assert regression_pos < autodetect_pos
