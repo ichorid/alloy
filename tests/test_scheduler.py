@@ -16,7 +16,7 @@ from alloy.engine import Engine
 from alloy.memory_embed import BEGIN_MARKER
 from alloy.models import EMBED_KEY, LAST_REVIEW_KEY, MEMORY_REVIEW_LABEL, utcnow
 from alloy.scheduler import Scheduler, read_pid
-from alloy.store import RUN_RUNNING
+from alloy.store import RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN
 from conftest import (
     bd_create,
     context_entry,
@@ -568,3 +568,148 @@ async def test_default_recipe_tick_uses_yaml_limits_not_memory(
     assert configs_seen[0].limits == yaml_limits
     assert yaml_limits.max_agent_calls == 20
     assert scheduler.engine.beads.show(bead_id).recipe == "tdd-loop"
+
+
+# -- epic serialization for auto-land (alloy-vrh.6) -----------------------
+
+
+def _create_epic(repo: Path, title: str) -> str:
+    proc = subprocess.run(
+        ["bd", "create", title, "-t", "epic", "--silent"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout.strip().splitlines()[-1].strip()
+
+
+def _create_epic_child(
+    repo: Path,
+    title: str,
+    parent_id: str,
+    *,
+    priority: int = 2,
+    **metadata,
+) -> str:
+    proc = subprocess.run(
+        ["bd", "create", title, "--parent", parent_id, "--silent"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    bead_id = proc.stdout.strip().splitlines()[-1].strip()
+    args = ["bd", "update", bead_id, "-p", str(priority)]
+    for key, value in metadata.items():
+        args += ["--set-metadata", f"{key}={value}"]
+    subprocess.run(args, cwd=str(repo), check=True, capture_output=True, text=True)
+    return bead_id
+
+
+def _seed_parked_run(
+    scheduler: Scheduler,
+    repo: Path,
+    bead_id: str,
+    run_id: str,
+    *,
+    status: str = RUN_WAITING_HUMAN,
+    worktree: Path | None = None,
+) -> None:
+    worktree_path = worktree or repo
+    scheduler.engine.store.create_run(
+        run_id=run_id,
+        bead_id=bead_id,
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=repo,
+        worktree=str(worktree_path),
+        branch=f"alloy/{bead_id}",
+        log_dir=None,
+    )
+    scheduler.engine.store.update_run(run_id, status=status, stage=status)
+
+
+def test_next_task_skips_epic_children_when_sibling_has_waiting_human_run(
+    scheduler, beads_project,
+):
+    epic_id = _create_epic(beads_project, "shared epic worktree")
+    child_x = _create_epic_child(
+        beads_project, "epic child X", epic_id, priority=0, alloy_recipe="tdd-loop",
+    )
+    child_y = _create_epic_child(
+        beads_project, "epic child Y", epic_id, priority=1, alloy_recipe="tdd-loop",
+    )
+    standalone = bd_create(beads_project, "standalone S", priority=2, alloy_recipe="tdd-loop")
+    _seed_parked_run(scheduler, beads_project, child_x, "epic-x-waiting")
+
+    picked = scheduler.next_task()
+
+    assert picked is not None
+    assert picked.id == standalone
+    assert picked.id not in {child_x, child_y}
+
+
+def test_next_task_returns_next_epic_child_after_blocking_sibling_run_is_done(
+    scheduler, beads_project,
+):
+    epic_id = _create_epic(beads_project, "serial epic children")
+    child_x = _create_epic_child(
+        beads_project, "first epic child", epic_id, priority=0, alloy_recipe="tdd-loop",
+    )
+    child_y = _create_epic_child(
+        beads_project, "second epic child", epic_id, priority=1, alloy_recipe="tdd-loop",
+    )
+    run_id = "epic-x-done"
+    _seed_parked_run(scheduler, beads_project, child_x, run_id)
+    scheduler.engine.store.update_run(run_id, status="done", stage="done")
+    scheduler.engine.beads.set_status(child_x, bd.STATUS_DONE)
+
+    picked = scheduler.next_task()
+
+    assert picked is not None
+    assert picked.id == child_y
+
+
+def test_next_task_logs_once_when_epic_sibling_blocks_dispatch(
+    scheduler, beads_project, caplog,
+):
+    epic_id = _create_epic(beads_project, "blocked epic")
+    child_x = _create_epic_child(
+        beads_project, "blocking sibling", epic_id, priority=0, alloy_recipe="tdd-loop",
+    )
+    _create_epic_child(
+        beads_project, "blocked sibling", epic_id, priority=1, alloy_recipe="tdd-loop",
+    )
+    _seed_parked_run(scheduler, beads_project, child_x, "epic-block-log")
+
+    with caplog.at_level(logging.INFO, logger="alloy.scheduler"):
+        assert scheduler.next_task() is None
+        assert scheduler.next_task() is None
+
+    matches = [record for record in caplog.records if child_x in record.message]
+    assert len(matches) == 1
+
+
+def test_next_task_skips_epic_children_when_sibling_has_failed_run_with_dirty_worktree(
+    scheduler, beads_project,
+):
+    epic_id = _create_epic(beads_project, "dirty epic worktree")
+    child_x = _create_epic_child(
+        beads_project, "failed sibling", epic_id, priority=0, alloy_recipe="tdd-loop",
+    )
+    child_y = _create_epic_child(
+        beads_project, "waiting sibling", epic_id, priority=1, alloy_recipe="tdd-loop",
+    )
+    standalone = bd_create(beads_project, "standalone after dirty fail", priority=2, alloy_recipe="tdd-loop")
+    dirty_marker = beads_project / "epic-dirty-marker.txt"
+    dirty_marker.write_text("uncommitted epic work\n", encoding="utf-8")
+    _seed_parked_run(
+        scheduler, beads_project, child_x, "epic-x-failed-dirty", status=RUN_FAILED,
+    )
+
+    picked = scheduler.next_task()
+
+    assert picked is not None
+    assert picked.id == standalone
+    assert picked.id not in {child_x, child_y}
