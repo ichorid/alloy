@@ -42,6 +42,8 @@ META_WORKTREE = "alloy_worktree"
 META_BRANCH = "alloy_branch"
 META_STAGE = "alloy_stage"
 META_TEST_CMD = "alloy_test_cmd"
+"""Optional operator hint for the verifier (e.g. `pytest -q tests/oauth`). Alloy
+never runs it by itself; the verifier decides which checks to run."""
 META_COMPLEXITY = "alloy_complexity"
 META_COMPLEXITY_ESTIMATED = "alloy_complexity_estimated"
 META_DISCOVERED_IN_RUN = "alloy_discovered_in_run"
@@ -80,7 +82,7 @@ class Bead(BaseModel):
         return str(value) if value else None
 
     @property
-    def test_command(self) -> str | None:
+    def check_hint(self) -> str | None:
         value = self.metadata.get(META_TEST_CMD)
         return str(value) if value else None
 

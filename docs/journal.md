@@ -354,3 +354,20 @@ Claude wrote a test asserting the checkpoint stage after a human gate is
 does not). Codex corrected the assertion and said so, as the prompt allows.
 The judge should be told explicitly when tests were edited; today it can
 only infer it from the diff.
+
+## 41. The fixed test command is gone (2026-09-23) -- fixed
+
+Alloy used to resolve one test command per run (recipe `verify.command`, then
+the context role's `test_command`, then autodetection) and treat that command
+as verification. Bead `alloy-21u.7` removed the last of that path:
+`ContextPacket.test_command`, `resolve_command`, `run_tests`, the `TestReport`
+alias, `VerifySpec` / `RecipeConfig.verify` and `RunContext.verify`.
+Verification is now only the verifier loop -- the verifier names a check, Alloy
+runs it through `run_check`, and the `verification:` block caps how many checks
+may run and for how long. What survives of the old inputs are hints: the
+context role may return `check_hints`, the bead's `alloy_test_cmd` is an
+operator hint (`Bead.check_hint`), and autodetection from the project layout
+fills in when the context role suggested nothing. All of them reach the
+verifier under "Hints from the repository (not yet verified)" and none is run
+unasked. A legacy `verify:` block still parses and warns; bug beads Alloy
+files no longer inherit `alloy_test_cmd`.

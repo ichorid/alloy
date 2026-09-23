@@ -152,20 +152,6 @@ class ConsiliumSpec:
 
 
 @dataclass(frozen=True)
-class VerifySpec:
-    command: str | None = None
-    timeout_minutes: float = 15.0
-
-    @classmethod
-    def parse(cls, raw: dict[str, Any] | None) -> "VerifySpec":
-        raw = raw or {}
-        return cls(
-            command=raw.get("command"),
-            timeout_minutes=float(raw.get("timeout_minutes", 15.0)),
-        )
-
-
-@dataclass(frozen=True)
 class VerificationSpec:
     """Hard limits on the checks Alloy will run; never what the checks are."""
 
@@ -177,13 +163,16 @@ class VerificationSpec:
 
     @classmethod
     def parse(
-        cls, raw: dict[str, Any] | None, *, legacy: VerifySpec | None = None
+        cls, raw: dict[str, Any] | None, *, legacy: dict[str, Any] | None = None
     ) -> "VerificationSpec":
+        """`legacy` is the deprecated `verify:` mapping; only its
+        `timeout_minutes` still means anything."""
         raw = raw or {}
+        legacy = legacy or {}
         defaults = cls()
         timeout = raw.get("max_command_timeout_minutes")
         if timeout is None:
-            timeout = legacy.timeout_minutes if legacy else defaults.max_command_timeout_minutes
+            timeout = legacy.get("timeout_minutes", defaults.max_command_timeout_minutes)
         return cls(
             max_checks_per_iteration=int(
                 raw.get("max_checks_per_iteration", defaults.max_checks_per_iteration)
@@ -203,7 +192,6 @@ class RecipeConfig:
     roles: dict[str, RoleSpec]
     consilium: ConsiliumSpec
     limits: Limits
-    verify: VerifySpec
     verification: VerificationSpec = field(default_factory=VerificationSpec)
     runners: dict[str, dict[str, Any]] = field(default_factory=dict)
     on_success_status: str = "review-ready"
@@ -237,17 +225,20 @@ class RecipeConfig:
         complexity = ComplexitySpec.parse(raw.get("complexity"))
         if any(spec.tiered for spec in roles.values()) and not complexity.tiers:
             raise ConfigError("tiered roles require complexity tiers")
-        verify = VerifySpec.parse(raw.get("verify"))
-        if verify.command:
-            log.warning("verify.command is deprecated and ignored")
+        legacy_verify = raw.get("verify") or {}
+        if legacy_verify:
+            log.warning(
+                "the 'verify:' block is deprecated: Alloy runs the checks the verifier "
+                "names, not a fixed command; use 'verification:' for limits"
+                + (" (verify.command is ignored)" if legacy_verify.get("command") else "")
+            )
         return cls(
             name=raw.get("name") or (source.stem if source else "unnamed"),
             roles=roles,
             complexity=complexity,
             consilium=ConsiliumSpec.parse(raw.get("consilium")),
             limits=Limits.parse(raw.get("limits")),
-            verify=verify,
-            verification=VerificationSpec.parse(raw.get("verification"), legacy=verify),
+            verification=VerificationSpec.parse(raw.get("verification"), legacy=legacy_verify),
             runners=dict(raw.get("runners") or {}),
             on_success_status=raw.get("on_success_status", "review-ready"),
             cleanup_worktree_on_success=bool(raw.get("cleanup_worktree_on_success", False)),

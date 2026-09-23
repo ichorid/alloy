@@ -116,10 +116,11 @@ consilium:
     runner: claude
     model: sonnet
 
-verify:
-  timeout_minutes: 15
-  # command: python -m pytest -q   # otherwise autodetected, or set alloy_test_cmd on the bead
-
+# There is no fixed test command. The verifier role names each check; the
+# context role's check_hints, the bead's optional alloy_test_cmd and
+# project-layout autodetection reach it only as unverified hints. A legacy
+# `verify:` block still parses (with a warning) but only its timeout_minutes
+# is honoured, as max_command_timeout_minutes.
 verification:
   max_checks_per_iteration: 5        # checks Alloy will run per implement/verify round
   max_total_checks: 20               # hard cap on checks across the whole run

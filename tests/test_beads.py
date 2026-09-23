@@ -129,10 +129,10 @@ def test_a_blocked_bead_is_not_ready(client, beads_project):
     assert blocked not in [bead.id for bead in client.ready()]
 
 
-def test_test_command_override_is_read_from_the_bead(client, beads_project):
+def test_check_hint_is_read_from_the_bead(client, beads_project):
     bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop",
                         alloy_test_cmd="make check")
-    assert client.show(bead_id).test_command == "make check"
+    assert client.show(bead_id).check_hint == "make check"
 
 
 # -- bug filing (create_bug / add_dependency) -------------------------------

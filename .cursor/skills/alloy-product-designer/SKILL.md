@@ -14,12 +14,15 @@ once if you haven't already, this skill only covers the decomposition step.
 ## Why sizing is the whole job
 
 Alloy runs one bead at a time, in its own worktree, through a fixed-budget
-loop (context → failing tests → implement → verify → judge). The `judge` step
-can only say `done` when a deterministic test command passes — there is no
-partial credit and no "looks about right." That means a bead is only usable if
-someone (you) can state, before any code is written, exactly what command
-would prove it's finished. If you can't state that command, the bead is still
-too big or too vague — split it further before moving on.
+loop (context → failing tests → implement → verifier-chosen checks → judge).
+Verification is not one fixed command: a read-only verifier names checks one
+at a time (the bead's own tests, the wider suite, lint, build, any project
+script), Alloy runs each in a subprocess, and the `judge` step can only say
+`done` when the required checks are green — there is no partial credit and no
+"looks about right." That means a bead is only usable if someone (you) can
+state, before any code is written, an acceptance criterion that commands the
+verifier can run would prove. If you can't say what would prove it, the bead
+is still too big or too vague — split it further before moving on.
 
 A bad decomposition doesn't fail loudly, it fails by quietly burning a bead's
 `max_iterations`/`max_agent_calls`/`max_wall_time_minutes` budget and landing
@@ -107,10 +110,13 @@ signal to reread the spec section more carefully or split the bead.
 
 Two optional refinements, both worth doing rather than leaving to chance:
 
-- **Pin the test command** when autodetection might guess wrong (a monorepo,
-  a non-standard runner, a bead that only touches one package's tests):
+- **Suggest a check hint** when the repository's layout would not make the
+  right command obvious (a monorepo, a non-standard runner, a bead that only
+  touches one package's tests). Alloy never runs the hint itself; the verifier
+  sees it as an unverified suggestion alongside the context role's hints and
+  autodetection, and decides what to run:
   ```bash
-  bd update <bead-id> --set-metadata alloy_test_cmd="pytest -q tests/oauth"
+  bd update <bead-id> --set-metadata alloy_test_cmd='pytest -q tests/oauth'
   ```
 - **Override recipe limits** for a bead you know is legitimately larger than
   the default budget (5 iterations / 90 minutes / 20 agent calls) can

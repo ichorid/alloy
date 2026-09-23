@@ -85,8 +85,15 @@ context → write failing tests → implement → verify → judge → guard
 
 Three things are worth knowing about it:
 
-**Verification is deterministic.** Alloy runs the test command in a subprocess
-and reads the exit code. No LLM is asked to run a shell command and report back.
+**Verification is deterministic, and the checks are chosen, not fixed.** A
+read-only `verifier` agent names one check at a time — the tests written for
+the bead, the wider suite, lint, typecheck, build or any project script — and
+Alloy runs it in a subprocess and reads the exit code. No LLM is asked to run a
+shell command and report back, and no single test command is assumed: the
+context role's `check_hints`, an optional `alloy_test_cmd` hint on the bead and
+project-layout autodetection are handed to the verifier as unverified hints.
+The `verification:` block of a recipe caps how many checks may run and for how
+long; it never says what they are.
 
 **The judge proposes; Alloy disposes.** `guard` is a plain Python function and it
 is the only place the loop can continue from. It refuses `done` while tests are
