@@ -7,6 +7,7 @@ for real, because those are exactly where the interesting bugs live.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
@@ -14,7 +15,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import aiosqlite
 import pytest
+
+# Longer than the cancel+await budget; short enough to drain in test cleanup.
+SIMULATED_CLOSE_STALL_S = 8.0
 
 FAKE_SOURCE = Path(__file__).parent / "fakebin" / "_fake.py"
 FAKE_BD_SOURCE = Path(__file__).parent / "fakebin" / "_fake_bd.py"
@@ -540,3 +545,18 @@ def bd_create(repo: Path, title: str, *, priority: int = 2, **metadata) -> str:
         args += ["--set-metadata", f"{key}={value}"]
     subprocess.run(args, cwd=str(repo), check=True, capture_output=True, text=True)
     return bead_id
+
+
+@pytest.fixture
+def simulate_slow_sqlite_close_under_cancel(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make aiosqlite ``close()`` block when unwinding a cancelled task."""
+    real_close = aiosqlite.Connection.close
+
+    async def slow_close(self: aiosqlite.Connection) -> None:
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            # Shield mimics busy_timeout blocking that ignores cancellation.
+            await asyncio.shield(asyncio.sleep(SIMULATED_CLOSE_STALL_S))
+        await real_close(self)
+
+    monkeypatch.setattr(aiosqlite.Connection, "close", slow_close)

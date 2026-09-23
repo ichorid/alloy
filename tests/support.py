@@ -288,3 +288,29 @@ async def await_role(fake_harnesses: Any, role: str, timeout: float) -> None:
             return
         await asyncio.sleep(0.1)
     raise AssertionError(f"role {role!r} never ran; saw {fake_harnesses.calls}")
+
+
+async def await_cancelled_task(
+    task: asyncio.Task,
+    *,
+    budget_s: float = 6.0,
+) -> float:
+    """Await a cancelled graph task; fail if checkpointer teardown exceeds ``budget_s``."""
+    import pytest
+
+    from conftest import SIMULATED_CLOSE_STALL_S
+
+    started = time.monotonic()
+    try:
+        await asyncio.wait_for(task, timeout=budget_s)
+        pytest.fail("expected CancelledError from cancelled graph invocation")
+    except asyncio.TimeoutError:
+        pytest.fail(
+            "cancel+await exceeded checkpointer teardown budget "
+            f"({budget_s}s); open_checkpointer close is not bounded under cancellation"
+        )
+    except asyncio.CancelledError:
+        return time.monotonic() - started
+    finally:
+        if not task.done():
+            await asyncio.wait_for(task, timeout=SIMULATED_CLOSE_STALL_S + 2)
