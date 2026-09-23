@@ -20,6 +20,10 @@ Screen {
     border-title-color: #79c0ff;
 }
 
+#runs .datatable--cursor {
+    background: #1b2533;
+}
+
 #detail {
     background: #12161d;
     border: round #2a3038;

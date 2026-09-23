@@ -845,3 +845,44 @@ def test_run_rows_ascii_mode_keeps_complexity_as_word():
         row = run_rows(_snapshot(runs=[_run(complexity=level)]), mode="ascii")[0]
 
         assert row[12] == level
+
+
+# -- alloy-3g0.7: status pills -------------------------------------------------
+
+
+_STATUS_WORDS = ("running", "judge", "blocked", "done", "ready")
+_ICON_MODES = ("nerd", "unicode", "ascii")
+
+
+def test_status_badge_running_nerd_plain_matches_acceptance_fixture():
+    from alloy.monitor.render import status_badge
+
+    badge = status_badge("running", "nerd")
+
+    assert badge.plain == "\ue0b6\uf04b running\ue0b4"
+
+
+def test_status_badge_done_unicode_contains_word_without_private_use_area():
+    from alloy.monitor.render import status_badge
+
+    badge = status_badge("done", "unicode")
+
+    assert "done" in badge.plain
+    assert not _contains_private_use_area(badge.plain)
+
+
+def test_status_badge_blocked_ascii_plain_is_the_status_word():
+    from alloy.monitor.render import status_badge
+
+    badge = status_badge("blocked", "ascii")
+
+    assert badge.plain == "blocked"
+
+
+def test_status_badge_includes_every_status_word_in_all_modes():
+    from alloy.monitor.render import status_badge
+
+    for status in _STATUS_WORDS:
+        for mode in _ICON_MODES:
+            badge = status_badge(status, mode)
+            assert status in badge.plain

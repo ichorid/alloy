@@ -13,6 +13,7 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.coordinate import Coordinate
 from textual.events import Resize
 from textual.widgets import DataTable, Footer, Header, Static
 
@@ -26,10 +27,27 @@ from alloy.monitor.render import (
     panel_border_subtitle,
     panel_border_title,
     run_rows,
-    status_color,
+    status_badge,
     title_line,
     visible_columns,
 )
+
+_SELECTED_MARKER = "\u258c"
+
+
+def _with_selected_marker(value: Text | str) -> Text:
+    marked = Text(_SELECTED_MARKER)
+    if isinstance(value, Text):
+        marked.append_text(value)
+    else:
+        marked.append(str(value))
+    return marked
+
+
+def _without_selected_marker(value: Text | str) -> Text | str:
+    if isinstance(value, Text) and value.plain.startswith(_SELECTED_MARKER):
+        return value[1:]
+    return value
 
 
 class MonitorFooter(Footer):
@@ -76,6 +94,7 @@ class MonitorApp(App[None]):
         self.limits_interval = limits_interval
         self._snapshot: dict[str, Any] | None = None
         self._probed_limits: dict[str, Any] | None = None
+        self._marked_row: int | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -130,21 +149,11 @@ class MonitorApp(App[None]):
         self._sync_runs_table_columns(table_width)
         table = self.query_one("#runs", DataTable)
         selected = self._selected_run_id(table)
+        self._marked_row = None
         table.clear()
         run_ids = [run["run_id"] for run in snapshot.get("runs") or []]
         visible = visible_columns(table_width)
         mode = resolve_mode(interactive=True)
-        for run_id, cells in zip(run_ids, run_rows(snapshot, mode=mode)):
-            by_column = dict(zip(COLUMNS, cells))
-            row = []
-            for column in visible:
-                value = by_column[column]
-                if column == "status":
-                    value = Text(value, style=status_color(value))
-                elif column_align(column) == "right":
-                    value = Text(value, justify="right")
-                row.append(value)
-            table.add_row(*row, key=run_id)
         if run_ids:
             if selected is None:
                 target = 0
@@ -152,7 +161,22 @@ class MonitorApp(App[None]):
                 target = run_ids.index(selected)
             else:
                 target = len(run_ids) - 1
+        else:
+            target = None
+        for run_id, cells in zip(run_ids, run_rows(snapshot, mode=mode)):
+            by_column = dict(zip(COLUMNS, cells))
+            row = []
+            for column in visible:
+                value = by_column[column]
+                if column == "status":
+                    value = status_badge(value, mode)
+                elif column_align(column) == "right":
+                    value = Text(value, justify="right")
+                row.append(value)
+            table.add_row(*row, key=run_id)
+        if target is not None:
             table.move_cursor(row=target)
+            self._sync_selected_marker(table, target)
         self.title = title_line(snapshot, table_width, mode)
         self.query_one("#stats", Static).update(header_line(snapshot, mode))
         self._sync_panel_chrome(snapshot, mode)
@@ -264,6 +288,25 @@ class MonitorApp(App[None]):
     def action_cursor_up(self) -> None:
         self.query_one("#runs", DataTable).action_cursor_up()
         self._refresh_detail()
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.data_table.id != "runs":
+            return
+        self._sync_selected_marker(event.data_table, event.cursor_row)
+
+    def _sync_selected_marker(self, table: DataTable, row: int) -> None:
+        prev = self._marked_row
+        if prev is not None and prev != row and prev < table.row_count:
+            coord = Coordinate(prev, 0)
+            cell = table.get_cell_at(coord)
+            table.update_cell_at(coord, _without_selected_marker(cell))
+        if row < table.row_count:
+            coord = Coordinate(row, 0)
+            cell = table.get_cell_at(coord)
+            plain = cell.plain if isinstance(cell, Text) else str(cell)
+            if not plain.startswith(_SELECTED_MARKER):
+                table.update_cell_at(coord, _with_selected_marker(cell))
+        self._marked_row = row
 
     def on_data_table_row_selected(self, _event: DataTable.RowSelected) -> None:
         """The focused table consumes `enter` as row selection; treat that as the toggle."""

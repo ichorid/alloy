@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from rich.cells import cell_len
+from rich.text import Text
 
 from alloy.limits import HARNESSES
 from alloy.monitor.icons import icon
@@ -43,6 +44,7 @@ _COLOR_RED = "#f85149"
 _COLOR_CYAN = "#56b6c2"
 _COLOR_MAGENTA = "#d2a8ff"
 _COLOR_DIM = "#8b949e"
+_PAGE = "#0a0d12"
 
 
 def column_tier(name: str) -> str:
@@ -202,6 +204,21 @@ def status_color(status: str) -> str:
         "done": _COLOR_GREEN,
         "ready": _COLOR_DIM,
     }.get(status, _COLOR_DIM)
+
+
+def status_badge(status: str, mode: str) -> Text:
+    """Status cell: nerd pill caps, unicode icon+word, or ascii colored word."""
+    color = status_color(status)
+    if mode == "ascii":
+        return Text(status, style=color)
+    if mode == "unicode":
+        return Text(f"{icon(status, mode)} {status}", style=color)
+    inner = f"{icon(status, mode)} {status}"
+    badge = Text()
+    badge.append(icon("pill_l", mode), style=color)
+    badge.append(inner, style=f"bold {_PAGE} on {color}")
+    badge.append(icon("pill_r", mode), style=color)
+    return badge
 
 
 def limits_lines(snapshot: dict[str, Any]) -> list[str]:
