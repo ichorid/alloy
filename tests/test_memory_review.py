@@ -17,7 +17,7 @@ import pytest
 from typer.testing import CliRunner
 
 from alloy.cli import app
-from alloy.models import CONTRADICTION_KEY_PREFIX, EMBED_KEY as META_EMBED_KEY, PROPOSAL_KEY_PREFIX, with_provenance
+from alloy.models import CONTRADICTION_KEY_PREFIX, EMBED_KEY as META_EMBED_KEY, PROPOSAL_KEY_PREFIX, utcnow, with_provenance
 from conftest import FAKE_BD_SOURCE, FAKE_RUNNERS, FAKE_SOURCE, memory_reviewer_entry
 
 RUN_ID = "run-review-1"
@@ -414,7 +414,7 @@ def test_memory_review_apply_executes_alloy_forget_proposals_human_and_writes_me
     assert json.loads(remembers[META_EMBED_KEY]) == [APPLY_ALLOY_EMBED_KEY]
 
     assert LAST_REVIEW_KEY in remembers
-    assert remembers[LAST_REVIEW_KEY] == date.today().isoformat()
+    assert remembers[LAST_REVIEW_KEY] == utcnow().date().isoformat()
 
 
 def test_memory_review_apply_second_run_reuses_open_review_bead(
