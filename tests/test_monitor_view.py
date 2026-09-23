@@ -413,6 +413,70 @@ async def test_done_run_row_is_selectable_and_detail_shows_bead_id():
         assert "bead-done" in _detail_text(app)
 
 
+# -- alloy-3g0.7: status pills and selected-row marker -------------------------
+
+
+def _first_visible_cell(table: DataTable) -> Text:
+    return table.get_cell_at(Coordinate(row=table.cursor_row, column=0))
+
+
+async def test_running_run_status_cell_in_nerd_mode_contains_status_word(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ALLOY_MONITOR_ICONS", "nerd")
+    snapshot = _snapshot(runs=[_run("run-active", bead_id="bead-active")])
+    app = MonitorApp(snapshot_source=lambda: snapshot, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = _runs_table(app)
+        status_col = table.get_column_index("status")
+        cell = table.get_cell_at(Coordinate(row=0, column=status_col))
+
+        assert isinstance(cell, Text)
+        assert "running" in cell.plain
+        assert "\ue0b6" in cell.plain
+        assert "\ue0b4" in cell.plain
+
+
+async def test_cursor_row_first_visible_cell_starts_with_selected_marker_in_nerd_mode(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ALLOY_MONITOR_ICONS", "nerd")
+    snapshot = _snapshot(runs=[_run("run-active", bead_id="bead-active")])
+    app = MonitorApp(snapshot_source=lambda: snapshot, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = _runs_table(app)
+        cell = _first_visible_cell(table)
+        plain = cell.plain if isinstance(cell, Text) else str(cell)
+
+        assert plain.startswith("\u258c")
+
+
+async def test_selected_marker_follows_cursor_when_moving_down_in_nerd_mode(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ALLOY_MONITOR_ICONS", "nerd")
+    app = MonitorApp(snapshot_source=lambda: TWO_RUNS, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = _runs_table(app)
+        assert _first_visible_cell(table).plain.startswith("\u258c")
+
+        await pilot.press("j")
+        await pilot.pause()
+        assert table.cursor_row == 1
+        assert _first_visible_cell(table).plain.startswith("\u258c")
+
+        previous_row_cell = table.get_cell_at(Coordinate(row=0, column=0))
+        previous_plain = (
+            previous_row_cell.plain
+            if isinstance(previous_row_cell, Text)
+            else str(previous_row_cell)
+        )
+        assert not previous_plain.startswith("\u258c")
+
+
 # -- limits section (alloy-w9d.11) ---------------------------------------------
 
 
