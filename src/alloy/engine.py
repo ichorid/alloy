@@ -21,7 +21,7 @@ from alloy import recipes
 from alloy.beads import Bead, BeadsClient
 from alloy.checkpoints import has_pending_interrupt, open_checkpointer, read_checkpoint
 from alloy.config import ConfigError, RecipeConfig, load_recipe
-from alloy.models import Outcome
+from alloy.models import Outcome, parse_bug_where, regression_key, utcnow, with_provenance
 from alloy.paths import AlloyPaths
 from alloy.procs import pid_alive, terminate_group, terminate_pid
 from alloy.runners import RunnerRegistry
@@ -299,6 +299,14 @@ class Engine:
                                 f"Branch kept at {result.worktree}")
         self.beads.note(parent.bead.id,
                         f"alloy: remediation of {bug.id} not merged -- {reason}")
+        key = regression_key(parse_bug_where(bug.description))
+        if key and parent.recipe.memory.enabled:
+            try:
+                self.beads.remember(
+                    key, with_provenance(bug.title, result.run_id, bug.id, utcnow().date()),
+                )
+            except Exception:
+                log.warning("could not remember %s", key, exc_info=True)
         log.warning("%s: child %s not merged: %s", parent.bead.id, bug.id, reason)
         return RunResult(bug.id, result.run_id, Outcome.FAILED.value, reason=reason,
                          worktree=result.worktree)

@@ -13,13 +13,14 @@ import shutil
 import subprocess
 import sys
 from dataclasses import replace
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 from alloy.beads import BeadsClient
 from alloy.config import Limits, RoleSpec, VerificationSpec
-from alloy.models import parse_provenance
+from alloy.models import parse_provenance, with_provenance
 from alloy.store import Store
 from alloy.recipes.tdd_loop import tests_prompt, verifier_prompt
 from conftest import (
@@ -1853,3 +1854,77 @@ async def test_harvest_runner_failure_writes_no_lesson_and_outcome_stays_done(
     assert final["iteration"] == 2
     assert len(fake_workflow.calls_for("harvest")) == 1
     assert _lesson_remember_calls(fake_workflow) == []
+
+
+# -- alloy:regression in consilium evidence packet (alloy-4ef.13) -------------
+
+
+REGRESSION_PREFIX_KEY = "alloy:regression:src"
+REGRESSION_TITLE = "verify() mishandles empty input"
+REGRESSION_BODY = with_provenance(
+    REGRESSION_TITLE, "prior-run-id", "bug-bead-id", date(2026, 9, 20),
+)
+KNOWN_REGRESSION_HEADING = "## Known regression areas"
+
+
+def _consilium_for_regression(**overrides):
+    base = script(
+        implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
+        judge=[judge_entry("consilium", "stuck"), judge_entry("done")],
+    )
+    base.update(overrides)
+    return base
+
+
+def _context_with_relevant_files(files: list[str]) -> dict:
+    entry = context_entry()
+    entry["structured"]["relevant_files"] = files
+    return entry
+
+
+async def test_consilium_evidence_packet_lists_matching_regression_areas(
+    project, alloy_home, fake_workflow,
+):
+    """Critics see regression memories whose prefix matches a relevant_files path."""
+    fake_workflow.configure(
+        _consilium_for_regression(
+            context=_context_with_relevant_files(["src/alloy/x.py"]),
+        ),
+        memories={REGRESSION_PREFIX_KEY: REGRESSION_BODY},
+    )
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["consiliums"] == 1
+    critic_prompts = [call["prompt"] for call in fake_workflow.calls_for("critic")]
+    assert critic_prompts
+    for prompt in critic_prompts:
+        assert KNOWN_REGRESSION_HEADING in prompt
+        assert REGRESSION_TITLE in prompt
+
+
+async def test_consilium_evidence_packet_omits_regression_areas_without_prefix_match(
+    project, alloy_home, fake_workflow,
+):
+    """No regression section when relevant_files share no top-level prefix."""
+    fake_workflow.configure(
+        _consilium_for_regression(
+            context=_context_with_relevant_files(["docs/a.md"]),
+        ),
+        memories={REGRESSION_PREFIX_KEY: REGRESSION_BODY},
+    )
+    beads = _workflow_beads(project, fake_workflow)
+    harness = make_harness(project, alloy_home, beads=beads)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["consiliums"] == 1
+    for prompt in [call["prompt"] for call in fake_workflow.calls_for("critic")]:
+        assert KNOWN_REGRESSION_HEADING not in prompt
+        assert REGRESSION_TITLE not in prompt

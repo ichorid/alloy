@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from enum import Enum
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator
@@ -513,8 +514,9 @@ MEMORY_OWNER_PREFIX = "alloy:"
 """Keys with this prefix are alloy-owned; every other key is human-owned."""
 
 MEMORY_RENDER_HEADER = "## Project memory"
+REGRESSION_KEY_PREFIX = "alloy:regression:"
 
-_MEMORY_EXCLUDED_PREFIXES = ("alloy:meta:", "alloy:review:")
+_MEMORY_EXCLUDED_PREFIXES = ("alloy:meta:", "alloy:review:", REGRESSION_KEY_PREFIX)
 _MEMORY_EXCLUDED_KEYS = frozenset({"alloy:calibration"})
 _MEMORY_LESSON_PREFIX = "alloy:lesson"
 
@@ -542,6 +544,31 @@ def parse_provenance(content: str) -> tuple[str, str | None, str | None, date | 
     except ValueError:
         return content, None, None, None
     return match.group("body"), match.group("run"), match.group("bead"), at
+
+
+def parse_bug_where(description: str) -> str:
+    """Read the location line written by bug_description()."""
+    match = re.search(r"^where:[ \t]*(.*)$", description, re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+
+def regression_key(where: str) -> str | None:
+    """Map a repository-relative bug location to its top-level memory key."""
+    parts = PurePosixPath(where.strip().split(":", 1)[0]).parts
+    if not parts or parts[0] in {"/", "..", "(not given)"}:
+        return None
+    return f"{REGRESSION_KEY_PREFIX}{parts[0]}"
+
+
+def format_regression_areas(memories: dict[str, str], relevant_files: list[str]) -> str:
+    """Render only regression memories matching the context's path prefixes."""
+    keys = {regression_key(path) for path in relevant_files}
+    rows = [
+        f"### {key}\n{parse_provenance(body)[0]}"
+        for key, body in sorted(memories.items())
+        if key in keys
+    ]
+    return "## Known regression areas\n\n" + "\n\n".join(rows) if rows else ""
 
 
 @dataclass(frozen=True)
