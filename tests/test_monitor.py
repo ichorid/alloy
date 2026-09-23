@@ -11,15 +11,19 @@ explicitly needs one (the CLI end-to-end tests use `beads_project`).
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from alloy.cli import app
 from alloy.engine import Engine
+from alloy.limits import window, write_cache
+from alloy.models import AgentResult
 from alloy.monitor import build_snapshot
 from alloy.paths import AlloyPaths
-from alloy.store import Store
+from alloy.store import RUN_RUNNING, Store
 from conftest import (
     bd_create,
     context_entry,
@@ -35,12 +39,13 @@ from support import make_harness
 
 TOP_LEVEL_KEYS = {
     "root", "repo", "scheduler", "ready_count", "ready_capped_at", "lifetime", "runs",
+    "limits",
 }
 RUN_ENTRY_KEYS = {
     "bead_id", "run_id", "recipe", "status", "stage", "iteration", "max_iterations",
     "consiliums", "max_consiliums", "tests_summary", "checks", "elapsed_minutes",
     "current_calls", "tokens", "tokens_by_role", "judge", "worktree", "branch",
-    "parent_run_id", "complexity",
+    "parent_run_id", "complexity", "models_used",
 }
 CURRENT_CALL_KEYS = {
     "role", "requested_runner", "effective_runner", "requested_model",
@@ -399,3 +404,212 @@ def test_cli_monitor_once_json_with_an_active_run(beads_project, alloy_home, fak
     assert len(payload["runs"]) == 1
     assert payload["runs"][0]["current_calls"] == []
     assert payload["runs"][0]["judge"] is None
+
+
+# -- monitor limits: cache + models_used (alloy-w9d.8) -----------------------
+
+
+def _cached_claude_limits() -> dict:
+    return {
+        "harness": "claude",
+        "installed": True,
+        "available": True,
+        "fetched_at": "2026-09-23T10:00:00+00:00",
+        "as_of": "2026-09-23T10:00:00+00:00",
+        "source": "oauth-usage-api",
+        "error": None,
+        "status": None,
+        "windows": [
+            window("five_hour", "5h", 42.0, None),
+            window("seven_day", "weekly", 61.0, None),
+            window("seven_day_opus", "weekly opus", 80.0, None, model="opus"),
+            window("seven_day_fable", "weekly fable", 12.0, None, model="fable"),
+        ],
+    }
+
+
+def _cached_codex_limits() -> dict:
+    return {
+        "harness": "codex",
+        "installed": True,
+        "available": True,
+        "fetched_at": "2026-09-23T10:00:00+00:00",
+        "as_of": "2026-09-23T10:00:00+00:00",
+        "source": "session-rollout",
+        "error": None,
+        "status": None,
+        "windows": [
+            window("primary", "5h", 53.0, None),
+            window("secondary", "weekly", 51.0, None),
+        ],
+    }
+
+
+def _iso(year: int, month: int, day: int, hour: int, minute: int, second: int) -> str:
+    return datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc).isoformat()
+
+
+def _finish_agent_call(
+    store: Store,
+    run_id: str,
+    call_id: str,
+    *,
+    role: str = "implement",
+    runner: str,
+    model: str | None,
+    started_at: datetime,
+) -> None:
+    with store.connect() as conn:
+        conn.execute(
+            "INSERT INTO inflight_calls (call_id, run_id, bead_id, role, runner, model, started_at)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (
+                call_id,
+                run_id,
+                f"bead-{run_id}",
+                role,
+                runner,
+                model,
+                started_at.isoformat(),
+            ),
+        )
+    store.finish_call(
+        call_id,
+        run_id=run_id,
+        bead_id=f"bead-{run_id}",
+        role=role,
+        iteration=0,
+        result=AgentResult(
+            runner=runner,
+            model=model,
+            ok=True,
+            exit_code=0,
+            text="done",
+            structured=None,
+            started_at=started_at,
+            ended_at=started_at,
+            duration_s=1.0,
+            usage={"input_tokens": 10, "output_tokens": 1},
+            log_path="/tmp/log",
+            prompt_hash="deadbeef",
+        ),
+    )
+
+
+def _active_run(engine: Engine, run_id: str = "run-limits") -> None:
+    engine.store.create_run(
+        run_id=run_id,
+        bead_id=f"bead-{run_id}",
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=engine.repo,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    engine.store.update_run(run_id, status=RUN_RUNNING, pid=os.getpid())
+
+
+def test_snapshot_limits_installed_harnesses_only_with_cache_miss_as_not_probed(
+    project, alloy_home, fake_harnesses,
+):
+    """Acceptance: installed claude+codex only; cache has claude; codex is 'not probed yet'."""
+    fake_harnesses.remove("cursor-agent")
+    paths = AlloyPaths.resolve(alloy_home).ensure()
+    write_cache(paths, {"claude": _cached_claude_limits()})
+
+    engine = _engine(project, alloy_home)
+    snapshot = build_snapshot(engine)
+
+    assert set(snapshot["limits"].keys()) == {"claude", "codex"}
+    assert snapshot["limits"]["claude"]["available"] is True
+    assert snapshot["limits"]["codex"]["available"] is False
+    assert snapshot["limits"]["codex"]["error"] == "not probed yet"
+    assert "cursor" not in snapshot["limits"]
+
+
+def test_snapshot_models_used_joins_harness_windows_by_model_family(
+    project, alloy_home, fake_harnesses,
+):
+    """Acceptance: fable gets account-wide + fable windows; codex gets both windows."""
+    fake_harnesses.remove("cursor-agent")
+    paths = AlloyPaths.resolve(alloy_home).ensure()
+    write_cache(
+        paths,
+        {
+            "claude": _cached_claude_limits(),
+            "codex": _cached_codex_limits(),
+        },
+    )
+
+    engine = _engine(project, alloy_home)
+    _active_run(engine)
+    _finish_agent_call(
+        engine.store,
+        "run-limits",
+        "call-fable",
+        runner="claude-write",
+        model="fable",
+        started_at=datetime(2026, 9, 22, 8, 0, 0, tzinfo=timezone.utc),
+    )
+    _finish_agent_call(
+        engine.store,
+        "run-limits",
+        "call-luna",
+        runner="codex",
+        model="gpt-5.6-luna",
+        started_at=datetime(2026, 9, 22, 9, 0, 0, tzinfo=timezone.utc),
+    )
+
+    snapshot = build_snapshot(engine)
+    run = snapshot["runs"][0]
+
+    assert len(run["models_used"]) == 2
+    assert run["models_used"][0]["runner"] == "claude-write"
+    assert run["models_used"][0]["model"] == "fable"
+    assert list(run["models_used"][0]["windows"].keys()) == [
+        "five_hour", "seven_day", "seven_day_fable",
+    ]
+    assert run["models_used"][1]["runner"] == "codex"
+    assert run["models_used"][1]["model"] == "gpt-5.6-luna"
+    assert list(run["models_used"][1]["windows"].keys()) == ["primary", "secondary"]
+
+
+def test_snapshot_always_has_limits_and_run_models_used(
+    project, alloy_home, fake_harnesses,
+):
+    """Acceptance: limits and models_used are always present; empty when absent."""
+    for name in ("claude", "codex", "cursor-agent"):
+        fake_harnesses.remove(name)
+
+    engine = _engine(project, alloy_home)
+    _active_run(engine)
+
+    snapshot = build_snapshot(engine)
+
+    assert "limits" in snapshot
+    assert snapshot["limits"] == {}
+    assert len(snapshot["runs"]) == 1
+    assert snapshot["runs"][0]["models_used"] == []
+
+
+def test_build_snapshot_never_probes_limits(
+    project, alloy_home, fake_harnesses, monkeypatch: pytest.MonkeyPatch,
+):
+    """Acceptance: build_snapshot reads cache only; harness fetchers must not run."""
+    fake_harnesses.remove("cursor-agent")
+    paths = AlloyPaths.resolve(alloy_home).ensure()
+    write_cache(paths, {"claude": _cached_claude_limits()})
+
+    def _raise(*_args, **_kwargs):
+        raise AssertionError("build_snapshot must not probe harness limits")
+
+    monkeypatch.setattr("alloy.limits.claude.default_fetch", _raise)
+    monkeypatch.setattr("alloy.limits.codex.probe", _raise)
+    monkeypatch.setattr("alloy.limits.cursor.default_fetch", _raise)
+    monkeypatch.setattr("alloy.limits.probe_all", _raise)
+
+    engine = _engine(project, alloy_home)
+    snapshot = build_snapshot(engine)
+
+    assert set(snapshot["limits"].keys()) == {"claude", "codex"}

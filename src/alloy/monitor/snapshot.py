@@ -17,6 +17,8 @@ from typing import Any
 from alloy import beads as bd
 from alloy.config import ConfigError, RecipeConfig
 from alloy.engine import Engine
+from alloy.limits import installed_harnesses, read_cache, unavailable
+from alloy.runners import RunnerRegistry
 from alloy.scheduler import read_pid
 from alloy.store import RUN_CANCELLED, RUN_DONE, RUN_FAILED
 from alloy.verify import checks_summary
@@ -29,6 +31,7 @@ def build_snapshot(engine: Engine) -> dict[str, Any]:
     """One frozen-shape view of the scheduler, the queue and every active run."""
     pid = read_pid(engine.paths.scheduler_pid)
     totals = engine.store.run_status_totals(engine.repo)
+    limits = _limits(engine)
     return {
         "root": str(engine.paths.root),
         "repo": str(engine.repo),
@@ -36,7 +39,23 @@ def build_snapshot(engine: Engine) -> dict[str, Any]:
         "ready_count": _ready_count(engine),
         "ready_capped_at": READY_CAP,
         "lifetime": {status: int(totals.get(status, 0)) for status in LIFETIME_STATUSES},
-        "runs": [_run_entry(engine, record) for record in engine.store.active_runs(repo=engine.repo)],
+        "limits": limits,
+        "runs": [
+            _run_entry(engine, record, limits)
+            for record in engine.store.active_runs(repo=engine.repo)
+        ],
+    }
+
+
+def _limits(engine: Engine) -> dict[str, Any]:
+    """Cached limits for installed harnesses only; a cache miss is 'not probed yet'.
+
+    Reads `limits.json` and PATH only -- never probes a harness.
+    """
+    cached = read_cache(engine.paths)
+    return {
+        harness: cached.get(harness) or unavailable(harness, "not probed yet")
+        for harness in installed_harnesses(RunnerRegistry())
     }
 
 
@@ -47,7 +66,9 @@ def _ready_count(engine: Engine) -> int:
         return 0  # the queue is unknowable without bd; the runs are still worth showing
 
 
-def _run_entry(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
+def _run_entry(
+    engine: Engine, record: dict[str, Any], limits: dict[str, Any]
+) -> dict[str, Any]:
     run_id = record["run_id"]
     checkpoint = engine.graph_snapshot_for_run(run_id)
     state: dict[str, Any] = (checkpoint or {}).get("values") or {}
@@ -83,9 +104,31 @@ def _run_entry(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
         "tokens": engine.store.token_totals(run_id),
         "tokens_by_role": engine.store.token_totals_by_role(run_id),
         "judge": _judge(engine, run_id, state),
+        "models_used": _models_used(engine, run_id, limits),
         "worktree": record["worktree"],
         "branch": record["branch"],
     }
+
+
+def _models_used(
+    engine: Engine, run_id: str, limits: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Store.models_used entries, each joined to its harness's cached windows.
+
+    Account-wide windows (model=None) always attach; a per-model window
+    attaches when its family string appears in the run's model, case-insensitively.
+    """
+    entries = []
+    for entry in engine.store.models_used(run_id):
+        windows: dict[str, Any] = {}
+        sample = limits.get(entry["harness"]) if entry.get("harness") else None
+        model = (entry.get("model") or "").lower()
+        for cached_window in (sample or {}).get("windows") or []:
+            family = cached_window.get("model")
+            if family is None or (model and family.lower() in model):
+                windows[cached_window["key"]] = cached_window
+        entries.append({**entry, "windows": windows})
+    return entries
 
 
 def _call_entry(config: RecipeConfig | None, call: dict[str, Any], now: datetime) -> dict[str, Any]:
