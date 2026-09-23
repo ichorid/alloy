@@ -187,6 +187,44 @@ class VerificationSpec:
 
 
 @dataclass(frozen=True)
+class MemorySpec:
+    enabled: bool = True
+    max_items: int = 12
+    max_chars: int = 4000
+    ttl_days: int = 90
+    harvest_min_confidence: float = 0.7
+    review_every_days: int = 7
+    review_every_runs: int = 20
+    instruction_files: list[str] = field(default_factory=lambda: ["AGENTS.md", "CLAUDE.md"])
+
+    @classmethod
+    def parse(cls, raw: dict[str, Any] | None) -> "MemorySpec":
+        if raw is not None and not isinstance(raw, dict):
+            raise ConfigError(f"memory must be a mapping: {raw!r}")
+        raw = raw or {}
+        defaults = cls()
+        unknown = raw.keys() - defaults.__dict__.keys()
+        if unknown:
+            raise ConfigError(f"unknown memory keys: {', '.join(sorted(map(repr, unknown)))}")
+        values = defaults.__dict__ | raw
+        for name, default in defaults.__dict__.items():
+            if type(default) in (int, float):
+                try:
+                    values[name] = type(default)(values[name])
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise ConfigError(f"invalid memory.{name}: {values[name]!r}") from exc
+        if not isinstance(values["enabled"], bool):
+            raise ConfigError(f"invalid memory.enabled: {values['enabled']!r}")
+        instruction_files = values["instruction_files"]
+        if not isinstance(instruction_files, list) or not all(
+            isinstance(path, str) for path in instruction_files
+        ):
+            raise ConfigError(f"invalid memory.instruction_files: {instruction_files!r}")
+        values["instruction_files"] = list(instruction_files)
+        return cls(**values)
+
+
+@dataclass(frozen=True)
 class RecipeConfig:
     name: str
     roles: dict[str, RoleSpec]
@@ -198,6 +236,7 @@ class RecipeConfig:
     cleanup_worktree_on_success: bool = False
     source_path: Path | None = None
     complexity: ComplexitySpec = field(default_factory=ComplexitySpec)
+    memory: MemorySpec = field(default_factory=MemorySpec)
 
     def role(self, name: str) -> RoleSpec:
         try:
@@ -239,6 +278,7 @@ class RecipeConfig:
             consilium=ConsiliumSpec.parse(raw.get("consilium")),
             limits=Limits.parse(raw.get("limits")),
             verification=VerificationSpec.parse(raw.get("verification"), legacy=legacy_verify),
+            memory=MemorySpec.parse(raw.get("memory")),
             runners=dict(raw.get("runners") or {}),
             on_success_status=raw.get("on_success_status", "review-ready"),
             cleanup_worktree_on_success=bool(raw.get("cleanup_worktree_on_success", False)),

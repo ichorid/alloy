@@ -383,3 +383,69 @@ def test_builtin_recipe_verification_defaults(recipe_name):
 
     config = load_recipe(recipe_name)
     assert config.verification == VerificationSpec()
+
+
+# ---------------------------------------------------------------------------
+# MemorySpec / memory: block (alloy-4ef.1)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_without_memory_block_yields_memory_spec_defaults():
+    from alloy.config import MemorySpec
+
+    config = RecipeConfig.parse(_base_raw_recipe())
+    assert config.memory == MemorySpec(
+        enabled=True,
+        max_items=12,
+        max_chars=4000,
+        ttl_days=90,
+        harvest_min_confidence=0.7,
+        review_every_days=7,
+        review_every_runs=20,
+        instruction_files=["AGENTS.md", "CLAUDE.md"],
+    )
+
+
+def test_parse_memory_block_overrides_single_field():
+    from alloy.config import MemorySpec
+
+    config = RecipeConfig.parse(_base_raw_recipe(memory={"max_items": 3}))
+    assert config.memory == MemorySpec(
+        enabled=True,
+        max_items=3,
+        max_chars=4000,
+        ttl_days=90,
+        harvest_min_confidence=0.7,
+        review_every_days=7,
+        review_every_runs=20,
+        instruction_files=["AGENTS.md", "CLAUDE.md"],
+    )
+
+
+def test_parse_rejects_unknown_memory_key():
+    with pytest.raises(ConfigError):
+        RecipeConfig.parse(_base_raw_recipe(memory={"bogus": 1}))
+
+
+@pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
+def test_builtin_recipe_memory_defaults(recipe_name):
+    from alloy.config import MemorySpec
+
+    config = load_recipe(recipe_name)
+    assert config.memory == MemorySpec()
+
+
+@pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
+def test_builtin_recipe_harvest_role(recipe_name):
+    config = load_recipe(recipe_name)
+    harvest = config.role("harvest")
+    assert harvest.runner == "claude"
+    assert harvest.model == "sonnet"
+
+
+@pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
+def test_builtin_recipe_memory_reviewer_role(recipe_name):
+    config = load_recipe(recipe_name)
+    reviewer = config.role("memory_reviewer")
+    assert reviewer.runner == "claude"
+    assert reviewer.model == "sonnet"

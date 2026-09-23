@@ -31,6 +31,12 @@ complexity:
       - {runner: astra}
 
 roles:
+  harvest:
+    runner: claude
+    model: sonnet
+  memory_reviewer:
+    runner: claude
+    model: sonnet
   context:
     runner: cursor-plan
     timeout_minutes: 10
