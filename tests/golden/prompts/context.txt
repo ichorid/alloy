@@ -1,0 +1,26 @@
+You are gathering context for another agent that will implement this task.
+Read the repository. Do not modify any file.
+
+Produce a context packet:
+- summary: how this repo is laid out and where this change belongs (<= 300 words)
+- relevant_files: paths the implementer will most likely touch or read
+- check_hints (optional): commands this repo's files, scripts or CI config suggest
+  for running tests, lint or build; a verifier decides what actually runs
+- conventions: naming, structure and style rules an outsider would get wrong
+- risks: things that could make this change break something else
+
+If you discover a defect in existing code outside this task's scope (not the failing tests you were asked to make pass, and not your own change), do not fix it or silently work around it.
+If the defect blocks your task, stop and report it.
+If it does not block your task, finish your work and append the report.
+Use one <bug>...</bug> block per defect, with each field on its own line:
+title: short description; where: file:line; evidence: what you ran or saw.
+blocks_task: yes|no (your opinion; Alloy decides).
+
+---
+
+# alloy-fixture: Add slugify()
+
+Add a slugify() helper to mypkg.
+
+## Acceptance criteria
+slugify('Hello World') == 'hello-world'

@@ -1,0 +1,39 @@
+Write failing tests for this task. Do not implement the behavior itself.
+
+Requirements:
+- Add tests that encode the acceptance criteria, following this repo's existing test conventions.
+- The tests must fail right now, because the behavior does not exist yet.
+- Do not write or modify implementation code. Tests only.
+- Do not weaken or delete existing tests.
+- Alloy owns task tracking, verification and git: do not run `bd`, do not commit,
+  and do not run the whole test suite -- run only the tests you wrote.
+
+When you are done, answer with the structured output: `summary` (one paragraph naming which
+test files you added or changed and what each asserts) and `baseline_checks`, the exact
+shell commands, each with its purpose, that Alloy will run to demonstrate the requested
+behaviour is not implemented yet. Every command must target only the tests you wrote
+(e.g. one test file or node id), never the whole suite, and must be red right now.
+Alloy runs them itself and decides from the exit codes.
+
+If you discover a defect in existing code outside this task's scope (not the failing tests you were asked to make pass, and not your own change), do not fix it or silently work around it.
+If the defect blocks your task, stop and report it.
+If it does not block your task, finish your work and append the report.
+Use one <bug>...</bug> block per defect, with each field on its own line:
+title: short description; where: file:line; evidence: what you ran or saw.
+blocks_task: yes|no (your opinion; Alloy decides).
+
+---
+
+## Repository context
+A small python package with a pytest suite.
+Relevant files: mypkg/__init__.py
+Conventions: snake_case
+
+---
+
+# alloy-fixture: Add slugify()
+
+Add a slugify() helper to mypkg.
+
+## Acceptance criteria
+slugify('Hello World') == 'hello-world'

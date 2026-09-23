@@ -1,0 +1,23 @@
+You are estimating how hard this task is
+You are read-only: do not modify any file. Choose one complexity level:
+- simple: one file, obvious change, tests are the spec
+- medium: a few files or one new concept
+- complex: cross-cutting, concurrency, new subsystem, ambiguous acceptance
+
+Return complexity, reason and confidence in the required structured output.
+
+---
+
+## Repository context
+A small python package with a pytest suite.
+Relevant files: mypkg/__init__.py
+Conventions: snake_case
+
+---
+
+# alloy-fixture: Add slugify()
+
+Add a slugify() helper to mypkg.
+
+## Acceptance criteria
+slugify('Hello World') == 'hello-world'

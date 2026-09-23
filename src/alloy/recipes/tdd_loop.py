@@ -51,6 +51,7 @@ from alloy.models import (
     next_level,
 )
 from alloy.diffs import clip_diff_per_file
+from alloy.prompts import assemble
 from alloy.runtime import RunContext
 from alloy.verify import detect_commands, normalize_command
 from alloy.worktree import is_test_path
@@ -167,14 +168,21 @@ title: short description; where: file:line; evidence: what you ran or saw.
 blocks_task: yes|no (your opinion; Alloy decides)."""
 
 
-def context_prompt(brief: str, acceptance: str) -> str:
-    return f"""You are gathering context for another agent that will implement this task.
+def _task_layer(brief: str, acceptance: str) -> str:
+    return f"{brief}\n\n## Acceptance criteria\n{acceptance or '(none stated)'}"
+
+
+def _run_layer(context: dict[str, Any] | None) -> str:
+    return f"## Repository context\n{_render_context(context)}"
+
+
+def _diff_section(diff: str) -> str:
+    clipped = clip_diff(diff).rstrip("\n")
+    return f"## Current diff\n```diff\n{clipped}\n```"
+
+
+CONTEXT_STATIC = f"""You are gathering context for another agent that will implement this task.
 Read the repository. Do not modify any file.
-
-{brief}
-
-## Acceptance criteria
-{acceptance or "(none stated)"}
 
 Produce a context packet:
 - summary: how this repo is laid out and where this change belongs (<= 300 words)
@@ -184,58 +192,30 @@ Produce a context packet:
 - conventions: naming, structure and style rules an outsider would get wrong
 - risks: things that could make this change break something else
 
-{BUG_PROTOCOL}
-"""
+{BUG_PROTOCOL}"""
 
 
-def estimate_prompt(brief: str, acceptance: str, context: dict[str, Any]) -> str:
-    return f"""You are estimating how hard this task is
+def context_prompt(brief: str, acceptance: str) -> str:
+    return assemble(CONTEXT_STATIC, "", "", _task_layer(brief, acceptance), "")
+
+
+ESTIMATE_STATIC = """You are estimating how hard this task is
 You are read-only: do not modify any file. Choose one complexity level:
 - simple: one file, obvious change, tests are the spec
 - medium: a few files or one new concept
 - complex: cross-cutting, concurrency, new subsystem, ambiguous acceptance
 
-{brief}
-
-## Acceptance criteria
-{acceptance or "(none stated)"}
-
-## Repository context
-{_render_context(context)}
-
-Return complexity, reason and confidence in the required structured output.
-"""
+Return complexity, reason and confidence in the required structured output."""
 
 
-def tests_prompt(
-    brief: str,
-    acceptance: str,
-    context: dict[str, Any],
-    instructions: str = "",
-    *,
-    resumed: bool = False,
-) -> str:
-    """`resumed` is the continuation variant sent into the tests writer's own
-    session: the brief and repository context are already in its window, so
-    only the baseline failure explanation and the rules are repeated."""
-    required = f"\n## Required changes this iteration\n{instructions}\n" if instructions else ""
-    if resumed:
-        packet = f"""Write failing tests for this task -- continuing in your session: the task brief,
-acceptance criteria and repository context are the ones you already have. Do not implement
-the behavior itself.
-{required}"""
-    else:
-        packet = f"""Write failing tests for this task. Do not implement the behavior itself.
+def estimate_prompt(brief: str, acceptance: str, context: dict[str, Any]) -> str:
+    return assemble(
+        ESTIMATE_STATIC, "", _run_layer(context), _task_layer(brief, acceptance), ""
+    )
 
-{brief}
 
-## Acceptance criteria
-{acceptance or "(none stated)"}
+TESTS_STATIC = f"""Write failing tests for this task. Do not implement the behavior itself.
 
-## Repository context
-{_render_context(context)}
-{required}"""
-    return f"""{packet}
 Requirements:
 - Add tests that encode the acceptance criteria, following this repo's existing test conventions.
 - The tests must fail right now, because the behavior does not exist yet.
@@ -251,8 +231,38 @@ behaviour is not implemented yet. Every command must target only the tests you w
 (e.g. one test file or node id), never the whole suite, and must be red right now.
 Alloy runs them itself and decides from the exit codes.
 
-{BUG_PROTOCOL}
-"""
+{BUG_PROTOCOL}"""
+
+TESTS_RESUMED = (
+    "This continues your session: the task brief, acceptance criteria and repository "
+    "context are the ones you already have."
+)
+
+
+def tests_prompt(
+    brief: str,
+    acceptance: str,
+    context: dict[str, Any],
+    instructions: str = "",
+    *,
+    resumed: bool = False,
+) -> str:
+    """`resumed` is the continuation variant sent into the tests writer's own
+    session: the brief and repository context are already in its window, so
+    only the continuation note, the baseline failure explanation and the rules
+    are repeated."""
+    volatile: list[str] = []
+    if resumed:
+        volatile.append(TESTS_RESUMED)
+    if instructions:
+        volatile.append(f"## Required changes this iteration\n{instructions}")
+    return assemble(
+        TESTS_STATIC,
+        "",
+        "" if resumed else _run_layer(context),
+        "" if resumed else _task_layer(brief, acceptance),
+        "\n\n".join(volatile),
+    )
 
 
 tests_prompt.__test__ = False  # This prompt helper may be imported by pytest modules.
@@ -262,6 +272,20 @@ def extract_summary(text: str) -> str:
     """Return the last marked summary, or clipped text when no block is present."""
     summaries = re.findall(r"<summary>(.*?)</summary>", text, re.DOTALL)
     return summaries[-1].strip() if summaries else clip(text, 600)
+
+
+IMPLEMENT_STATIC = f"""Implement the smallest change that makes the failing tests pass.
+
+Rules:
+- Change implementation code, not the tests, unless a test is provably wrong about the stated acceptance criteria -- and say so explicitly if you do.
+- A bug in tests written for THIS task is in scope: use the tests provably wrong permission above, not a <bug> block.
+- Do not disable, skip or loosen assertions to get green.
+- Keep the change minimal and consistent with the repo's conventions.
+- Alloy owns task tracking, verification and git: do not run `bd`, do not commit, and do not run the whole test suite -- run the tests relevant to your change; Alloy runs the full suite when you finish.
+
+Finish with one paragraph inside <summary> and </summary> tags describing what you changed and why, including 'tests edited: <paths or none>'.
+
+{BUG_PROTOCOL}"""
 
 
 def implement_prompt(
@@ -276,46 +300,29 @@ def implement_prompt(
     diff: str = "",
     previous_instructions: str = "",
 ) -> str:
-    sections = [
-        "Implement the smallest change that makes the failing tests pass.",
-        brief,
-        f"## Acceptance criteria\n{acceptance or '(none stated)'}",
-        f"## Repository context\n{_render_context(context)}",
-    ]
+    task = [_task_layer(brief, acceptance)]
     if baseline_checks:
-        sections.append("## Checks that must go green\n" + _render_checks(baseline_checks))
+        task.append("## Checks that must go green\n" + _render_checks(baseline_checks))
+    volatile: list[str] = []
     if failed_check:
         # A repair iteration: a required check went red and the run came
         # straight back here without a judge call.
         check = CheckResult.model_validate(failed_check)
-        sections.append(
+        volatile.append(
             "## Failed check\n"
             f"`{check.command}` -> exit {check.exit_code} ({check.headline()})\n\n"
             f"{check.output_tail}"
         )
-        sections.append(f"## Current diff\n```diff\n{clip_diff(diff)}\n```")
+        volatile.append(_diff_section(diff))
         if previous_instructions:
-            sections.append(f"## Previous repair instructions\n{previous_instructions}")
+            volatile.append(f"## Previous repair instructions\n{previous_instructions}")
     if history:
-        sections.append("## Previous attempts\n" + _render_history(history))
+        volatile.append("## Previous attempts\n" + _render_history(history))
     if instructions:
-        sections.append(f"## Required changes this iteration\n{instructions}")
-    sections.append(
-        "Rules:\n"
-        "- Change implementation code, not the tests, unless a test is provably wrong "
-        "about the stated acceptance criteria -- and say so explicitly if you do.\n"
-        "- A bug in tests written for THIS task is in scope: use the tests provably "
-        "wrong permission above, not a <bug> block.\n"
-        "- Do not disable, skip or loosen assertions to get green.\n"
-        "- Keep the change minimal and consistent with the repo's conventions.\n"
-        "- Alloy owns task tracking, verification and git: do not run `bd`, do not "
-        "commit, and do not run the whole test suite -- run the tests relevant to "
-        "your change; Alloy runs the full suite when you finish.\n\n"
-        "Finish with one paragraph inside <summary> and </summary> tags describing "
-        "what you changed and why, including 'tests edited: <paths or none>'."
+        volatile.append(f"## Required changes this iteration\n{instructions}")
+    return assemble(
+        IMPLEMENT_STATIC, "", _run_layer(context), "\n\n".join(task), "\n\n".join(volatile)
     )
-    sections.append(BUG_PROTOCOL)
-    return "\n\n".join(sections)
 
 
 def triage_prompt(
@@ -514,6 +521,22 @@ def bug_description(report: BugReport, verdict: BugTriage, parent_id: str, run_i
     )
 
 
+JUDGE_STATIC = """You are judging whether a coding task is complete. You cannot edit code;
+you only decide what happens next.
+
+Choose exactly one decision:
+- "done"      -- tests pass and the diff genuinely satisfies the acceptance criteria
+- "retry"     -- a specific, well-understood fix remains; put it in next_instructions
+- "consilium" -- attempts are going in circles and independent opinions would help
+- "human"     -- the task is ambiguous, or needs a decision or access Alloy does not have
+- "abort"     -- the task cannot be completed as specified
+
+Do not answer "done" if tests are failing. Do not answer "done" if the diff is empty.
+Judge the diff on merit: green tests that were weakened or skipped are not done.
+If the diff edits or deletes tests, say so in `reason` and decide whether the edit
+was justified by the acceptance criteria."""
+
+
 def judge_prompt(
     brief: str,
     acceptance: str,
@@ -526,21 +549,7 @@ def judge_prompt(
     verifier_stop: dict[str, Any] | None = None,
     changed_tests: list[str] | None = None,
 ) -> str:
-    return f"""You are judging whether a coding task is complete. You cannot edit code;
-you only decide what happens next.
-
-{brief}
-
-## Acceptance criteria
-{acceptance or "(none stated)"}
-
-## Repository context
-{_render_context(context)}
-
-## Current diff
-```diff
-{clip_diff(diff)}
-```
+    volatile = f"""{_diff_section(diff)}
 
 ## Tests changed by the implementer
 {chr(10).join(changed_tests or []) or "(none)"}
@@ -552,20 +561,25 @@ you only decide what happens next.
 {_render_history(history) or "(first attempt)"}
 
 ## Budget
-iteration {iteration}; {limits_note}
+iteration {iteration}; {limits_note}"""
+    return assemble(
+        JUDGE_STATIC, "", _run_layer(context), _task_layer(brief, acceptance), volatile
+    )
+
+
+ACCEPTANCE_STATIC = """You are deciding whether there is enough evidence to call a coding task complete.
+You are read-only: you cannot edit code and you never run anything yourself. Green
+checks are not the same as a complete task: the checks may not cover an acceptance
+criterion, or may encode the same misunderstanding as the implementation.
 
 Choose exactly one decision:
-- "done"      -- tests pass and the diff genuinely satisfies the acceptance criteria
-- "retry"     -- a specific, well-understood fix remains; put it in next_instructions
-- "consilium" -- attempts are going in circles and independent opinions would help
-- "human"     -- the task is ambiguous, or needs a decision or access Alloy does not have
-- "abort"     -- the task cannot be completed as specified
+- "accept"      -- the evidence covers every acceptance criterion and the diff satisfies them
+- "verify_more" -- a specific criterion or risk is still unverified; say which in `reason`
+- "repair"      -- the diff visibly falls short of a criterion; say what must change in `reason`
+- "escalate"    -- the evidence is ambiguous or the call needs a stronger judge
 
-Do not answer "done" if tests are failing. Do not answer "done" if the diff is empty.
-Judge the diff on merit: green tests that were weakened or skipped are not done.
-If the diff edits or deletes tests, say so in `reason` and decide whether the edit
-was justified by the acceptance criteria.
-"""
+Give a confidence between 0 and 1. Tests that were weakened, skipped or deleted are
+not evidence; say so and do not accept."""
 
 
 def acceptance_prompt(
@@ -575,34 +589,39 @@ def acceptance_prompt(
     checks_this_iteration: list[dict[str, Any]],
     verifier_stop: dict[str, Any] | None,
 ) -> str:
-    return f"""You are deciding whether there is enough evidence to call a coding task complete.
-You are read-only: you cannot edit code and you never run anything yourself. Green
-checks are not the same as a complete task: the checks may not cover an acceptance
-criterion, or may encode the same misunderstanding as the implementation.
-
-## Acceptance criteria
-{acceptance or "(none stated)"}
-
-## Current diff
-```diff
-{clip_diff(diff)}
-```
+    task = f"## Acceptance criteria\n{acceptance or '(none stated)'}"
+    volatile = f"""{_diff_section(diff)}
 
 ## Tests changed by the implementer
 {chr(10).join(changed_tests) or "(none)"}
 
 ## Check evidence (this iteration)
-{_render_results(checks_this_iteration, verifier_stop)}
+{_render_results(checks_this_iteration, verifier_stop)}"""
+    return assemble(ACCEPTANCE_STATIC, "", "", task, volatile)
 
-Choose exactly one decision:
-- "accept"      -- the evidence covers every acceptance criterion and the diff satisfies them
-- "verify_more" -- a specific criterion or risk is still unverified; say which in `reason`
-- "repair"      -- the diff visibly falls short of a criterion; say what must change in `reason`
-- "escalate"    -- the evidence is ambiguous or the call needs a stronger judge
 
-Give a confidence between 0 and 1. Tests that were weakened, skipped or deleted are
-not evidence; say so and do not accept.
-"""
+VERIFIER_STATIC = """You are choosing the next verification check for a coding task. You are read-only:
+you cannot edit code and you never run anything yourself. Do not modify any file. Alloy runs
+the one command you name, in the worktree root, exactly as written, and shows you the result.
+
+Answer with the structured output. Either:
+- action "run": exactly one shell command Alloy will run in the worktree root, its
+  purpose, its kind (regression, targeted, lint, typecheck, build or custom -- any
+  project script counts as custom) and whether it is required. A red required check
+  sends the task straight back to the implementer; a red optional check is only
+  reported to you.
+- action "stop": when the evidence is sufficient. Give the reason and list the
+  remaining_risks you could not check.
+
+Prefer the most targeted check that would move the evidence: the tests written for
+this task first, then what the diff could have broken, then the wider suite, lint or
+build. Do not repeat a check whose result cannot have changed. Never claim to have
+run anything yourself."""
+
+VERIFIER_RESUMED = (
+    "This continues your session: the task brief, acceptance criteria and repository "
+    "context are the ones you already have, and the tests are the ones you wrote."
+)
 
 
 def verifier_prompt(
@@ -636,39 +655,21 @@ def verifier_prompt(
             )
     else:
         last_text = "(nothing has run yet this run)"
+    hints = f"## Hints from the repository (not yet verified)\n{_render_check_hints(context)}"
+    baseline = (
+        "## Baseline commands (the tests role's targeted checks; red before implementation)\n"
+        f"{_render_checks(baseline_checks or []) or '(none)'}"
+    )
     if resumed:
-        task = (
-            "This continues your session: the task brief, acceptance criteria and repository "
-            "context are the ones you already have, and the tests are the ones you wrote."
-        )
+        run = hints
+        task = baseline
     else:
-        task = f"""{brief}
-
-## Acceptance criteria
-{acceptance or "(none stated)"}
-
-## Repository context
-{_render_context(context)}"""
-    hints = _render_check_hints(context)
-    return f"""You are choosing the next verification check for a coding task. You are read-only:
-you cannot edit code and you never run anything yourself. Do not modify any file. Alloy runs
-the one command you name, in the worktree root, exactly as written, and shows you the result.
-
-{task}
-
-## Hints from the repository (not yet verified)
-{hints}
-
-## Baseline commands (the tests role's targeted checks; red before implementation)
-{_render_checks(baseline_checks or []) or "(none)"}
-
-## Changed files
+        run = f"{_run_layer(context)}\n\n{hints}"
+        task = f"{_task_layer(brief, acceptance)}\n\n{baseline}"
+    volatile = f"""## Changed files
 {chr(10).join(changed_files) or "(no changes)"}
 
-## Current diff
-```diff
-{clip_diff(diff)}
-```
+{_diff_section(diff)}
 
 ## Checks run so far in this run
 {chr(10).join(_render_check_lines(results)) or "(none yet)"}
@@ -684,35 +685,32 @@ the one command you name, in the worktree root, exactly as written, and shows yo
 
 ## Budget
 iteration {iteration}; {checks_left_iteration} more check(s) allowed this iteration, \
-{checks_left_run} more in this run
-
-Answer with the structured output. Either:
-- action "run": exactly one shell command Alloy will run in the worktree root, its
-  purpose, its kind (regression, targeted, lint, typecheck, build or custom -- any
-  project script counts as custom) and whether it is required. A red required check
-  sends the task straight back to the implementer; a red optional check is only
-  reported to you.
-- action "stop": when the evidence is sufficient. Give the reason and list the
-  remaining_risks you could not check.
-
-Prefer the most targeted check that would move the evidence: the tests written for
-this task first, then what the diff could have broken, then the wider suite, lint or
-build. Do not repeat a check whose result cannot have changed. Never claim to have
-run anything yourself.
-"""
+{checks_left_run} more in this run"""
+    if resumed:
+        volatile = f"{VERIFIER_RESUMED}\n\n{volatile}"
+    return assemble(VERIFIER_STATIC, "", run, task, volatile)
 
 
-def critic_prompt(evidence: str) -> str:
-    return f"""You are one of several independent critics reviewing a stuck coding task.
+CRITIC_STATIC = """You are one of several independent critics reviewing a stuck coding task.
 You are read-only: do not modify any file. You cannot see the other critics' opinions,
 and that is deliberate -- give your own honest reading.
 
-{evidence}
-
 Identify the single most likely root cause of the failure and the concrete fix.
 Be specific about files and behavior. If you believe the tests are wrong rather than
-the implementation, say that explicitly.
-"""
+the implementation, say that explicitly."""
+
+
+def critic_prompt(evidence: str) -> str:
+    return assemble(CRITIC_STATIC, "", "", "", evidence)
+
+
+SYNTHESIZE_STATIC = """Several independent critics reviewed a stuck coding task. Reconcile their
+opinions into one instruction set for the implementer. You are read-only.
+
+Where the critics agree, treat it as likely true. Where they disagree, decide which
+reading the evidence actually supports and say why. Then write direct, concrete
+instructions for the implementer: which files to change and what the change must do.
+Output the instructions as prose, no preamble."""
 
 
 def synthesize_prompt(evidence: str, critiques: list[dict[str, Any]]) -> str:
@@ -724,19 +722,8 @@ def synthesize_prompt(evidence: str, critiques: list[dict[str, Any]]) -> str:
         f"suggested fix: {item.get('suggested_fix', '')}"
         for index, item in enumerate(critiques)
     )
-    return f"""Several independent critics reviewed a stuck coding task. Reconcile their
-opinions into one instruction set for the implementer. You are read-only.
-
-{evidence}
-
-## Independent opinions
-{rendered}
-
-Where the critics agree, treat it as likely true. Where they disagree, decide which
-reading the evidence actually supports and say why. Then write direct, concrete
-instructions for the implementer: which files to change and what the change must do.
-Output the instructions as prose, no preamble.
-"""
+    volatile = f"{evidence}\n\n## Independent opinions\n{rendered}"
+    return assemble(SYNTHESIZE_STATIC, "", "", "", volatile)
 
 
 # --------------------------------------------------------------------------
@@ -817,16 +804,20 @@ def _render_history(history: list[dict[str, Any]]) -> str:
 
 
 def _evidence_packet(state: TddState, ctx: RunContext, diff: str) -> str:
-    return "\n\n".join(
+    volatile = "\n\n".join(
         [
-            ctx.bead.task_brief(),
-            f"## Acceptance criteria\n{ctx.bead.acceptance_criteria or '(none stated)'}",
-            f"## Repository context\n{_render_context(state.get('context'))}",
             f"## Current diff\n```diff\n{clip_diff(diff)}\n```",
             f"## Test results\n"
             f"{_render_results(_checks_of(state, state.get('iteration', 0)), state.get('verifier_stop'))}",
             f"## Attempt history\n{_render_history(state.get('attempts', [])) or '(none)'}",
         ]
+    )
+    return assemble(
+        "",
+        "",
+        _run_layer(state.get("context")),
+        _task_layer(ctx.bead.task_brief(), ctx.bead.acceptance_criteria),
+        volatile,
     )
 
 

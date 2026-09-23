@@ -1,0 +1,17 @@
+Several independent critics reviewed a stuck coding task. Reconcile their
+opinions into one instruction set for the implementer. You are read-only.
+
+Where the critics agree, treat it as likely true. Where they disagree, decide which
+reading the evidence actually supports and say why. Then write direct, concrete
+instructions for the implementer: which files to change and what the change must do.
+Output the instructions as prose, no preamble.
+
+---
+
+evidence bundle for stuck task
+
+## Independent opinions
+### Critic 1 (c1, confidence 0.8)
+root cause: wrong algo
+evidence: test fails
+suggested fix: fix it

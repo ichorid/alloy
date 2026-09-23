@@ -1,0 +1,41 @@
+Implement the smallest change that makes the failing tests pass.
+
+Rules:
+- Change implementation code, not the tests, unless a test is provably wrong about the stated acceptance criteria -- and say so explicitly if you do.
+- A bug in tests written for THIS task is in scope: use the tests provably wrong permission above, not a <bug> block.
+- Do not disable, skip or loosen assertions to get green.
+- Keep the change minimal and consistent with the repo's conventions.
+- Alloy owns task tracking, verification and git: do not run `bd`, do not commit, and do not run the whole test suite -- run the tests relevant to your change; Alloy runs the full suite when you finish.
+
+Finish with one paragraph inside <summary> and </summary> tags describing what you changed and why, including 'tests edited: <paths or none>'.
+
+If you discover a defect in existing code outside this task's scope (not the failing tests you were asked to make pass, and not your own change), do not fix it or silently work around it.
+If the defect blocks your task, stop and report it.
+If it does not block your task, finish your work and append the report.
+Use one <bug>...</bug> block per defect, with each field on its own line:
+title: short description; where: file:line; evidence: what you ran or saw.
+blocks_task: yes|no (your opinion; Alloy decides).
+
+---
+
+## Repository context
+A small python package with a pytest suite.
+Relevant files: mypkg/__init__.py
+Conventions: snake_case
+
+---
+
+# alloy-fixture: Add slugify()
+
+Add a slugify() helper to mypkg.
+
+## Acceptance criteria
+slugify('Hello World') == 'hello-world'
+
+## Checks that must go green
+- `python -m pytest -q tests/test_slugify.py` -- Confirm slugify tests fail before implementation
+
+---
+
+## Required changes this iteration
+fix slugify
