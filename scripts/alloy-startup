@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# Run Alloy as a genuine background job: lowest CPU/IO priority, limited to a
+# share of the cores, and inside a memory-capped cgroup shared by every Alloy
+# process (scheduler, runners, verify checks, test workers).
+#
+# Usage:
+#   scripts/alloy-startup <alloy args...>     e.g. scripts/alloy-startup start
+#                                                  scripts/alloy-startup run alloy-o89.6
+#   scripts/alloy-startup --status             show alloy.slice usage and limits
+#   scripts/alloy-startup --dry-run <args...>  print what would run
+#
+# Tunables (environment):
+#   ALLOY_CPU_PCT=80         share of the currently allowed cores Alloy may use
+#   ALLOY_MEM_HIGH_PCT=70    % of RAM where the kernel starts throttling Alloy
+#   ALLOY_MEM_MAX_PCT=80     % of RAM where the OOM killer fires inside Alloy only
+#   ALLOY_OOMD_PRESSURE=40%  systemd-oomd kills in alloy.slice first above this
+#                            memory pressure (only if systemd-oomd is active)
+#   ALLOY_TASKS_MAX=4096     max processes/threads in alloy.slice
+#   ALLOY_BIN=...            alloy executable (default: repo .venv, then PATH)
+#
+# Every limit is set once, on the top process; Linux passes cgroup, affinity,
+# nice, scheduling class and IO class down to every child automatically.
+set -euo pipefail
+
+CPU_PCT="${ALLOY_CPU_PCT:-80}"
+MEM_HIGH_PCT="${ALLOY_MEM_HIGH_PCT:-70}"
+MEM_MAX_PCT="${ALLOY_MEM_MAX_PCT:-80}"
+OOMD_PRESSURE="${ALLOY_OOMD_PRESSURE:-40%}"
+TASKS_MAX="${ALLOY_TASKS_MAX:-4096}"
+SLICE="alloy.slice"
+
+die() { echo "alloy-startup: $*" >&2; exit 1; }
+warn() { echo "alloy-startup: $*" >&2; }
+
+dry_run=0
+case "${1:-}" in
+  --status)
+    exec systemctl --user status "$SLICE" --no-pager
+    ;;
+  --dry-run)
+    dry_run=1; shift
+    ;;
+  -h|--help|"")
+    sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+esac
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_dir="$(dirname "$script_dir")"
+if [[ -n "${ALLOY_BIN:-}" ]]; then
+  alloy_bin="$ALLOY_BIN"
+elif [[ -x "$repo_dir/.venv/bin/alloy" ]]; then
+  alloy_bin="$repo_dir/.venv/bin/alloy"
+elif command -v alloy >/dev/null 2>&1; then
+  alloy_bin="$(command -v alloy)"
+else
+  die "cannot find the alloy executable; set ALLOY_BIN"
+fi
+
+# Already confined (e.g. the scheduler relaunching itself): don't nest.
+if [[ "${ALLOY_CONFINED:-}" == 1 ]]; then
+  exec "$alloy_bin" "$@"
+fi
+
+# --- CPU: pick ALLOY_CPU_PCT of the cores we are currently allowed to use ---
+expand_cpu_list() {  # "0-3,8,10-11" -> "0 1 2 3 8 10 11"
+  local part lo hi out=()
+  IFS=, read -ra parts <<<"$1"
+  for part in "${parts[@]}"; do
+    if [[ "$part" == *-* ]]; then
+      lo="${part%-*}"; hi="${part#*-}"
+      for ((c = lo; c <= hi; c++)); do out+=("$c"); done
+    else
+      out+=("$part")
+    fi
+  done
+  echo "${out[@]}"
+}
+allowed="$(awk '/^Cpus_allowed_list:/ {print $2}' /proc/self/status)"
+read -ra cpus <<<"$(expand_cpu_list "$allowed")"
+total_cpus="${#cpus[@]}"
+use_cpus=$(( total_cpus * CPU_PCT / 100 ))
+(( use_cpus < 1 )) && use_cpus=1
+# Leave the lowest-numbered cores free: CPU 0 tends to carry most IRQ work.
+pinned=("${cpus[@]: -$use_cpus}")
+cpu_list="$(IFS=,; echo "${pinned[*]}")"
+cpu_quota="$(( total_cpus * CPU_PCT ))%"
+
+# Tools that size their worker pools from the CPU count. nproc and cargo
+# honour the affinity mask already; these cover the ones that don't.
+export ALLOY_CONFINED=1
+export PYTEST_XDIST_AUTO_NUM_WORKERS="$use_cpus"
+export CARGO_BUILD_JOBS="$use_cpus"
+export CMAKE_BUILD_PARALLEL_LEVEL="$use_cpus"
+[[ "${MAKEFLAGS:-}" == *-j* ]] || export MAKEFLAGS="${MAKEFLAGS:+$MAKEFLAGS }-j$use_cpus"
+
+# Lowest priority for the whole tree: SCHED_IDLE + nice 19 + idle IO class.
+# (ionice only takes effect with the BFQ IO scheduler; harmless otherwise.)
+prio=(taskset -c "$cpu_list" nice -n 19)
+command -v chrt >/dev/null 2>&1 && prio+=(chrt --idle 0)
+command -v ionice >/dev/null 2>&1 && prio+=(ionice -c 3)
+
+have_systemd=0
+if command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  have_systemd=1
+fi
+
+if (( ! have_systemd )); then
+  warn "no systemd user manager: applying CPU/IO priority only, NO memory cap"
+  cmd=("${prio[@]}" "$alloy_bin" "$@")
+  if (( dry_run )); then printf '%q ' "${cmd[@]}"; echo; exit 0; fi
+  exec "${cmd[@]}"
+fi
+
+# --- cgroup: one shared slice, so all concurrent Alloy runs share the caps ---
+slice_body="[Unit]
+Description=Alloy background work (CPU idle weight, capped CPU and memory)
+
+[Slice]
+CPUWeight=idle
+CPUQuota=$cpu_quota
+MemoryHigh=${MEM_HIGH_PCT}%
+MemoryMax=${MEM_MAX_PCT}%
+MemorySwapMax=0
+TasksMax=$TASKS_MAX"
+if systemctl is-active --quiet systemd-oomd 2>/dev/null; then
+  slice_body+="
+ManagedOOMMemoryPressure=kill
+ManagedOOMMemoryPressureLimit=$OOMD_PRESSURE"
+fi
+
+# Runtime unit dir: rewritten on every start, gone after logout/reboot.
+unit_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/systemd/user"
+unit_file="$unit_dir/$SLICE"
+
+cmd=(systemd-run --user --scope --quiet --collect --slice="$SLICE"
+     --unit="alloy-$(date +%Y%m%d-%H%M%S)-$$"
+     "${prio[@]}" "$alloy_bin" "$@")
+
+if (( dry_run )); then
+  echo "# $unit_file"; echo "$slice_body"; echo
+  echo "# cores: $use_cpus of $total_cpus ($cpu_list), quota $cpu_quota"
+  printf '%q ' "${cmd[@]}"; echo
+  exit 0
+fi
+
+mkdir -p "$unit_dir"
+if [[ ! -f "$unit_file" ]] || [[ "$(cat "$unit_file")" != "$slice_body" ]]; then
+  printf '%s\n' "$slice_body" >"$unit_file"
+  # Reloading re-applies the limits to an already-running slice in place,
+  # without touching the Alloy processes inside it.
+  systemctl --user daemon-reload
+fi
+
+exec "${cmd[@]}"
