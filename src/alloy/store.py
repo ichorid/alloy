@@ -110,6 +110,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "dispatch_tier": "TEXT",                   # tier used by live routing (alloy-0uc.3); None in shadow
         "escalations": "INTEGER DEFAULT 0",
         "retry_at": "TEXT",                        # when a parked run may resume on its own (alloy-5wb.4)
+        "base_commit": "TEXT",                     # where this run's diff starts (alloy-vrh.4)
     },
     "agent_calls": {
         "structured_json": "TEXT",                 # the raw structured output, e.g. the judge's verdict
@@ -158,18 +159,20 @@ class Store:
         branch: str | None,
         log_dir: Path | None,
         parent_run_id: str | None = None,
+        base_commit: str | None = None,
     ) -> None:
         now = utcnow().isoformat()
         with self.connect() as conn:
             conn.execute(
                 "INSERT INTO runs (run_id, bead_id, thread_id, recipe, repo, worktree, branch,"
-                " status, stage, started_at, updated_at, log_dir, pid, parent_run_id)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " status, stage, started_at, updated_at, log_dir, pid, parent_run_id, base_commit)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     run_id, bead_id, thread_id, recipe, str(repo),
                     str(worktree) if worktree else None, branch,
                     RUN_RUNNING, "starting", now, now,
                     str(log_dir) if log_dir else None, os.getpid(), parent_run_id,
+                    base_commit,
                 ),
             )
 
