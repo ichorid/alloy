@@ -49,6 +49,9 @@ META_COMPLEXITY = "alloy_complexity"
 META_COMPLEXITY_ESTIMATED = "alloy_complexity_estimated"
 META_DISCOVERED_IN_RUN = "alloy_discovered_in_run"
 META_WORKTREE_OWNER = "alloy_worktree_owner"
+META_LAND_STATE = "alloy_land_state"
+META_LAND_SHA = "alloy_land_sha"
+META_LAND_REPAIR = "alloy_land_repair"
 
 # Labels on beads Alloy files itself. `human` is Beads' own convention, so
 # `bd human list` surfaces needs-human bugs without any Alloy-specific query.
