@@ -452,3 +452,48 @@ def test_builtin_recipe_memory_reviewer_role(recipe_name):
     reviewer = config.role("memory_reviewer")
     assert reviewer.runner == "cursor"
     assert reviewer.model == "composer-2.5"
+
+
+# ---------------------------------------------------------------------------
+# LandingSpec / landing: block (alloy-vrh.1)
+# ---------------------------------------------------------------------------
+
+
+def test_load_recipe_tdd_loop_landing_mode_auto_target_main():
+    config = load_recipe("tdd-loop")
+    assert config.landing.mode == "auto"
+    assert config.landing.target == "main"
+
+
+def test_parse_without_landing_block_yields_landing_spec_defaults():
+    from alloy.config import LandingSpec
+
+    config = RecipeConfig.parse(_base_raw_recipe())
+    assert config.landing == LandingSpec(mode="off", target="main")
+
+
+def test_parse_landing_block_overrides_mode_and_target():
+    from alloy.config import LandingSpec
+
+    config = RecipeConfig.parse(
+        _base_raw_recipe(landing={"mode": "auto", "target": "develop"})
+    )
+    assert config.landing == LandingSpec(mode="auto", target="develop")
+
+
+def test_parse_rejects_invalid_landing_mode():
+    with pytest.raises(ConfigError, match="landing.mode"):
+        RecipeConfig.parse(_base_raw_recipe(landing={"mode": "sometimes"}))
+
+
+def test_parse_rejects_unknown_landing_key():
+    with pytest.raises(ConfigError):
+        RecipeConfig.parse(_base_raw_recipe(landing={"bogus": 1}))
+
+
+@pytest.mark.parametrize("recipe_name", ["tdd-loop", "tdd-loop-jev"])
+def test_builtin_recipe_landing_mode_auto(recipe_name):
+    from alloy.config import LandingSpec
+
+    config = load_recipe(recipe_name)
+    assert config.landing == LandingSpec(mode="auto", target="main")
