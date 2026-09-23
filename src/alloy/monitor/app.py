@@ -13,6 +13,7 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.events import Resize
 from textual.widgets import DataTable, Footer, Header, Static
 
 from alloy.monitor.render import (
@@ -22,6 +23,7 @@ from alloy.monitor.render import (
     limits_lines,
     run_rows,
     status_color,
+    visible_columns,
 )
 
 
@@ -76,14 +78,16 @@ class MonitorApp(App[None]):
         return super().get_key_display(binding)
 
     def on_mount(self) -> None:
-        table = self.query_one("#runs", DataTable)
-        for column in COLUMNS:
-            table.add_column(column, key=column)
+        self._sync_runs_table_columns()
         self.refresh_snapshot()
         self.set_interval(self.interval, self.refresh_snapshot)
         if self.limits_source is not None:
             self.refresh_limits()
             self.set_interval(self.limits_interval, self.refresh_limits)
+
+    def on_resize(self, event: Resize) -> None:
+        if self._sync_runs_table_columns(event.size.width) and self._snapshot is not None:
+            self.apply_snapshot(self._snapshot, width=event.size.width)
 
     @work(thread=True, exclusive=True)
     def refresh_snapshot(self) -> None:
@@ -96,18 +100,24 @@ class MonitorApp(App[None]):
             return
         self.call_from_thread(self.apply_snapshot, snapshot)
 
-    def apply_snapshot(self, snapshot: dict[str, Any]) -> None:
+    def apply_snapshot(self, snapshot: dict[str, Any], *, width: int | None = None) -> None:
         """Rebuild the runs table keyed by run_id, preserving the cursor where possible."""
         self._snapshot = snapshot
+        table_width = width if width is not None else self.size.width
+        self._sync_runs_table_columns(table_width)
         table = self.query_one("#runs", DataTable)
         selected = self._selected_run_id(table)
         table.clear()
         run_ids = [run["run_id"] for run in snapshot.get("runs") or []]
-        status_col = COLUMNS.index("status")
+        visible = visible_columns(table_width)
         for run_id, cells in zip(run_ids, run_rows(snapshot)):
-            row = list(cells)
-            status = row[status_col]
-            row[status_col] = Text(status, style=status_color(status))
+            by_column = dict(zip(COLUMNS, cells))
+            row = []
+            for column in visible:
+                value = by_column[column]
+                if column == "status":
+                    value = Text(value, style=status_color(value))
+                row.append(value)
             table.add_row(*row, key=run_id)
         if run_ids:
             if selected is None:
@@ -157,6 +167,18 @@ class MonitorApp(App[None]):
     def _show_failure(self, exc_type: str) -> None:
         text = header_line(self._snapshot) if self._snapshot is not None else ""
         self.query_one("#stats", Static).update(f"{text}  |  refresh failed: {exc_type}".strip(" |"))
+
+    def _sync_runs_table_columns(self, width: int | None = None) -> bool:
+        """Align DataTable#runs columns with the current terminal width tier."""
+        table = self.query_one("#runs", DataTable)
+        wanted = list(visible_columns(width if width is not None else self.size.width))
+        current = [column.key.value for column in table.ordered_columns]
+        if current == wanted:
+            return False
+        table.clear(columns=True)
+        for column in wanted:
+            table.add_column(column, key=column)
+        return True
 
     @staticmethod
     def _selected_run_id(table: DataTable) -> str | None:
