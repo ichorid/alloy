@@ -45,6 +45,19 @@ class CodexRunner(CLIRunner):
         args.append(prompt)
         return args
 
+    def build_command_stdin(
+        self,
+        *,
+        model: str | None,
+        structured_schema: dict | None,
+        effort: str | None = None,
+        resume_session: str | None = None,
+    ) -> list[str]:
+        return self.build_command(
+            "-", model=model, structured_schema=structured_schema,
+            effort=effort, resume_session=resume_session,
+        )
+
     def parse(self, stdout, stderr, exit_code):
         messages: list[str] = []
         usage: dict[str, Any] = {}

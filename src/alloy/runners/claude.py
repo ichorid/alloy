@@ -41,6 +41,22 @@ class ClaudeRunner(CLIRunner):
         args += self.extra_args
         return args
 
+    def build_command_stdin(
+        self,
+        *,
+        model: str | None,
+        structured_schema: dict | None,
+        effort: str | None = None,
+        resume_session: str | None = None,
+    ) -> list[str]:
+        # Reuse the command builder to retain ClaudeWriteRunner's permissions.
+        args = self.build_command(
+            "", model=model, structured_schema=structured_schema,
+            effort=effort, resume_session=resume_session,
+        )
+        del args[args.index("-p") + 1]
+        return args
+
     def parse(self, stdout, stderr, exit_code):
         try:
             envelope = json.loads(stdout)
