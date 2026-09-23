@@ -6,11 +6,14 @@ them -- especially where Alloy overrules the agent.
 
 from __future__ import annotations
 
+import inspect
+import json
 import subprocess
 import sys
 from dataclasses import replace
 
-from alloy.config import Limits, VerificationSpec
+from alloy.config import Limits, RoleSpec, VerificationSpec
+from alloy.recipes.tdd_loop import tests_prompt, verifier_prompt
 from conftest import (
     acceptance_entry,
     context_entry,
@@ -1104,3 +1107,168 @@ async def test_failed_acceptance_call_escalates_with_default_verdict(
 
     assert fake_harnesses.calls_for("judge")
     assert final["acceptance"]["decision"] == "escalate"
+
+
+# -- session continuity (alloy-21u.6) ---------------------------------------
+
+
+FAKE_SESSION = "fake-session"
+REPOSITORY_CONTEXT_HEADING = "## Repository context"
+
+
+def verifier_modify_worktree_entry() -> dict:
+    """Verifier harness entry that illegally writes into the worktree."""
+    entry = verifier_run_entry('sh -c "exit 0"', kind="custom")
+    entry["write"] = [{"path": "verifier-touched.txt", "content": "must not happen"}]
+    return entry
+
+
+async def test_verifier_calls_resume_tests_session_on_happy_path(
+    project, alloy_home, fake_harnesses
+):
+    """(a) Verifier resumes the tests writer's session; resumed prompts omit repo context."""
+    fake_harnesses.configure(verification_script())
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    tests_calls = fake_harnesses.calls_for("tests")
+    assert tests_calls
+    assert REPOSITORY_CONTEXT_HEADING in tests_calls[0]["prompt"]
+
+    verifier_calls = fake_harnesses.calls_for("verifier")
+    assert verifier_calls
+    for call in verifier_calls:
+        assert call.get("resume") == FAKE_SESSION
+        assert REPOSITORY_CONTEXT_HEADING not in call["prompt"]
+
+
+async def test_green_baseline_repair_resumes_tests_session(
+    project, alloy_home, fake_harnesses
+):
+    """(b) A tests repair pass after a green baseline resumes the tests session."""
+    fake_harnesses.configure(
+        script(tests=[write_tests_entry(passing=True), write_tests_entry()])
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    tests_calls = fake_harnesses.calls_for("tests")
+    assert len(tests_calls) == 2
+    assert REPOSITORY_CONTEXT_HEADING in tests_calls[0]["prompt"]
+    assert tests_calls[1].get("resume") == FAKE_SESSION
+    assert REPOSITORY_CONTEXT_HEADING not in tests_calls[1]["prompt"]
+
+
+async def test_tests_fallback_clears_session_for_later_calls(
+    project, alloy_home, fake_harnesses
+):
+    """(c) After tests fallback, no later harness call attempts session resume."""
+    config = load_config()
+    roles = dict(config.roles)
+    roles["tests"] = replace(
+        roles["tests"],
+        runner="cursor",
+        fallback=RoleSpec(runner="claude-write", model="fable"),
+    )
+    config = replace(config, roles=roles)
+    fake_harnesses.configure(
+        script(
+            **{
+                "tests@cursor-agent": [
+                    {"exit": 0, "is_error": True, "text": "rate limited"},
+                ],
+                "tests@claude": [write_tests_entry()],
+            }
+        )
+    )
+    harness = make_harness(project, alloy_home, config=config)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    assert [c["runner"] for c in fake_harnesses.calls_for("tests")] == [
+        "cursor-agent",
+        "claude",
+    ]
+    assert final["tests_session"] == {
+        "runner": "claude-write",
+        "session_id": FAKE_SESSION,
+    }
+    verifier_calls = fake_harnesses.calls_for("verifier")
+    assert verifier_calls
+    assert all("resume" not in call for call in verifier_calls)
+    verifier_ledger = [
+        row for row in harness.store.agent_calls(harness.run_id) if row["role"] == "verifier"
+    ]
+    assert json.loads(verifier_ledger[0]["usage_json"])["resumed"] is False
+    for fn in (tests_prompt, verifier_prompt):
+        assert "resumed" in inspect.signature(fn).parameters
+
+
+async def test_verifier_resume_failure_retries_fresh_then_completes(
+    project, alloy_home, fake_harnesses
+):
+    """(d) A failed resumed verifier call retries fresh; ledger records resumed true then false."""
+    fake_harnesses.configure(
+        verification_script(
+            **{
+                "verifier@cursor-agent": [
+                    {"exit": 1, "stderr": "resumed verifier failed\n"},
+                    verifier_run_entry(FULL_SUITE, kind="regression"),
+                    verifier_stop_entry("regression suite green after fresh retry"),
+                ],
+            }
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    verifier_calls = fake_harnesses.calls_for("verifier")
+    assert len(verifier_calls) >= 2
+    assert verifier_calls[0].get("resume") == FAKE_SESSION
+    assert "resume" not in verifier_calls[1]
+
+    ledger = [
+        call for call in harness.store.agent_calls(harness.run_id)
+        if call["role"] == "verifier"
+    ]
+    assert len(ledger) >= 2
+    assert json.loads(ledger[0]["usage_json"])["resumed"] is True
+    assert json.loads(ledger[1]["usage_json"])["resumed"] is False
+
+
+async def test_verifier_worktree_mutation_parks_at_human_gate(
+    project, alloy_home, fake_harnesses
+):
+    """(e) A verifier that edits the worktree parks the run for a human decision."""
+    fake_harnesses.configure(
+        verification_script(
+            verifier=[
+                verifier_modify_worktree_entry(),
+                verifier_stop_entry("should not reach stop after mutation"),
+            ],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert "__interrupt__" in final
+    reason = final["__interrupt__"][0].value["reason"]
+    assert "verifier modified the worktree" in reason

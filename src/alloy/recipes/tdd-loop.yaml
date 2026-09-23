@@ -77,10 +77,15 @@ roles:
   verifier:
     # Proposes one verification check at a time (targeted test, suite, lint, build,
     # any project script); Alloy runs it as-is and shows the result back.
-    runner: cursor-plan          # read-only
+    # Same runner/model as the tests role on purpose: the verifier resumes the
+    # tests writer's session (context window and prompt cache intact), and a
+    # cursor session cannot be resumed by claude. The prompt forbids edits and
+    # Alloy parks the run if the verifier changes the worktree anyway.
+    runner: cursor
+    model: composer-2.5
     timeout_minutes: 10
     fallback:
-      runner: claude
+      runner: claude-write
       model: sonnet
       timeout_minutes: 10
 
