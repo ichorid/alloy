@@ -56,23 +56,6 @@ def _git(args: list[str], cwd: Path) -> None:
     subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True)
 
 
-def pytest_addoption(parser: pytest.Parser, pluginmanager: pytest.PytestPluginManager) -> None:
-    """Keep `pytest -p no:xdist` working alongside the `-n auto` in addopts.
-
-    Blocking the plugin also drops the `-n` option it defines, so the ini
-    addopts would be rejected as unrecognized. Let xdist register its options
-    anyway through its public hook; with the plugin blocked nothing reads
-    them, so the run is serial exactly as requested.
-    """
-    if pluginmanager.hasplugin("xdist"):
-        return
-    try:
-        from xdist.plugin import pytest_addoption as register_xdist_options
-    except ImportError:  # xdist not installed: let pytest report the bad addopts
-        return
-    register_xdist_options(parser)
-
-
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     """A small, real git repository with a real (failing) pytest suite."""
