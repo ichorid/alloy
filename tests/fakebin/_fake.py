@@ -13,6 +13,12 @@ import sys
 import time
 from pathlib import Path
 
+DEFAULT_ESTIMATE_STRUCTURED = {
+    "complexity": "simple",
+    "reason": "single-file helper with obvious tests",
+    "confidence": 0.9,
+}
+
 ROLE_MARKERS = [
     ("context", "You are gathering context"),
     ("estimate", "You are estimating how hard this task is"),
@@ -103,6 +109,8 @@ def main() -> int:
     workdir.mkdir(parents=True, exist_ok=True)
     config = json.loads(Path(os.environ["ALLOY_FAKE_CONFIG"]).read_text())
     entry = take(config, role, runner, workdir / "counters.json")
+    if role == "estimate" and "structured" not in entry:
+        entry = {**entry, "structured": DEFAULT_ESTIMATE_STRUCTURED}
 
     record = {
         "runner": runner, "role": role, "cwd": os.getcwd(),
