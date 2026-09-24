@@ -23,6 +23,31 @@ SIMULATED_CLOSE_STALL_S = 8.0
 # Reproduces sandbox/asyncio self-pipe denial that never completes aiosqlite.connect.
 SIMULATED_CONNECT_STALL_S = 3600.0
 
+_SUITE_ACTIVE_ENV = "ALLOY_FULL_SUITE_ACTIVE"
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Refuse a nested full-suite run started from inside this suite.
+
+    A test that shells out to ``pytest`` with no file arguments collects itself
+    again and recurses, each level spawning more xdist workers. Runs that name
+    files or node ids are unaffected; xdist workers inherit the flag legitimately.
+    """
+    config = session.config
+    if hasattr(config, "workerinput"):
+        return
+    root = config.rootpath.resolve()
+    targets = {(Path(config.invocation_params.dir) / a).resolve() for a in config.args}
+    if not config.args or targets <= {root, root / "tests"}:
+        if os.environ.get(_SUITE_ACTIVE_ENV):
+            pytest.exit(
+                "nested full-suite pytest run refused (recursion guard); "
+                "pass explicit test files/node ids",
+                returncode=4,
+            )
+        os.environ[_SUITE_ACTIVE_ENV] = "1"
+
+
 FAKE_SOURCE = Path(__file__).parent / "fakebin" / "_fake.py"
 FAKE_BD_SOURCE = Path(__file__).parent / "fakebin" / "_fake_bd.py"
 FAKE_RUNNERS = ("claude", "codex", "cursor-agent", "jev", "pi")

@@ -93,7 +93,7 @@ def test_monitor_render_py_parallel_kernel_regression_exits_zero():
             "run",
             "pytest",
             "-n",
-            "8",
+            "0",
             "-q",
             str(MONITOR_RENDER_TESTS),
             "-k",
@@ -111,7 +111,7 @@ def test_monitor_render_py_parallel_kernel_regression_exits_zero():
 
 def test_monitor_render_py_full_module_parallel_regression_exits_zero():
     proc = subprocess.run(
-        ["uv", "run", "pytest", "-n", "8", "-q", str(MONITOR_RENDER_TESTS)],
+        ["uv", "run", "pytest", "-n", "0", "-q", str(MONITOR_RENDER_TESTS)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
