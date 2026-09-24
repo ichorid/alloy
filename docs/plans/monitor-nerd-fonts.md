@@ -56,7 +56,7 @@ criteria of the child beads are what tests assert.
 Powerline: arrow U+E0B0, thin arrow U+E0B1, left arrow U+E0B2, pill caps
 U+E0B6 / U+E0B4, branch U+E0A0.
 Status: running U+F04B, judge U+F0E3, blocked U+F05E, done U+F00C, ready
-U+F017. Tests: U+F00C / U+F00D. Warning U+F071, stale U+F1DA, clock U+F017.
+U+F017. Tests: U+F00C / U+F00D. Warning U+F071, stale U+F1DA, clock U+F017, calendar U+F073 (date-only reset such as "Sep 25").
 Panels and labels: alloy U+F0C3, cog U+F013, scheduler dot U+F111, ready queue
 U+F0AE, refresh U+F021, limits U+F0E4, harness U+F1E6, runs U+F03A, parent
 U+F0E8, folder U+F07B, detail U+F05A, now U+F120, tokens U+F1C0, complexity

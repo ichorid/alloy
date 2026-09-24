@@ -891,7 +891,7 @@ def test_limits_line_weekly_reset_suffix_other_local_day_shows_date(
     )
 
     assert "resets" not in line
-    assert "(2026-09-25)" in line
+    assert "(Sep 25)" in line
 
 
 def test_limits_line_cycle_reset_suffix_matches_weekly_date_rule(
@@ -909,7 +909,7 @@ def test_limits_line_cycle_reset_suffix_matches_weekly_date_rule(
     )
 
     assert "resets" not in line
-    assert "(2026-09-25)" in line
+    assert "(Sep 25)" in line
 
 
 @pytest.fixture
@@ -1479,3 +1479,22 @@ def test_task_tree_expanded_queue_and_epics_yield_unique_row_keys():
     keys = [row.key for row in rows]
 
     assert len(keys) == len(set(keys)), f"duplicate keys: {[k for k in keys if keys.count(k) > 1]}"
+
+
+def test_limits_line_weekly_date_suffix_uses_calendar_icon_not_clock(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from alloy.limits import window
+    from alloy.monitor.render import limits_lines
+
+    _freeze_render_now(monkeypatch, datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM))
+    snapshot = _snapshot()
+    snapshot["limits"] = _available_claude_limits(
+        window("seven_day", "weekly", 34.0, "2026-09-24T23:00:00+00:00"),
+    )
+
+    line = limits_lines(snapshot, mode="nerd")[0]
+
+    assert "\uf073 Sep 25" in line
+    assert "\uf017" not in line
+    assert "2026" not in line

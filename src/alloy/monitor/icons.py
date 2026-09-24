@@ -30,6 +30,7 @@ _ICONS: Final[dict[str, tuple[str, str, str]]] = {
     "warn": ("\uf071", "\u26a0", "!"),
     "stale": ("\uf1da", "\u21bb", "~"),         # history
     "clock": ("\uf017", "\u25f7", "o"),
+    "calendar": ("\uf073", "\u25a6", "d"),     # calendar, ▦
     "branch": ("\ue0a0", "\u2387", "@"),       # powerline branch
     "scheduler": ("\uf111", "\u25cf", "*"),     # dot
     "queue": ("\uf0ae", "\u2630", "#"),         # tasks

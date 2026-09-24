@@ -561,7 +561,8 @@ def _limits_window_segment(
     reset_suffix = _reset_suffix(win.get("label"), win.get("resets_at"))
     if reset_suffix:
         if styled:
-            segment += f" {icon('clock', mode)} {reset_suffix}"
+            glyph = icon("clock" if ":" in reset_suffix else "calendar", mode)  # HH:MM vs "Sep 25"
+            segment += f" {glyph} {reset_suffix}"
         else:
             segment += f" ({reset_suffix})"
     if win.get("stale"):
@@ -945,7 +946,7 @@ def _reset_suffix(label: str | None, resets_at: str | None) -> str | None:
         now_local = datetime.now().astimezone()
         if local.date() == now_local.date():
             return local.strftime("%H:%M")
-        return local.strftime("%Y-%m-%d")
+        return f"{local.strftime('%b')} {local.day}"  # "Jul 19": no year, saves width
     return None
 
 
