@@ -107,7 +107,7 @@ class Scheduler:
             return await self._resume_due(due)
         if await self._memory_maintenance():
             return True
-        if await self._land_ready_work():
+        if self._auto_land_enabled() and await self._land_ready_work():
             return True
         bead = self.next_task()
         if bead is None:
@@ -126,16 +126,18 @@ class Scheduler:
         except Exception:
             log.exception("%s failed", bead.id)
             return True
-        if self._auto_land_due(bead, recipe_name, result):
-            self._commit_pending_work(bead)
-            try:
-                await self.engine.land(bead.id)
-            except asyncio.CancelledError:
-                raise
-            except EngineError as exc:
-                log.warning("%s did not land: %s", bead.id, exc)
-            except Exception:
-                log.exception("%s landing crashed", bead.id)
+        if self._auto_land_enabled() and self._auto_land_due(bead, recipe_name, result):
+            if not self.engine._commit_before_land(bead):
+                log.warning("%s: auto-land skipped; worktree still dirty", bead.id)
+            else:
+                try:
+                    await self.engine.land(bead.id)
+                except asyncio.CancelledError:
+                    raise
+                except EngineError as exc:
+                    log.warning("%s did not land: %s", bead.id, exc)
+                except Exception:
+                    log.exception("%s landing crashed", bead.id)
         return True
 
     async def _resume_due(self, record: dict) -> bool:
@@ -328,6 +330,10 @@ class Scheduler:
 
     # -- auto-land (alloy-vrh.10, docs/plans/auto-land.md) ------------------
 
+    def _auto_land_enabled(self) -> bool:
+        """Local opt-out: touch ``<alloy-root>/disable-auto-land`` to skip auto-landing."""
+        return not (self.engine.paths.root / "disable-auto-land").is_file()
+
     async def _land_ready_work(self) -> bool:
         """Land work whose time has come, before the next ready pick: completed
         epics and beads whose landing repair bug just closed. At most one
@@ -335,6 +341,10 @@ class Scheduler:
         landing that refuses (conflict, red checks, parked primary) is logged
         and left for a later tick or a human, never a serve-loop crash."""
         for bead_id in self._completed_epics() + self._repaired_beads():
+            bead = self.engine.beads.show(bead_id)
+            if not self.engine._commit_before_land(bead):
+                log.warning("landing %s skipped; worktree still dirty", bead_id)
+                continue
             try:
                 await self.engine.land(bead_id)
             except EngineError as exc:
@@ -395,21 +405,6 @@ class Scheduler:
             log.warning("auto-land check for %s skipped: %s", bead.id, exc)
             return False
         return config.landing.mode == "auto"
-
-    def _commit_pending_work(self, bead: bd.Bead) -> None:
-        """Commit the run's uncommitted work on the bead branch so the landing
-        merge has material -- standalone runs leave the worktree dirty
-        (`cleanup_worktree_on_success: false`); epic children already commit
-        on the shared branch when they settle."""
-        worktrees = WorktreeManager(repo=self.engine.repo, root=self.engine.paths.worktrees)
-        try:
-            worktree = worktrees.ensure(bead.id)
-        except WorktreeError as exc:
-            log.warning("auto-land commit for %s skipped: %s", bead.id, exc)
-            return
-        committed = worktrees.commit_wip(worktree, f"{bead.id}: {bead.title}")
-        if committed:
-            log.info("%s: committed pending work as %.8s before landing", bead.id, committed)
 
     def _running(self) -> list[dict]:
         return [run for run in self.engine.store.active_runs() if run["status"] == RUN_RUNNING]

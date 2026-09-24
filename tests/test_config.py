@@ -486,6 +486,13 @@ def test_parse_rejects_invalid_landing_mode():
         RecipeConfig.parse(_base_raw_recipe(landing={"mode": "sometimes"}))
 
 
+def test_parse_landing_mode_yaml_off_boolean_coerces_to_off():
+    from alloy.config import LandingSpec
+
+    config = RecipeConfig.parse(_base_raw_recipe(landing={"mode": False}))
+    assert config.landing == LandingSpec(mode="off", target="main")
+
+
 def test_parse_rejects_unknown_landing_key():
     with pytest.raises(ConfigError):
         RecipeConfig.parse(_base_raw_recipe(landing={"bogus": 1}))

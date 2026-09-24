@@ -211,6 +211,11 @@ class Engine:
                 "beads can land"
             )
         config = self.validate_recipe("land")
+        if not self._commit_before_land(bead):
+            raise EngineError(
+                f"landing {bead_id} refused: uncommitted work remains on "
+                f"{self._worktree_owner(bead)}'s worktree"
+            )
 
         original_recipe = bead.recipe
         try:
@@ -479,6 +484,28 @@ class Engine:
             or self.beads.epic_root(bead.id)
             or bead.id
         )
+
+    def _commit_before_land(self, bead: Bead) -> bool:
+        """Commit any dirty work on the owner worktree before the land recipe runs.
+
+        Auto-land and ``Engine.land`` must not verify or merge a branch while agent
+        work is still only in the working tree -- that would pass checks on stale
+        HEAD, merge an empty branch, and delete the worktree with the changes lost.
+        """
+        owner_id = self._worktree_owner(bead)
+        worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
+        try:
+            worktree = worktrees.ensure(owner_id)
+        except WorktreeError as exc:
+            log.warning("landing commit for %s skipped: %s", bead.id, exc)
+            return False
+        committed = worktrees.commit_wip(worktree, f"{bead.id}: {bead.title}")
+        if committed:
+            log.info("%s: committed pending work as %.8s before landing", bead.id, committed)
+        if worktrees.is_dirty(worktree):
+            log.warning("%s: worktree %s still dirty after commit", bead.id, worktree.path)
+            return False
+        return True
 
     def _open_land_repair_bug(self, landed_id: str) -> str | None:
         """Return an open repair bug id for `landed_id`, if one is already filed."""

@@ -239,6 +239,11 @@ class LandingSpec:
         if unknown:
             raise ConfigError(f"unknown landing keys: {', '.join(sorted(map(repr, unknown)))}")
         mode = raw.get("mode", defaults.mode)
+        # YAML 1.1 treats bare `off`/`on` as booleans; accept them as modes.
+        if mode is False:
+            mode = "off"
+        elif mode is True:
+            mode = "auto"
         if mode not in ("off", "auto"):
             raise ConfigError(f"invalid landing.mode: {mode!r}")
         target = raw.get("target", defaults.target)
