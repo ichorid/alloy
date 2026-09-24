@@ -67,6 +67,44 @@ _JEST = re.compile(r"Tests:\s+(?:(\d+) failed,\s*)?(?:\d+ skipped,\s*)?(\d+) pas
 _CARGO = re.compile(r"test result: \w+\. (\d+) passed; (\d+) failed")
 
 
+_ALLOY_SRC = "src/alloy/"
+
+
+def test_stems_from_changed_alloy_src(changed_files: list[str]) -> set[str]:
+    """Map touched ``src/alloy`` modules to ``tests/test_<stem>*.py`` stems.
+
+    Top-level ``src/alloy/foo.py`` maps to ``foo``. Subpackages use the first
+    directory, e.g. ``src/alloy/monitor/app.py`` -> ``monitor``.
+    """
+    stems: set[str] = set()
+    for path in changed_files:
+        if not path.startswith(_ALLOY_SRC) or not path.endswith(".py"):
+            continue
+        rel = path[len(_ALLOY_SRC) :]
+        parts = rel.split("/")
+        if len(parts) == 1:
+            stems.add(Path(parts[0]).stem)
+        else:
+            stems.add(parts[0])
+    return stems
+
+
+def diff_derived_test_paths(changed_files: list[str], repo_root: Path) -> list[str]:
+    """Test modules that likely cover changed ``src/alloy`` code (hints only)."""
+    tests_dir = repo_root / "tests"
+    if not tests_dir.is_dir():
+        return []
+    paths: list[str] = []
+    seen: set[str] = set()
+    for stem in sorted(test_stems_from_changed_alloy_src(changed_files)):
+        for match in sorted(tests_dir.glob(f"test_{stem}*.py")):
+            rel = match.relative_to(repo_root).as_posix()
+            if rel not in seen:
+                seen.add(rel)
+                paths.append(rel)
+    return paths
+
+
 def detect_commands(worktree: Path) -> list[str]:
     """Every command the project layout suggests, best guess first. Hints for
     the verifier; a repo with both a pyproject and a Cargo.toml gets both."""

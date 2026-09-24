@@ -76,7 +76,12 @@ from alloy.diffs import clip_diff_per_file
 from alloy.memory_embed import is_block_stale, last_review_date
 from alloy.prompts import assemble
 from alloy.runtime import RunContext
-from alloy.verify import detect_commands, normalize_command, verifier_check_requests
+from alloy.verify import (
+    detect_commands,
+    diff_derived_test_paths,
+    normalize_command,
+    verifier_check_requests,
+)
 from alloy.worktree import is_test_path
 
 MAX_DIFF_CHARS = 12000
@@ -722,6 +727,7 @@ def verifier_prompt(
     instructions: str = "",
     *,
     memory: str = "",
+    repo_root: Path | None = None,
     resumed: bool = False,
 ) -> str:
     """`resumed` is the continuation variant sent into the tests writer's own
@@ -739,7 +745,10 @@ def verifier_prompt(
             )
     else:
         last_text = "(nothing has run yet this run)"
-    hints = f"## Hints from the repository (not yet verified)\n{_render_check_hints(context)}"
+    hints = (
+        "## Hints from the repository (not yet verified)\n"
+        f"{_render_check_hints(context, changed_files=changed_files, repo_root=repo_root)}"
+    )
     baseline = (
         "## Baseline commands (the tests role's targeted checks; red before implementation)\n"
         f"{_render_checks(baseline_checks or []) or '(none)'}"
@@ -983,10 +992,21 @@ def existing_lessons(memory: ProjectMemory | None) -> dict[str, str]:
 # --------------------------------------------------------------------------
 
 
-def _render_check_hints(context: dict[str, Any] | None) -> str:
+def _render_check_hints(
+    context: dict[str, Any] | None,
+    *,
+    changed_files: list[str] | None = None,
+    repo_root: Path | None = None,
+) -> str:
     """Commands the context role, the bead or autodetection suggested. None of
     them has run; the verifier decides whether any of them is worth running."""
-    hints = (context or {}).get("check_hints") or []
+    hints: list[str] = list((context or {}).get("check_hints") or [])
+    if changed_files:
+        root = repo_root or Path.cwd()
+        for path in diff_derived_test_paths(changed_files, root):
+            command = f"uv run pytest -n 0 -q {path}"
+            if command not in hints:
+                hints.append(command)
     if not hints:
         return "(none; find the project's own test, lint and build commands)"
     return "\n".join(f"- `{hint}`" for hint in hints)
@@ -1296,6 +1316,7 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
             baseline_checks=state.get("baseline_checks", []),
             instructions=state.get("instructions", ""),
             memory=state.get("memory_block", ""),
+            repo_root=ctx.worktree.path,
         )
         # The verifier continues the tests writer's session: the agent that
         # wrote the tests chooses how to verify them, context intact.
