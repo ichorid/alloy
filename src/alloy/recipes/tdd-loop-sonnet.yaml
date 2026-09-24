@@ -89,6 +89,7 @@ roles:
     # criteria, wrong readings, trivial passes. Advisory (a missing or failing
     # reviewer is skipped); up to verification.max_test_reviews rounds.
     runner: codex-readonly
+    model: gpt-6-sol
     timeout_minutes: 10
     fallback:
       runner: claude
