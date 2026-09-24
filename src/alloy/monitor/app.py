@@ -7,6 +7,8 @@ docs/plans/execution-monitor.md.
 
 from __future__ import annotations
 
+import threading
+
 from typing import Any, Callable
 
 from rich.text import Text
@@ -102,6 +104,7 @@ class MonitorApp(App[None]):
         self.interval = interval
         self.limits_source = limits_source
         self.limits_interval = limits_interval
+        self._refresh_lock = threading.Lock()
         self._snapshot: dict[str, Any] | None = None
         self._probed_limits: dict[str, Any] | None = None
         self._marked_row: int | None = None
@@ -142,15 +145,24 @@ class MonitorApp(App[None]):
         if self._sync_runs_table_columns(event.size.width) and self._snapshot is not None:
             self.apply_snapshot(self._snapshot, width=event.size.width)
 
-    @work(thread=True, exclusive=True)
+    @work(thread=True)
     def refresh_snapshot(self) -> None:
-        """Fetch a snapshot off the event loop and apply it; keep the last good one on failure."""
+        """Fetch a snapshot off the event loop and apply it; keep the last good one on failure.
+
+        At most one fetch is in flight: a thread blocked in a `bd` subprocess cannot be
+        cancelled, so `exclusive=True` let slow snapshots pile up and starve each other.
+        A tick that finds one running is simply skipped.
+        """
+        if not self._refresh_lock.acquire(blocking=False):
+            return
         try:
             snapshot = self.snapshot_source()
         except Exception as exc:  # noqa: BLE001 - any failure must leave the view alive
             self.log(f"refresh failed: {exc!r}")
             self.call_from_thread(self._show_failure, type(exc).__name__)
             return
+        finally:
+            self._refresh_lock.release()
         self.call_from_thread(self.apply_snapshot, snapshot)
 
     def apply_snapshot(self, snapshot: dict[str, Any], *, width: int | None = None) -> None:

@@ -10,6 +10,7 @@ import asyncio
 import json as jsonlib
 import logging
 import signal
+import os
 import sys
 import time
 from datetime import timedelta
@@ -483,12 +484,19 @@ def monitor(
     limits_source = None
     if not no_limits:
         limits_source = lambda: probe_all(engine.paths, RunnerRegistry(), home=Path.home())
-    MonitorApp(
+    app = MonitorApp(
         snapshot_source=lambda: build_snapshot(engine),
         interval=interval,
         limits_source=limits_source,
         limits_interval=limits_interval,
-    ).run()
+    )
+    app.run()
+    # In-flight refresh workers (a bd call or the limits probe) are non-daemon
+    # threads; joining them at interpreter exit made quitting take many seconds.
+    # The terminal is already restored and the view holds no state to flush.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
 
 
 @app.command()

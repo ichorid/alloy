@@ -641,7 +641,6 @@ def test_limits_line_unavailable_harness_renders_error_in_red():
     assert "[#f85149]unavailable: no local sample[/]" in line
 
 
-<<<<<<< HEAD
 # -- alloy-3g0.3: nerd limits bars, warn/clock icons, wrap at 80 -------------
 
 
@@ -680,42 +679,10 @@ def _assert_contiguous_limits_color_segment(line: str, *, color: str, percent: i
 
 
 def test_limits_line_88_percent_nerd_has_warn_icon_and_contiguous_red_tag():
-=======
-# -- alloy-gek: consumed Codex quota + compact local reset suffix --------------
-
-
-_AMSTERDAM = ZoneInfo("Europe/Amsterdam")
-
-
-def _freeze_render_now(monkeypatch: pytest.MonkeyPatch, when: datetime) -> None:
-    import alloy.monitor.render as render_mod
-
-    real_datetime = render_mod.datetime
-
-    class _FrozenDatetime(real_datetime):
-        @classmethod
-        def now(cls, tz=None):
-            if tz is None:
-                return when.astimezone().replace(tzinfo=None)
-            return when.astimezone(tz)
-
-    monkeypatch.setattr(render_mod, "datetime", _FrozenDatetime)
-
-
-def _limits_line_for_single_window(
-    label: str,
-    resets_at: str,
-    *,
-    harness: str = "claude",
-    used_percent: float = 42.0,
-    key: str = "five_hour",
-) -> str:
->>>>>>> main
     from alloy.limits import window
     from alloy.monitor.render import limits_lines
 
     snapshot = _snapshot()
-<<<<<<< HEAD
     snapshot["limits"] = _available_claude_limits(
         window("five_hour", "5h", 88.0, None),
     )
@@ -748,10 +715,12 @@ def test_limits_line_nerd_reset_shows_clock_without_parentheses():
     )
     line = limits_lines(snapshot, mode="nerd")[0]
 
+    local_clock = datetime.fromisoformat("2026-09-23T18:00:00+00:00").astimezone().strftime("%H:%M")
+
     assert "\uf017" in line
-    assert "18:00" in line
+    assert local_clock in line
     assert "(resets" not in line
-    assert "(18:00)" not in line
+    assert f"({local_clock})" not in line
 
 
 def _two_window_claude_limits() -> dict:
@@ -793,7 +762,41 @@ def test_limits_lines_ascii_matches_legacy_output():
     legacy = limits_lines(snapshot)
 
     assert limits_lines(snapshot, mode="ascii") == legacy
-=======
+
+
+# -- alloy-gek: consumed Codex quota + compact local reset suffix --------------
+
+
+_AMSTERDAM = ZoneInfo("Europe/Amsterdam")
+
+
+def _freeze_render_now(monkeypatch: pytest.MonkeyPatch, when: datetime) -> None:
+    import alloy.monitor.render as render_mod
+
+    real_datetime = render_mod.datetime
+
+    class _FrozenDatetime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return when.astimezone().replace(tzinfo=None)
+            return when.astimezone(tz)
+
+    monkeypatch.setattr(render_mod, "datetime", _FrozenDatetime)
+
+
+def _limits_line_for_single_window(
+    label: str,
+    resets_at: str,
+    *,
+    harness: str = "claude",
+    used_percent: float = 42.0,
+    key: str = "five_hour",
+) -> str:
+    from alloy.limits import window
+    from alloy.monitor.render import limits_lines
+
+    snapshot = _snapshot()
     snapshot["limits"] = {
         harness: {
             "harness": harness,
@@ -940,7 +943,6 @@ def test_limits_lines_codex_rollout_shows_consumed_percent_with_compact_reset_su
     assert "53%" not in line
     assert "resets" not in line
     assert "(05:32)" in line
->>>>>>> main
 
 
 def test_header_line_includes_session_totals_when_present():

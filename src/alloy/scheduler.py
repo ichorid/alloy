@@ -109,7 +109,8 @@ class Scheduler:
             return True
         if self._auto_land_enabled() and await self._land_ready_work():
             return True
-        bead = self.next_task()
+        with self._beads_snapshot():
+            bead = self.next_task()
         if bead is None:
             return False
         log.info("picked %s (%s, P%d)", bead.id, bead.title, bead.priority)
@@ -243,6 +244,11 @@ class Scheduler:
 
     # -- selection --------------------------------------------------------
 
+    def _beads_snapshot(self):
+        """One `bd list --all` behind a poll-time scan (no-op for clients without it)."""
+        snapshot = getattr(self.engine.beads, "snapshot", None)
+        return snapshot() if snapshot is not None else contextlib.nullcontext()
+
     def next_task(self) -> bd.Bead | None:
         """Highest-priority ready bead with a known assigned or default recipe."""
         from alloy import recipes
@@ -312,10 +318,14 @@ class Scheduler:
 
     def due_human_resume(self) -> dict | None:
         """A ready bead whose run is parked at the human gate without a retry_at."""
+        parked = [
+            run for run in self.engine.store.active_runs()
+            if run["status"] == RUN_WAITING_HUMAN and not run.get("retry_at")
+        ]
+        if not parked:
+            return None  # the common idle case: skip the bd read entirely
         ready_ids = {bead.id for bead in self.engine.beads.ready(limit=1000)}
-        for run in self.engine.store.active_runs():
-            if run["status"] != RUN_WAITING_HUMAN or run.get("retry_at"):
-                continue
+        for run in parked:
             bead_id = run["bead_id"]
             if bead_id not in ready_ids:
                 continue
@@ -340,7 +350,9 @@ class Scheduler:
         landing per tick, matching the scheduler's concurrency of one; a
         landing that refuses (conflict, red checks, parked primary) is logged
         and left for a later tick or a human, never a serve-loop crash."""
-        for bead_id in self._completed_epics() + self._repaired_beads():
+        with self._beads_snapshot():
+            due = self._completed_epics() + self._repaired_beads()
+        for bead_id in due:
             bead = self.engine.beads.show(bead_id)
             if not self.engine._commit_before_land(bead):
                 log.warning("landing %s skipped; worktree still dirty", bead_id)
