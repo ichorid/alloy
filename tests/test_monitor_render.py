@@ -770,6 +770,23 @@ def test_limits_lines_ascii_matches_legacy_output():
 _AMSTERDAM = ZoneInfo("Europe/Amsterdam")
 
 
+@pytest.fixture(autouse=True)
+def _local_tz_amsterdam():
+    """Reset suffixes render in the machine's local zone; pin it so expectations are stable."""
+    import os
+    import time
+
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = "Europe/Amsterdam"
+    time.tzset()
+    yield
+    if previous is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = previous
+    time.tzset()
+
+
 def _freeze_render_now(monkeypatch: pytest.MonkeyPatch, when: datetime) -> None:
     import alloy.monitor.render as render_mod
 

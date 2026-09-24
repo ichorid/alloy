@@ -20,7 +20,7 @@ import pytest
 from typer.testing import CliRunner
 
 from alloy.cli import app
-from alloy.models import utcnow, with_provenance
+from alloy.models import with_provenance
 from conftest import FAKE_BD_SOURCE, FAKE_RUNNERS, FAKE_SOURCE, memory_reviewer_entry
 from test_cli_memory import (
     LESSON_KEY,
@@ -182,8 +182,6 @@ def test_memory_list_age_days_matches_utc_today_when_local_date_differs(
     assert UTC_TODAY != LOCAL_TODAY
     assert lesson["age_days"] == utc_expected
     assert lesson["age_days"] != local_expected
-    assert lesson["age_days"] == (utcnow().date() - PROVENANCE_DATE).days
-    assert lesson["age_days"] != (date.today() - PROVENANCE_DATE).days
 
 
 def test_memory_review_apply_stamps_last_review_with_utc_today_when_local_date_differs(
@@ -198,5 +196,3 @@ def test_memory_review_apply_stamps_last_review_with_utc_today_when_local_date_d
     assert LAST_REVIEW_KEY in remembers
     assert remembers[LAST_REVIEW_KEY] == UTC_TODAY.isoformat()
     assert remembers[LAST_REVIEW_KEY] != LOCAL_TODAY.isoformat()
-    assert remembers[LAST_REVIEW_KEY] == utcnow().date().isoformat()
-    assert remembers[LAST_REVIEW_KEY] != date.today().isoformat()
