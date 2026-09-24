@@ -16,7 +16,22 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TESTS_DIR = REPO_ROOT / "tests"
 EPIC_BRANCH = "alloy/alloy-8by"
+REPAIR_BEAD_ID = "alloy-0zj"
 ACCEPTANCE_PARALLEL_CMD = ("uv", "run", "pytest", "-n", "8", "-q")
+EPIC_ACCEPTANCE_BUNDLE_CMD = (
+    "uv",
+    "run",
+    "pytest",
+    "-n",
+    "0",
+    "-q",
+    "tests/test_runtime_per_run_agent_budget.py",
+    "tests/test_verifier_multi_check.py",
+    "tests/test_remediate_agent_call_headroom.py",
+    "tests/test_verifier_diff_hints.py",
+    "tests/test_tier_scaled_max_agent_calls.py",
+    "tests/test_monitor_render_landing_merge.py",
+)
 
 
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
@@ -29,10 +44,34 @@ def _git(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def test_land_repair_eight_by_repair_bead_id_matches_acceptance():
+    from alloy.land_repair import eight_by_repair_bead_id
+
+    assert eight_by_repair_bead_id() == REPAIR_BEAD_ID
+
+
+def test_land_repair_eight_by_epic_branch_matches_worktree():
+    from alloy.land_repair import eight_by_epic_branch
+
+    assert eight_by_epic_branch() == EPIC_BRANCH
+
+
 def test_land_repair_parallel_regression_command_matches_acceptance():
     from alloy.land_repair import parallel_regression_command
 
     assert parallel_regression_command() == ACCEPTANCE_PARALLEL_CMD
+
+
+def test_land_repair_epic_acceptance_bundle_command_matches_child_modules():
+    from alloy.land_repair import epic_acceptance_bundle_command
+
+    assert epic_acceptance_bundle_command() == EPIC_ACCEPTANCE_BUNDLE_CMD
+
+
+def test_land_repair_epic_acceptance_bundle_gate_succeeds_on_merged_worktree():
+    from alloy.land_repair import epic_acceptance_bundle_gate_succeeded
+
+    assert epic_acceptance_bundle_gate_succeeded(repo_root=REPO_ROOT) is True
 
 
 # The full ``uv run pytest -n 8 -q`` gate is deliberately not run from inside the

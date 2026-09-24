@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 EPIC_BRANCH = "alloy/alloy-8by"
+EIGHT_BY_REPAIR_BEAD_ID = "alloy-0zj"
 JJG_EPIC_BRANCH = "alloy/alloy-jjg"
 JJG_REPAIR_BEAD_ID = "alloy-088"
 LANDING_MERGE_ACCEPTANCE_CMD: tuple[str, ...] = (
@@ -46,6 +47,31 @@ def parallel_regression_gate_succeeded(*, repo_root: Path) -> bool:
 def epic_acceptance_test_paths() -> list[str]:
     """Relative paths to pytest modules that cover alloy-8by child acceptance."""
     return list(EPIC_ACCEPTANCE_TEST_PATHS)
+
+
+def eight_by_repair_bead_id() -> str:
+    """Bead id for the alloy-8by landing repair."""
+    return EIGHT_BY_REPAIR_BEAD_ID
+
+
+def eight_by_epic_branch() -> str:
+    """Epic branch name for the alloy-8by trial merge."""
+    return EPIC_BRANCH
+
+
+def epic_acceptance_bundle_command() -> tuple[str, ...]:
+    """Serial pytest command covering the alloy-8by child acceptance modules."""
+    return ("uv", "run", "pytest", "-n", "0", "-q", *EPIC_ACCEPTANCE_TEST_PATHS)
+
+
+def epic_acceptance_bundle_gate_succeeded(*, repo_root: Path) -> bool:
+    """Return True when the epic acceptance bundle exits 0 at ``repo_root``."""
+    result = subprocess.run(
+        list(epic_acceptance_bundle_command()),
+        cwd=repo_root,
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def jjg_repair_bead_id() -> str:
