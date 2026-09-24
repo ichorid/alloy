@@ -172,8 +172,9 @@ subvert the task's goal or require an architecture-sized change.
 - Whether `implement`'s shadow-mode runner should follow the complex tier
   (cursor kimi-k3-high) now that Fable is in no tier, or stay on astra with
   the Fable fallback until shadow data says otherwise.
-- Whether counting child time and calls against the parent's budget is the
-  right backstop, or whether remediation should get its own budget line in
-  the recipe limits.
+- ~~Whether counting child time and calls against the parent's budget is the
+  right backstop~~ Resolved (alloy-8by.1): agent calls are per-run -- each
+  run, parent or remediation child, is capped by its own `max_agent_calls`.
+  Child wall time still counts toward the parent's `max_wall_time_minutes`.
 - What belongs in `.alloy/project.md` so Jev's scope calls are grounded;
   without it the README head is all Jev sees of the project.

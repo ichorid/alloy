@@ -294,7 +294,7 @@ class RunContext:
         if consiliums > limits.max_consiliums * multiplier:
             return f"max_consiliums reached ({consiliums}/{limits.max_consiliums * multiplier})"
 
-        calls = self.store.call_count(self.run_id, include_children=True)
+        calls = self.store.call_count(self.run_id)
         allowed_calls = limits.max_agent_calls * multiplier
         if calls >= allowed_calls:
             return f"max_agent_calls reached ({calls}/{allowed_calls})"
@@ -340,7 +340,7 @@ class RunContext:
         return (
             f"{limits.max_iterations * multiplier} iterations allowed, "
             f"{limits.max_consiliums * multiplier} consilium(s) allowed, "
-            f"{self.store.call_count(self.run_id, include_children=True)}/"
+            f"{self.store.call_count(self.run_id)}/"
             f"{limits.max_agent_calls * multiplier} agent calls used, "
             f"{self.elapsed().total_seconds() / 60:.0f}m of "
             f"{limits.max_wall_time_minutes * multiplier:.0f}m elapsed"

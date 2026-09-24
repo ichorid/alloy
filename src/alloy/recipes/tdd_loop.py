@@ -2307,7 +2307,7 @@ def build_graph(ctx: RunContext):
             state.get("memory_calibration", ""),
             level=state.get("complexity") or "medium",
             iterations=state.get("iteration", 0),
-            agent_calls=ctx.store.call_count(ctx.run_id, include_children=True),
+            agent_calls=ctx.store.call_count(ctx.run_id),
             overrun=bool(state.get("limit_hit")),
         )
         try:

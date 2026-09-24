@@ -214,8 +214,8 @@ async def test_remediate_without_bound_remediator_raises(ctx_factory):
         await ctx.remediate("bug-bead-id")
 
 
-async def test_check_limits_includes_three_child_calls_in_parent_agent_budget(ctx_factory, tmp_path):
-    """After a child run with 3 agent calls, parent check_limits uses parent+child total."""
+async def test_check_limits_counts_only_parent_own_agent_calls(ctx_factory, tmp_path):
+    """After a child run with 3 agent calls, parent check_limits uses the parent's own count only."""
     from dataclasses import replace
 
     from alloy.runners import RunnerRegistry
@@ -263,20 +263,29 @@ async def test_check_limits_includes_three_child_calls_in_parent_agent_budget(ct
     total = store.call_count(parent_run_id, include_children=True)
     assert total == parent_calls + child_calls
 
-    recipe = replace(recipe, limits=replace(recipe.limits, max_agent_calls=total - 1))
-    ctx = RunContext(
-        bead=bead,
-        recipe=recipe,
-        run_id=parent_run_id,
-        worktree=SimpleNamespace(path=tmp_path),
-        worktrees=None,
-        registry=RunnerRegistry(recipe.runners, log_dir=tmp_path),
-        store=store,
-        checkpointer=None,
-        log_dir=tmp_path,
-        beads=None,
-    )
-    breach = ctx.check_limits({"iteration": 0, "consiliums": 0})
+    def parent_context(max_agent_calls: int) -> RunContext:
+        scoped = replace(recipe, limits=replace(recipe.limits, max_agent_calls=max_agent_calls))
+        return RunContext(
+            bead=bead,
+            recipe=scoped,
+            run_id=parent_run_id,
+            worktree=SimpleNamespace(path=tmp_path),
+            worktrees=None,
+            registry=RunnerRegistry(scoped.runners, log_dir=tmp_path),
+            store=store,
+            checkpointer=None,
+            log_dir=tmp_path,
+            beads=None,
+        )
+
+    # The child's calls do not roll up: a cap below the parent+child total
+    # but above the parent's own count does not breach.
+    under = parent_context(total - 1)
+    assert under.check_limits({"iteration": 0, "consiliums": 0}) is None
+
+    # The parent's own calls still breach when they reach the cap.
+    at_cap = parent_context(parent_calls)
+    breach = at_cap.check_limits({"iteration": 0, "consiliums": 0})
     assert breach is not None
     assert "max_agent_calls reached" in breach
 

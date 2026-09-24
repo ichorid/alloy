@@ -427,7 +427,8 @@ class Store:
 
     def call_count(self, run_id: str, *, include_children: bool = False) -> int:
         """Agent calls made by the run; with `include_children`, also those of
-        its remediation children, so a child spends the parent's budget."""
+        its remediation children. Limit enforcement uses the per-run count:
+        each run is judged on its own calls only."""
         query = "SELECT COUNT(*) AS n FROM agent_calls WHERE run_id = ?"
         params: tuple[Any, ...] = (run_id,)
         if include_children:

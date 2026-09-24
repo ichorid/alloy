@@ -302,7 +302,7 @@ async def test_run_child_merge_conflict_leaves_parent_at_wip_and_keeps_child_bra
     assert _git(beads_project, "rev-parse", "--verify", branch_name(bug_id), check=False).returncode == 0
 
 
-async def test_run_child_agent_calls_roll_up_into_parent_check_limits(
+async def test_run_child_agent_calls_do_not_roll_up_into_parent_check_limits(
     engine, beads_project, fake_harnesses,
 ):
     parent_id, parent_run_id, _, _ = await _paused_parent_with_wip(
@@ -329,7 +329,14 @@ async def test_run_child_agent_calls_roll_up_into_parent_check_limits(
     total = engine.store.call_count(parent_run_id, include_children=True)
     assert total == parent_calls_before + child_calls
 
+    # The child's calls do not roll up: a cap below the parent+child total
+    # but above the parent's own count does not breach.
     recipe = replace(load_config(), limits=replace(load_config().limits, max_agent_calls=total - 1))
+    parent_ctx.recipe = recipe
+    assert parent_ctx.check_limits({"iteration": 0, "consiliums": 0}) is None
+
+    # The parent's own calls still breach when they reach the cap.
+    recipe = replace(load_config(), limits=replace(load_config().limits, max_agent_calls=parent_calls_before))
     parent_ctx.recipe = recipe
     breach = parent_ctx.check_limits({"iteration": 0, "consiliums": 0})
     assert breach is not None
