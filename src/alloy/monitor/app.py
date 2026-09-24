@@ -19,15 +19,22 @@ from textual.widgets import DataTable, Footer, Header, Static
 
 from alloy.monitor.icons import icon, resolve_mode
 from alloy.monitor.render import (
-    COLUMNS,
     column_align,
+    detail_panel_border_subtitle,
+    detail_panel_border_subtitle_epic,
+    detail_panel_border_subtitle_queue,
+    detail_panel_border_title,
+    detail_panel_border_title_epic,
+    detail_panel_border_title_queue,
+    epic_detail,
     format_detail,
     header_line,
     limits_lines,
     panel_border_subtitle,
     panel_border_title,
-    run_rows,
+    queue_detail,
     status_badge,
+    task_tree_rows,
     title_line,
     visible_columns,
 )
@@ -95,6 +102,7 @@ class MonitorApp(App[None]):
         self._snapshot: dict[str, Any] | None = None
         self._probed_limits: dict[str, Any] | None = None
         self._marked_row: int | None = None
+        self._expanded: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -143,37 +151,40 @@ class MonitorApp(App[None]):
         self.call_from_thread(self.apply_snapshot, snapshot)
 
     def apply_snapshot(self, snapshot: dict[str, Any], *, width: int | None = None) -> None:
-        """Rebuild the runs table keyed by run_id, preserving the cursor where possible."""
+        """Rebuild the runs table from the task tree, preserving the cursor where possible."""
         self._snapshot = snapshot
         table_width = width if width is not None else self.size.width
         self._sync_runs_table_columns(table_width)
         table = self.query_one("#runs", DataTable)
-        selected = self._selected_run_id(table)
+        selected = self._selected_row_key(table)
         self._marked_row = None
         table.clear()
-        run_ids = [run["run_id"] for run in snapshot.get("runs") or []]
         visible = visible_columns(table_width)
         mode = resolve_mode(interactive=True)
-        if run_ids:
+        tree_rows = task_tree_rows(snapshot, self._expanded, table_width, mode=mode)
+        keys = [
+            tree_row.key.removeprefix("run/") if tree_row.kind == "run" else tree_row.key
+            for tree_row in tree_rows
+        ]
+        if keys:
             if selected is None:
                 target = 0
-            elif selected in run_ids:
-                target = run_ids.index(selected)
+            elif selected in keys:
+                target = keys.index(selected)
             else:
-                target = len(run_ids) - 1
+                target = len(keys) - 1
         else:
             target = None
-        for run_id, cells in zip(run_ids, run_rows(snapshot, mode=mode)):
-            by_column = dict(zip(COLUMNS, cells))
+        for key, tree_row in zip(keys, tree_rows):
             row = []
             for column in visible:
-                value = by_column[column]
-                if column == "status":
-                    value = status_badge(value, mode)
-                elif column_align(column) == "right":
+                value = tree_row.cells[column]
+                if column == "status" and tree_row.kind == "run":
+                    value = status_badge(str(value), mode)
+                elif column_align(column) == "right" and not isinstance(value, Text):
                     value = Text(value, justify="right")
                 row.append(value)
-            table.add_row(*row, key=run_id)
+            table.add_row(*row, key=key)
         if target is not None:
             table.move_cursor(row=target)
             self._sync_selected_marker(table, target)
@@ -268,18 +279,54 @@ class MonitorApp(App[None]):
             return None
         return next((run for run in self._snapshot.get("runs") or [] if run["run_id"] == run_id), None)
 
+    def _selected_row_key(self, table: DataTable) -> str | None:
+        if table.row_count == 0 or table.cursor_row is None:
+            return None
+        try:
+            return str(table.ordered_rows[table.cursor_row].key.value)
+        except IndexError:
+            return None
+
     def _refresh_detail(self, *, width: int | None = None) -> None:
-        """Re-render the detail pane for the run under the cursor; hide it when there is none."""
+        """Re-render the detail pane for the row under the cursor; hide when unsupported."""
         detail = self.query_one("#detail", Static)
         if not detail.display:
             return
+        table = self.query_one("#runs", DataTable)
+        row_key = self._selected_row_key(table)
+        snapshot = self._snapshot
+        if row_key is None or snapshot is None:
+            detail.display = False
+            return
+        mode = resolve_mode(interactive=True)
+        table_width = width if width is not None else self.size.width
+        if row_key == "queue":
+            detail.update("\n".join(queue_detail(snapshot, mode=mode)))
+            detail.border_title = detail_panel_border_title_queue()
+            detail.border_subtitle = detail_panel_border_subtitle_queue(snapshot)
+            return
+        if row_key.startswith("epic/") and not row_key.endswith("/done"):
+            epic_id = row_key.removeprefix("epic/")
+            if "/" not in epic_id:
+                epic = next(
+                    (entry for entry in snapshot.get("epics") or []
+                     if entry.get("epic_id") == epic_id),
+                    None,
+                )
+                if epic is not None:
+                    detail.update("\n".join(epic_detail(epic, mode=mode)))
+                    detail.border_title = detail_panel_border_title_epic(epic)
+                    detail.border_subtitle = detail_panel_border_subtitle_epic(epic)
+                    return
         run = self._selected_run()
         if run is None:
             detail.display = False
             return
-        root = (self._snapshot or {}).get("root")
+        root = snapshot.get("root")
         log_dir = None if root is None else f"{root}/logs/{run['run_id']}"
-        detail.update(format_detail(run, width if width is not None else self.size.width, log_dir))
+        detail.update(format_detail(run, table_width, log_dir, mode=mode))
+        detail.border_title = detail_panel_border_title(run)
+        detail.border_subtitle = detail_panel_border_subtitle(run)
 
     def action_cursor_down(self) -> None:
         self.query_one("#runs", DataTable).action_cursor_down()
@@ -317,7 +364,7 @@ class MonitorApp(App[None]):
         if detail.display:
             detail.display = False
             return
-        if self._selected_run() is None:
+        if self._selected_row_key(self.query_one("#runs", DataTable)) is None:
             return
         detail.display = True
         self._refresh_detail()

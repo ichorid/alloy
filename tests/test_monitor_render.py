@@ -333,30 +333,8 @@ def test_header_line_reports_lifetime_totals():
 # -- alloy-w9d.10: parent column, limits_lines, session totals --------------
 
 
-def test_columns_start_with_parent():
-    assert COLUMNS[0] == "parent"
-
-
-def test_parent_column_shows_parent_bead_id_for_child_run():
-    parent = _run(
-        run_id="parent-run", bead_id="alloy-parent", parent_bead_id=None, complexity="simple",
-    )
-    child = _run(
-        run_id="child-run", bead_id="alloy-child", parent_run_id="parent-run",
-        parent_bead_id="alloy-parent",
-    )
-    rows = run_rows(_snapshot(runs=[parent, child]))
-
-    child_row = next(row for row in rows if row[1] == "alloy-child")
-    parent_row = next(row for row in rows if row[1] == "alloy-parent")
-    assert child_row[0] == "alloy-parent"
-    assert "└" not in child_row[1]
-    assert parent_row[0] == "-"
-
-
-def test_top_level_run_parent_column_is_dash():
-    row = run_rows(_snapshot(runs=[_run(parent_bead_id=None)]))[0]
-    assert row[0] == "-"
+def test_columns_start_with_bead():
+    assert COLUMNS[0] == "bead"
 
 
 def test_limits_lines_renders_claude_windows_and_unavailable_codex():
@@ -703,7 +681,7 @@ def test_breakpoint_constants_are_named_and_exported():
 def test_column_tiers_label_wide_only_columns():
     from alloy.monitor.render import column_tier
 
-    for name in ("parent", "stage", "cons", "complexity"):
+    for name in ("stage", "cons", "complexity", "now"):
         assert column_tier(name) == "wide"
 
 
@@ -716,7 +694,7 @@ def test_column_tiers_label_comfortable_only_column():
 def test_column_tiers_label_always_shown_columns():
     from alloy.monitor.render import column_tier
 
-    always = {"bead", "status", "iter", "tests", "elapsed", "now", "tokens", "judge"}
+    always = {"bead", "status", "iter", "tests", "elapsed", "tokens", "judge"}
     for name in always:
         assert column_tier(name) == "always"
 
@@ -730,7 +708,7 @@ def test_visible_columns_at_wide_width_includes_every_column():
 def test_visible_columns_at_comfortable_width_omits_wide_only_columns():
     from alloy.monitor.render import COLUMNS, COMFORTABLE_WIDTH, visible_columns
 
-    expected = tuple(name for name in COLUMNS if name not in {"parent", "stage", "cons", "complexity"})
+    expected = tuple(name for name in COLUMNS if name not in {"stage", "cons", "complexity", "now"})
     assert visible_columns(COMFORTABLE_WIDTH) == expected
     assert visible_columns(99) == expected
 
@@ -739,7 +717,7 @@ def test_visible_columns_below_comfortable_width_also_omits_recipe():
     from alloy.monitor.render import COLUMNS, visible_columns
 
     expected = tuple(
-        name for name in COLUMNS if name not in {"parent", "stage", "cons", "complexity", "recipe"}
+        name for name in COLUMNS if name not in {"stage", "cons", "complexity", "now", "recipe"}
     )
     assert visible_columns(79) == expected
 
@@ -828,7 +806,7 @@ def test_run_rows_nerd_formats_tests_summary_with_pass_and_fail_counts():
 
     row = run_rows(snapshot, mode="nerd")[0]
 
-    assert row[7] == f"{ok}3 {fail}1"
+    assert row[6] == f"{ok}3 {fail}1"
 
 
 def test_run_rows_nerd_formats_tests_summary_with_pass_only():
@@ -837,7 +815,7 @@ def test_run_rows_nerd_formats_tests_summary_with_pass_only():
 
     row = run_rows(snapshot, mode="nerd")[0]
 
-    assert row[7] == f"{ok}3"
+    assert row[6] == f"{ok}3"
 
 
 def test_run_rows_nerd_leaves_unparseable_tests_summary_verbatim():
@@ -845,7 +823,7 @@ def test_run_rows_nerd_leaves_unparseable_tests_summary_verbatim():
 
     row = run_rows(snapshot, mode="nerd")[0]
 
-    assert row[7] == "flaky"
+    assert row[6] == "flaky"
 
 
 def test_run_rows_nerd_checks_with_exit_code_zero_shows_ok_glyph_and_total():
@@ -855,7 +833,7 @@ def test_run_rows_nerd_checks_with_exit_code_zero_shows_ok_glyph_and_total():
 
     row = run_rows(_snapshot(runs=[run]), mode="nerd")[0]
 
-    assert row[7] == f"{ok}14"
+    assert row[6] == f"{ok}14"
 
 
 def test_run_rows_nerd_checks_with_exit_code_one_shows_fail_glyph_and_total():
@@ -865,7 +843,7 @@ def test_run_rows_nerd_checks_with_exit_code_one_shows_fail_glyph_and_total():
 
     row = run_rows(_snapshot(runs=[run]), mode="nerd")[0]
 
-    assert row[7] == f"{fail}14"
+    assert row[6] == f"{fail}14"
 
 
 def test_run_rows_ascii_checks_still_shows_n_checks():
@@ -874,7 +852,7 @@ def test_run_rows_ascii_checks_still_shows_n_checks():
 
     row = run_rows(_snapshot(runs=[run]))[0]
 
-    assert row[7] == "14 checks"
+    assert row[6] == "14 checks"
 
 
 def test_run_rows_ascii_mode_keeps_tests_summary_verbatim():
@@ -882,7 +860,7 @@ def test_run_rows_ascii_mode_keeps_tests_summary_verbatim():
 
     row = run_rows(snapshot, mode="ascii")[0]
 
-    assert row[7] == "3 passed, 1 failed"
+    assert row[6] == "3 passed, 1 failed"
 
 
 # -- alloy-3g0.6: complexity glyph bar in nerd/ascii modes ---------------------
@@ -891,32 +869,32 @@ def test_run_rows_ascii_mode_keeps_tests_summary_verbatim():
 def test_run_rows_nerd_simple_complexity_shows_one_block_glyph():
     row = run_rows(_snapshot(runs=[_run(complexity="simple")]), mode="nerd")[0]
 
-    assert row[12] == "▂"
+    assert row[11] == "▂"
 
 
 def test_run_rows_nerd_medium_complexity_shows_two_block_glyph():
     row = run_rows(_snapshot(runs=[_run(complexity="medium")]), mode="nerd")[0]
 
-    assert row[12] == "▂▄"
+    assert row[11] == "▂▄"
 
 
 def test_run_rows_nerd_complex_complexity_shows_three_block_glyph():
     row = run_rows(_snapshot(runs=[_run(complexity="complex")]), mode="nerd")[0]
 
-    assert row[12] == "▂▄▆"
+    assert row[11] == "▂▄▆"
 
 
 def test_run_rows_nerd_none_complexity_shows_dash():
     row = run_rows(_snapshot(runs=[_run(complexity=None)]), mode="nerd")[0]
 
-    assert row[12] == "-"
+    assert row[11] == "-"
 
 
 def test_run_rows_ascii_mode_keeps_complexity_as_word():
     for level in ("simple", "medium", "complex"):
         row = run_rows(_snapshot(runs=[_run(complexity=level)]), mode="ascii")[0]
 
-        assert row[12] == level
+        assert row[11] == level
 
 
 # -- alloy-3g0.7: status pills -------------------------------------------------
