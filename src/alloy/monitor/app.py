@@ -172,6 +172,7 @@ class MonitorApp(App[None]):
         self._sync_runs_table_columns(table_width)
         table = self.query_one("#runs", DataTable)
         selected_key = self._selected_row_key(table)
+        scroll_x, scroll_y = table.scroll_x, table.scroll_y
         self._marked_row = None
         table.clear()
         visible = visible_columns(table_width)
@@ -202,8 +203,11 @@ class MonitorApp(App[None]):
             else:
                 target = len(row_keys) - 1
         if target is not None:
-            table.move_cursor(row=target)
+            table.move_cursor(row=target, scroll=False)
             self._sync_selected_marker(table, target)
+        # clear() resets the viewport; a periodic refresh must not throw away where
+        # the user scrolled. Restore once the rebuilt table has been laid out.
+        self.call_after_refresh(table.scroll_to, scroll_x, scroll_y, animate=False)
         self.title = title_line(snapshot, table_width, mode)
         self.query_one("#stats", Static).update(header_line(snapshot, mode))
         self._sync_panel_chrome(snapshot, mode)
