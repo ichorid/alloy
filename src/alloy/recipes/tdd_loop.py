@@ -59,6 +59,7 @@ from alloy.models import (
     ScopeVerdict,
     TestsOutput,
     VerifierAction,
+    _load_calibration,
     clip,
     extract_bug_reports,
     format_calibration,
@@ -83,6 +84,10 @@ PER_FILE_DIFF_CHARS = 4000
 """Per-file budget inside MAX_DIFF_CHARS so one generated file cannot hide the rest."""
 PROJECT_CONTEXT_CHARS = 6000
 """Hard cap on the project context packet handed to the scope and triage roles."""
+REMEDIATION_MIN_AGENT_CALLS = 6
+"""Recipe minimum for one remediation child (context, estimate, tests,
+implement, verifier, judge); the pre-dispatch headroom estimate never goes
+below this, so an empty alloy:calibration still gates deterministically."""
 log = logging.getLogger(__name__)
 
 
@@ -1177,6 +1182,17 @@ def untriaged(state: TddState) -> list[dict[str, Any]]:
     return [bug for bug in state.get("reported_bugs", []) if bug["title"] not in done]
 
 
+def remediation_call_estimate(state: TddState) -> float:
+    """Estimated agent calls a remediation child will spend: the stored
+    alloy:calibration mean for this run's complexity level, floored at the
+    recipe minimum so an empty or unreadable calibration still gates
+    deterministically."""
+    data = _load_calibration(state.get("memory_calibration", ""))
+    entry = data.get(state.get("complexity") or "medium") or {}
+    mean = float(entry.get("mean_agent_calls", 0.0) or 0.0)
+    return max(mean, float(REMEDIATION_MIN_AGENT_CALLS))
+
+
 def _implementer_changed_tests(ctx: RunContext, state: TddState) -> list[str]:
     """Test files whose contents moved since prove_red: edited, deleted or
     added by the implementer, as opposed to written by the tests role."""
@@ -1994,6 +2010,20 @@ def build_graph(ctx: RunContext):
                         "deep, so the bug is filed unclaimed and this run stops.",
                         f"Fix {bug_id} (or merge its fix into this branch), then resume; "
                         "the implementer continues from there.",
+                    )}
+                estimate = remediation_call_estimate(state)
+                allowed_calls = ctx.recipe.limits.max_agent_calls * ctx.budget(state)
+                remaining = allowed_calls - ctx.store.call_count(ctx.run_id)
+                if remaining < estimate:
+                    return {**update, "blocking_bug": {**entry, "reason": verdict.reason},
+                            **_park(
+                        f"agent call headroom too low to start remediation of blocking "
+                        f"bug '{report.title}' ({bug_id}): {remaining}/{allowed_calls} "
+                        f"calls remain, estimated {estimate:g} needed. Nothing was spent "
+                        "on remediation.",
+                        f"Fix {bug_id} (or merge its fix into this branch), then resume; "
+                        "resuming grants a fresh budget window and the implementer "
+                        "continues from there.",
                     )}
                 return {
                     **update,
