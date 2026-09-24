@@ -5,7 +5,8 @@ in `~/.config/cursor/auth.json`; the same token powers
 ``cursor-agent status`` and the dashboard Connect endpoint behind the CLI
 ``/usage`` view. ``probe`` POSTs to
 ``api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`` and
-maps ``planUsage.totalPercentUsed`` to one ``total`` cycle window.
+maps ``planUsage.totalPercentUsed`` to a ``total`` cycle window and, when
+present, ``planUsage.apiPercentUsed`` to a second ``api`` window.
 ``billingCycleEnd`` (epoch ms) becomes ``resets_at``. When the dashboard
 response has no plan usage, the legacy ``cursor.com/api/usage`` cookie
 endpoint is tried for older personal-plan shapes.
@@ -133,21 +134,23 @@ def _count(value: Any) -> float | None:
     return float(value)
 
 
-def _dashboard_window(payload: dict[str, Any]) -> dict[str, Any] | None:
-    """One `total` cycle window from GetCurrentPeriodUsage, or None."""
+def _dashboard_windows(payload: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Cycle window(s) from GetCurrentPeriodUsage, or None when total is missing."""
     plan = payload.get("planUsage")
     if not isinstance(plan, dict):
         return None
     used = plan.get("totalPercentUsed")
     if isinstance(used, bool) or not isinstance(used, (int, float)):
         return None
-    return window(
-        "total",
-        "cycle",
-        float(used),
-        _epoch_ms_to_iso(payload.get("billingCycleEnd")),
-        None,
-    )
+    resets_at = _epoch_ms_to_iso(payload.get("billingCycleEnd"))
+    windows = [
+        window("total", "cycle", float(used), resets_at, None),
+    ]
+    api_used = plan.get("apiPercentUsed")
+    if isinstance(api_used, bool) or not isinstance(api_used, (int, float)):
+        return windows
+    windows.append(window("api", "API", float(api_used), resets_at, None))
+    return windows
 
 
 def _legacy_total_window(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -216,7 +219,7 @@ def probe(
     fetch: Fetch = default_fetch,
     legacy_fetch: Fetch = default_legacy_fetch,
 ) -> dict[str, Any]:
-    """Current Cursor cycle usage as one window, or why it could not be read.
+    """Current Cursor cycle (and optional API) usage, or why it could not be read.
 
     Errors: 'no credentials', 'HTTP <status>', 'bad response',
     'no quota in response'.
@@ -232,9 +235,9 @@ def probe(
         except ValueError:
             return unavailable(HARNESS, "bad response")
         if isinstance(payload, dict):
-            total = _dashboard_window(payload)
-            if total is not None:
-                return _available_sample(windows=[total], source=SOURCE)
+            windows = _dashboard_windows(payload)
+            if windows is not None:
+                return _available_sample(windows=windows, source=SOURCE)
 
     legacy_status, legacy_body = _fetch_legacy(token, legacy_fetch)
     if legacy_status == 200:
