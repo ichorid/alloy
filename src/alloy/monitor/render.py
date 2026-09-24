@@ -424,6 +424,8 @@ def status_color(status: str) -> str:
         "judge": _COLOR_MAGENTA,
         "blocked": _COLOR_RED,
         "done": _COLOR_GREEN,
+        "failed": _COLOR_RED,
+        "waiting-human": _COLOR_MAGENTA,
         "ready": _COLOR_DIM,
     }.get(status, _COLOR_DIM)
 
