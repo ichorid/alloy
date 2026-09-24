@@ -8,6 +8,9 @@ No Textual involved -- see tests/test_monitor_view.py for the pilot tests.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from alloy.monitor.icons import icon
 from alloy.monitor.render import COLUMNS, header_line, run_rows
 
@@ -459,6 +462,77 @@ def _usage_bar_indices(line: str) -> list[int]:
     return [match.start() for match in re.finditer(r"\[[█░]", line)]
 
 
+def test_limits_lines_cursor_cycle_and_api_from_probe_on_one_row(tmp_path: Path):
+    from test_limits_cursor import (
+        RecordingFetch,
+        _dashboard_payload_with_api,
+        write_auth,
+    )
+
+    from alloy.limits.cursor import probe
+    from alloy.monitor.render import limits_lines
+
+    home = tmp_path / "home"
+    write_auth(home)
+    fetch = RecordingFetch(status=200, body=json.dumps(_dashboard_payload_with_api()))
+
+    cursor_sample = probe(home, fetch)
+    snapshot = _snapshot()
+    snapshot["limits"] = {"cursor": cursor_sample}
+
+    lines = limits_lines(snapshot)
+    assert len(lines) == 1
+    line = " ".join(lines[0].split())
+    assert "cycle" in line
+    assert "25%" in line or "24%" in line
+    assert any(token in line for token in ("API", "API usage"))
+    assert "68%" in line or "67%" in line
+    assert len(_usage_bar_indices(lines[0])) == 2
+
+
+def test_limits_lines_align_cursor_api_window_with_codex_weekly(tmp_path: Path):
+    from test_limits_cursor import (
+        RecordingFetch,
+        _dashboard_payload_with_api,
+        write_auth,
+    )
+
+    from alloy.limits import window
+    from alloy.limits.cursor import probe
+    from alloy.monitor.render import limits_lines
+
+    home = tmp_path / "home"
+    write_auth(home)
+    fetch = RecordingFetch(status=200, body=json.dumps(_dashboard_payload_with_api()))
+
+    cursor_sample = probe(home, fetch)
+    snapshot = _snapshot()
+    snapshot["limits"] = {
+        "codex": {
+            "harness": "codex",
+            "installed": True,
+            "available": True,
+            "fetched_at": "2026-09-23T10:00:00+00:00",
+            "as_of": "2026-09-23T10:00:00+00:00",
+            "source": "session-rollout",
+            "error": None,
+            "status": None,
+            "windows": [
+                window("primary", "5h", 7.0, None),
+                window("secondary", "weekly", 4.0, None),
+            ],
+        },
+        "cursor": cursor_sample,
+    }
+
+    lines = limits_lines(snapshot)
+    assert len(lines) == 2
+    codex_line, cursor_line = lines
+    codex_second_bar = _usage_bar_indices(codex_line)[1]
+    cursor_second_bar = _usage_bar_indices(cursor_line)[1]
+    assert codex_second_bar == cursor_second_bar
+
+
 def test_limits_lines_align_weekly_window_across_harnesses():
     from alloy.limits import window
     from alloy.monitor.render import limits_lines
@@ -583,6 +657,35 @@ def test_limits_line_stale_window_renders_stale_badge():
     line = _claude_limits_line(win)
 
     assert "[#e3b341][stale][/]" in line
+
+
+def test_limits_line_two_window_row_keeps_first_window_reset_suffix():
+    from alloy.limits import window
+    from alloy.monitor.render import limits_lines
+
+    resets_at = "2026-09-22T17:30:00+00:00"
+    snapshot = _snapshot()
+    snapshot["limits"] = {
+        "codex": {
+            "harness": "codex",
+            "installed": True,
+            "available": True,
+            "fetched_at": "2026-09-23T10:00:00+00:00",
+            "as_of": "2026-09-23T10:00:00+00:00",
+            "source": "session-rollout",
+            "error": None,
+            "status": None,
+            "windows": [
+                window("primary", "5h", 7.0, resets_at),
+                window("secondary", "weekly", 4.0, None),
+            ],
+        },
+    }
+
+    line = limits_lines(snapshot)[0]
+
+    assert "(resets 17:30)" in line
+    assert line.index("(resets 17:30)") < line.index("weekly")
 
 
 def test_limits_line_unavailable_harness_renders_error_in_red():

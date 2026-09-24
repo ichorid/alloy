@@ -461,7 +461,16 @@ def _limits_line(harness: str, sample: dict[str, Any]) -> str:
     parts = [label]
     windows = sample.get("windows") or []
     for index, win in enumerate(windows):
-        parts.append(_limits_window_segment(win, align_bar=index < LIMITS_ALIGNED_WINDOW_COUNT))
+        resets_at = win.get("resets_at")
+        next_resets_at = windows[index + 1].get("resets_at") if index + 1 < len(windows) else None
+        show_resets = resets_at != next_resets_at
+        parts.append(
+            _limits_window_segment(
+                win,
+                align_bar=index < LIMITS_ALIGNED_WINDOW_COUNT,
+                show_resets=show_resets,
+            )
+        )
     line = "  ".join(parts)
     stale = _stale_as_of(sample.get("as_of"))
     if stale:
@@ -491,12 +500,14 @@ def _limits_window_head(label: str, percent: int, *, align_bar: bool) -> str:
     return f"{label} {percent}%"
 
 
-def _limits_window_segment(win: dict[str, Any], *, align_bar: bool = False) -> str:
+def _limits_window_segment(
+    win: dict[str, Any], *, align_bar: bool = False, show_resets: bool = True
+) -> str:
     percent = int(win["used_percent"])
     color = _usage_color(percent)
     head = _limits_window_head(win["label"], percent, align_bar=align_bar)
     segment = f"[{color}]{head} {_usage_bar(percent)}[/]"
-    resets = _resets_hhmm(win.get("resets_at"))
+    resets = _resets_hhmm(win.get("resets_at")) if show_resets else None
     if resets:
         segment += f" (resets {resets})"
     if win.get("stale"):
