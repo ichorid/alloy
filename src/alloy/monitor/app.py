@@ -237,7 +237,8 @@ class MonitorApp(App[None]):
         effective = dict(snapshot_limits)
         if self._probed_limits:
             effective.update(self._probed_limits)
-        lines = limits_lines({"limits": effective})
+        mode = resolve_mode(interactive=True)
+        lines = limits_lines({"limits": effective}, mode=mode, width=self.size.width)
         if not lines:
             limits_widget.display = False
             return
