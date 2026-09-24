@@ -104,6 +104,11 @@ the bead, and remove the worktree. Recipes with `landing: {mode: off}` stop at
 children share one worktree (`alloy/<epic-id>`); each child closes on success
 and the epic lands when every descendant is closed.
 
+Remediation is bounded by each run's own budget: a run is capped by its own
+`max_agent_calls` (remediation children spend their own budget, not the
+parent's), while wall time spent in children still counts toward the parent's
+`max_wall_time_minutes`.
+
 ```bash
 bd update <id> --set-metadata alloy_complexity=complex
 alloy recipes --probe                     # probe all recipes' distinct tier entries

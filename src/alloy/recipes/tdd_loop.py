@@ -59,6 +59,7 @@ from alloy.models import (
     ScopeVerdict,
     TestsOutput,
     VerifierAction,
+    _load_calibration,
     clip,
     extract_bug_reports,
     format_calibration,
@@ -75,7 +76,12 @@ from alloy.diffs import clip_diff_per_file
 from alloy.memory_embed import is_block_stale, last_review_date
 from alloy.prompts import assemble
 from alloy.runtime import RunContext
-from alloy.verify import detect_commands, normalize_command
+from alloy.verify import (
+    detect_commands,
+    diff_derived_test_paths,
+    normalize_command,
+    verifier_check_requests,
+)
 from alloy.worktree import is_test_path
 
 MAX_DIFF_CHARS = 12000
@@ -83,6 +89,10 @@ PER_FILE_DIFF_CHARS = 4000
 """Per-file budget inside MAX_DIFF_CHARS so one generated file cannot hide the rest."""
 PROJECT_CONTEXT_CHARS = 6000
 """Hard cap on the project context packet handed to the scope and triage roles."""
+REMEDIATION_MIN_AGENT_CALLS = 6
+"""Recipe minimum for one remediation child (context, estimate, tests,
+implement, verifier, judge); the pre-dispatch headroom estimate never goes
+below this, so an empty alloy:calibration still gates deterministically."""
 log = logging.getLogger(__name__)
 
 
@@ -678,14 +688,16 @@ def acceptance_prompt(
 
 VERIFIER_STATIC = """You are choosing the next verification check for a coding task. You are read-only:
 you cannot edit code and you never run anything yourself. Do not modify any file. Alloy runs
-the one command you name, in the worktree root, exactly as written, and shows you the result.
+the command(s) you name, in the worktree root, exactly as written, and shows you the result.
 
 Answer with the structured output. Either:
-- action "run": exactly one shell command Alloy will run in the worktree root, its
-  purpose, its kind (regression, targeted, lint, typecheck, build or custom -- any
-  project script counts as custom) and whether it is required. A red required check
-  sends the task straight back to the implementer; a red optional check is only
-  reported to you.
+- action "run": one or more shell commands Alloy will run in the worktree root. For a single
+  check, set `command`, `purpose`, `kind` (regression, targeted, lint, typecheck, build or
+  custom -- any project script counts as custom) and `required`. For several checks at once,
+  leave `command` empty and list them in `checks` (each entry has command, purpose, kind,
+  required). Alloy runs every listed check before asking you again. A red required check
+  sends the task straight back to the implementer after a single-check run; after a multi-check
+  batch it waits for your stop action. A red optional check is only reported to you.
 - action "stop": when the evidence is sufficient. Give the reason and list the
   remaining_risks you could not check.
 
@@ -715,6 +727,7 @@ def verifier_prompt(
     instructions: str = "",
     *,
     memory: str = "",
+    repo_root: Path | None = None,
     resumed: bool = False,
 ) -> str:
     """`resumed` is the continuation variant sent into the tests writer's own
@@ -732,7 +745,10 @@ def verifier_prompt(
             )
     else:
         last_text = "(nothing has run yet this run)"
-    hints = f"## Hints from the repository (not yet verified)\n{_render_check_hints(context)}"
+    hints = (
+        "## Hints from the repository (not yet verified)\n"
+        f"{_render_check_hints(context, changed_files=changed_files, repo_root=repo_root)}"
+    )
     baseline = (
         "## Baseline commands (the tests role's targeted checks; red before implementation)\n"
         f"{_render_checks(baseline_checks or []) or '(none)'}"
@@ -976,10 +992,21 @@ def existing_lessons(memory: ProjectMemory | None) -> dict[str, str]:
 # --------------------------------------------------------------------------
 
 
-def _render_check_hints(context: dict[str, Any] | None) -> str:
+def _render_check_hints(
+    context: dict[str, Any] | None,
+    *,
+    changed_files: list[str] | None = None,
+    repo_root: Path | None = None,
+) -> str:
     """Commands the context role, the bead or autodetection suggested. None of
     them has run; the verifier decides whether any of them is worth running."""
-    hints = (context or {}).get("check_hints") or []
+    hints: list[str] = list((context or {}).get("check_hints") or [])
+    if changed_files:
+        root = repo_root or Path.cwd()
+        for path in diff_derived_test_paths(changed_files, root):
+            command = f"uv run pytest -n 0 -q {path}"
+            if command not in hints:
+                hints.append(command)
     if not hints:
         return "(none; find the project's own test, lint and build commands)"
     return "\n".join(f"- `{hint}`" for hint in hints)
@@ -1175,6 +1202,17 @@ def untriaged(state: TddState) -> list[dict[str, Any]]:
     return [bug for bug in state.get("reported_bugs", []) if bug["title"] not in done]
 
 
+def remediation_call_estimate(state: TddState) -> float:
+    """Estimated agent calls a remediation child will spend: the stored
+    alloy:calibration mean for this run's complexity level, floored at the
+    recipe minimum so an empty or unreadable calibration still gates
+    deterministically."""
+    data = _load_calibration(state.get("memory_calibration", ""))
+    entry = data.get(state.get("complexity") or "medium") or {}
+    mean = float(entry.get("mean_agent_calls", 0.0) or 0.0)
+    return max(mean, float(REMEDIATION_MIN_AGENT_CALLS))
+
+
 def _implementer_changed_tests(ctx: RunContext, state: TddState) -> list[str]:
     """Test files whose contents moved since prove_red: edited, deleted or
     added by the implementer, as opposed to written by the tests role."""
@@ -1278,6 +1316,7 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
             baseline_checks=state.get("baseline_checks", []),
             instructions=state.get("instructions", ""),
             memory=state.get("memory_block", ""),
+            repo_root=ctx.worktree.path,
         )
         # The verifier continues the tests writer's session: the agent that
         # wrote the tests chooses how to verify them, context intact.
@@ -1317,7 +1356,8 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
         action = failure if result is None else answer_of(
             "verifier", result, model_cls=VerifierAction, default=failure
         )
-        if action is failure or (action.action == "run" and not action.command.strip()):
+        requests = verifier_check_requests(action) if action.action == "run" else []
+        if action is failure or (action.action == "run" and not requests):
             why = failure.reason if action is failure else \
                 "verifier proposed a run without a command"
             stop = VerifierAction(
@@ -1346,49 +1386,84 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
         unrunnable commands in a row ask a human."""
         iteration = state.get("iteration", 0)
         action = VerifierAction.model_validate(state.get("pending_check") or {})
-        result = await ctx.run_check(action.to_request())
-        result.iteration = iteration
-        record = result.model_dump(mode="json")
-        checks = [*(state.get("checks") or []), record]
-        iteration_checks = int(state.get("iteration_checks", 0) or 0) + 1
-        ctx.set_tests_summary(f"{len(checks)} checks, last: {result.headline()}")
+        requests = verifier_check_requests(action)
+        batch = len(requests) > 1
+        records: list[dict[str, Any]] = []
+        streak = int(state.get("unrunnable_streak", 0) or 0)
+        failed_required: CheckResult | None = None
+
+        for request in requests:
+            result = await ctx.run_check(request)
+            result.iteration = iteration
+            records.append(result.model_dump(mode="json"))
+            if not result.runnable:
+                streak += 1
+                if streak >= 2:
+                    checks = [*(state.get("checks") or []), *records]
+                    unrunnable = [CheckResult.model_validate(c) for c in checks[-2:]]
+                    iteration_checks = int(state.get("iteration_checks", 0) or 0) + len(records)
+                    return {
+                        "stage": "verify",
+                        "checks": records,
+                        "last_check": records[-1],
+                        "iteration_checks": iteration_checks,
+                        "unrunnable_streak": streak,
+                        "verify_route": "human_gate",
+                        "resume_to": "implement",
+                        "decision": JudgeDecision(
+                            decision="human",
+                            reason="the verifier proposed two commands in a row that could "
+                            "not run: " + ", ".join(
+                                f"`{c.command}` ({c.headline()})" for c in unrunnable
+                            ),
+                            next_instructions="Check the worktree's toolchain or tell the "
+                            "implementer what to verify, then resume; the implementer "
+                            "runs again.",
+                        ).model_dump(),
+                    }
+            else:
+                streak = 0
+            if result.required and not result.ok:
+                failed_required = result
+
+        checks = [*(state.get("checks") or []), *records]
+        iteration_checks = int(state.get("iteration_checks", 0) or 0) + len(records)
+        last = CheckResult.model_validate(records[-1]) if records else None
+        ctx.set_tests_summary(
+            f"{len(checks)} checks, last: {last.headline()}" if last else f"{len(checks)} checks"
+        )
         update: dict[str, Any] = {
-            "stage": "verify", "checks": [record], "last_check": record,
-            "iteration_checks": iteration_checks, "verify_route": "verifier_step",
-            "unrunnable_streak": 0,
+            "stage": "verify",
+            "checks": records,
+            "last_check": records[-1] if records else None,
+            "iteration_checks": iteration_checks,
+            "verify_route": "verifier_step",
+            "unrunnable_streak": streak,
         }
 
-        if not result.runnable:
-            streak = int(state.get("unrunnable_streak", 0) or 0) + 1
-            update["unrunnable_streak"] = streak
-            if streak >= 2:
-                unrunnable = [CheckResult.model_validate(c) for c in checks[-2:]]
-                update.update(
-                    verify_route="human_gate",
-                    resume_to="implement",
-                    decision=JudgeDecision(
-                        decision="human",
-                        reason="the verifier proposed two commands in a row that could "
-                        "not run: " + ", ".join(
-                            f"`{c.command}` ({c.headline()})" for c in unrunnable
-                        ),
-                        next_instructions="Check the worktree's toolchain or tell the "
-                        "implementer what to verify, then resume; the implementer "
-                        "runs again.",
-                    ).model_dump(),
-                )
+        if batch:
+            # After a multi-check batch the verifier sees every result and
+            # decides what to do next; the red-required shortcut below only
+            # applies to single-check runs.
             return update
 
-        if result.required and not result.ok:
-            reason = f"required check `{result.command}` failed ({result.headline()})"
+        if last is not None and not last.runnable:
+            update["unrunnable_streak"] = streak
+            return update
+
+        if failed_required is not None:
+            reason = (
+                f"required check `{failed_required.command}` failed "
+                f"({failed_required.headline()})"
+            )
             update.update(
                 verify_route="guard",
                 decision=JudgeDecision(
                     decision="retry",
                     reason=reason,
                     next_instructions=(
-                        f"The required check `{result.command}` exited "
-                        f"{result.exit_code}; see '## Failed check'. Make it pass "
+                        f"The required check `{failed_required.command}` exited "
+                        f"{failed_required.exit_code}; see '## Failed check'. Make it pass "
                         "without weakening or skipping it."
                     ),
                 ).model_dump(),
@@ -1957,6 +2032,20 @@ def build_graph(ctx: RunContext):
                         f"Fix {bug_id} (or merge its fix into this branch), then resume; "
                         "the implementer continues from there.",
                     )}
+                estimate = remediation_call_estimate(state)
+                allowed_calls = ctx.agent_call_limit(state) * ctx.budget(state)
+                remaining = allowed_calls - ctx.store.call_count(ctx.run_id)
+                if remaining < estimate:
+                    return {**update, "blocking_bug": {**entry, "reason": verdict.reason},
+                            **_park(
+                        f"agent call headroom too low to start remediation of blocking "
+                        f"bug '{report.title}' ({bug_id}): {remaining}/{allowed_calls} "
+                        f"calls remain, estimated {estimate:g} needed. Nothing was spent "
+                        "on remediation.",
+                        f"Fix {bug_id} (or merge its fix into this branch), then resume; "
+                        "resuming grants a fresh budget window and the implementer "
+                        "continues from there.",
+                    )}
                 return {
                     **update,
                     "triage_route": "remediate",
@@ -2307,7 +2396,7 @@ def build_graph(ctx: RunContext):
             state.get("memory_calibration", ""),
             level=state.get("complexity") or "medium",
             iterations=state.get("iteration", 0),
-            agent_calls=ctx.store.call_count(ctx.run_id, include_children=True),
+            agent_calls=ctx.store.call_count(ctx.run_id),
             overrun=bool(state.get("limit_hit")),
         )
         try:

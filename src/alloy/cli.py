@@ -9,8 +9,8 @@ from __future__ import annotations
 import asyncio
 import json as jsonlib
 import logging
-import signal
 import os
+import signal
 import sys
 import time
 from datetime import timedelta

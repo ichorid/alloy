@@ -294,6 +294,33 @@ def verifier_run_entry(
     }
 
 
+def verifier_run_many_entry(
+    *checks: tuple[str, str, str],
+) -> dict:
+    """One verifier harness entry that names several checks in a single response."""
+    check_objs = [
+        {
+            "command": command,
+            "kind": kind,
+            "purpose": purpose or f"Run {kind} verification",
+            "required": True,
+        }
+        for command, kind, purpose in checks
+    ]
+    return {
+        "structured": {
+            "action": "run",
+            "command": "",
+            "purpose": "",
+            "kind": "custom",
+            "required": True,
+            "reason": "",
+            "remaining_risks": [],
+            "checks": check_objs,
+        }
+    }
+
+
 def acceptance_entry(
     decision: str,
     reason: str = "",
