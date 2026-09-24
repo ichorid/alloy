@@ -832,6 +832,21 @@ def _limits_line_for_single_window(
     return lines[0]
 
 
+def test_reset_suffix_weekly_other_local_day_returns_sep_compact_date(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from alloy.monitor.render import _reset_suffix
+
+    _freeze_render_now(
+        monkeypatch,
+        datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM),
+    )
+    suffix = _reset_suffix("weekly", "2026-09-24T23:00:00+00:00")
+
+    assert suffix == "Sep 25"
+    assert "2026" not in suffix
+
+
 def test_limits_line_5h_reset_suffix_is_local_hhmm_without_resets_word(
     monkeypatch: pytest.MonkeyPatch,
 ):
