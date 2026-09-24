@@ -22,3 +22,6 @@ uv.lock
 
 # pytest/uv scratch dirs left in worktrees by sandboxed agent runs
 .tmp/
+
+# pytest/uv scratch dirs left in worktrees by sandboxed agent runs
+.tmp/
