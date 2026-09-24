@@ -1,0 +1,159 @@
+name: tdd-loop-sonnet
+
+# Same as tdd-loop, except the medium tier implements with Claude Sonnet first
+# and falls back to Codex (gpt-6-sol). Tests/verifier stay on cursor.
+
+landing:
+  mode: auto
+
+complexity:
+  routing: live  # live selects tiers for tiered roles; shadow would estimate and record only
+  escalate_after_retries: 2
+  # A tier is a priority-ordered runner list: the first is primary, the rest fallbacks.
+  # `effort` is per entry (claude --effort, codex model_reasoning_effort); cursor has
+  # no effort knob and encodes it in the model id (kimi-k3-high).
+  tiers:
+    simple:
+      - {runner: cursor, model: composer-2.5}
+      - {runner: codex, model: gpt-5.6-luna}
+      - {runner: claude-write, model: haiku, effort: low}
+    medium:
+      - {runner: claude-write, model: sonnet, effort: high}
+      - {runner: codex, model: gpt-6-sol, effort: high}
+    complex:
+      - {runner: cursor, model: kimi-k3-high}
+      - {runner: claude-write, model: opus}
+      - {runner: astra}
+
+roles:
+  harvest:
+    runner: claude
+    model: sonnet
+  memory_reviewer:
+    runner: cursor
+    model: composer-2.5
+  context:
+    runner: cursor-plan          # read-only: gathers understanding, changes nothing
+    timeout_minutes: 10
+
+  estimate:
+    runner: jev
+    model: jev-latest
+    timeout_minutes: 5
+    fallback:
+      runner: cursor
+      model: composer-2.5
+      timeout_minutes: 5
+
+  triage:
+    # Labels a <bug> report an agent filed mid-run (see AGENTS.md, "Bugs an agent finds").
+    runner: jev
+    model: jev-latest
+    timeout_minutes: 5
+    fallback:
+      runner: cursor
+      model: composer-2.5
+      timeout_minutes: 5
+
+  scope:
+    # Decides whether a remediation child's fix may merge into its parent
+    # (merge / too-broad / subverts-task), judged from the project context packet.
+    runner: jev
+    model: jev-latest
+    timeout_minutes: 5
+    fallback:
+      runner: cursor
+      model: composer-2.5
+      timeout_minutes: 5
+
+  tests:
+    # Pinned because tests are the spec the judge enforces; composer-2.5 is non-fast.
+    runner: cursor
+    model: composer-2.5
+    timeout_minutes: 20
+    fallback:
+      runner: claude-write
+      model: sonnet
+      timeout_minutes: 20
+
+  implement:
+    tiered: true
+    runner: astra                # aliases to codex; override under `runners:` to swap
+    timeout_minutes: 25
+    fallback:                    # when codex is missing, rate-limited or times out
+      runner: claude-write
+      model: fable               # Claude Fable 5.1 (alias resolves to claude-fable-5-1)
+      timeout_minutes: 25
+
+  verifier:
+    # Proposes verification checks (one command or a batch in `checks`); Alloy runs
+    # them as-is and shows the result back.
+    # Same runner/model as the tests role on purpose: the verifier resumes the
+    # tests writer's session (context window and prompt cache intact), and a
+    # cursor session cannot be resumed by claude. The prompt forbids edits and
+    # Alloy parks the run if the verifier changes the worktree anyway.
+    runner: cursor
+    model: composer-2.5
+    timeout_minutes: 10
+    fallback:
+      runner: claude-write
+      model: sonnet
+      timeout_minutes: 10
+
+  acceptance:
+    # Decides, after the verifier stops, whether the evidence is enough to call
+    # the task complete (accept / verify_more / repair / escalate); only
+    # escalate, low confidence or a failed call reaches the judge.
+    runner: jev
+    model: jev-latest
+    timeout_minutes: 5
+    fallback:
+      runner: claude
+      model: sonnet
+      timeout_minutes: 5
+
+  judge:
+    runner: claude
+    model: sonnet
+    timeout_minutes: 10
+
+consilium:
+  critics:
+    - runner: claude
+      model: sonnet
+    - runner: codex-readonly
+    - runner: pi                 # skipped automatically when the CLI is absent
+  synthesizer:
+    runner: claude
+    model: sonnet
+
+# There is no fixed test command. The verifier role names each check; the
+# context role's check_hints, the bead's optional alloy_test_cmd and
+# project-layout autodetection reach it only as unverified hints. A legacy
+# `verify:` block still parses (with a warning) but only its timeout_minutes
+# is honoured, as max_command_timeout_minutes.
+verification:
+  max_checks_per_iteration: 5        # checks Alloy will run per implement/verify round
+  max_total_checks: 20               # hard cap on checks across the whole run
+  max_command_timeout_minutes: 15    # any single check is killed after this long
+  max_baseline_repairs: 2            # attempts to repair a pre-existing red baseline
+  min_acceptance_confidence: 0.6     # below this, acceptance escalates instead of passing
+
+limits:
+  max_iterations: 5
+  max_consiliums: 1
+  max_wall_time_minutes: 90
+  max_agent_calls: 20
+  # Per-tier floors for the agent-call ceiling; 1.5x the alloy:calibration
+  # mean for the run's tier can raise it further (see resolve_max_agent_calls).
+  max_agent_calls_by_tier:
+    simple: 20
+    medium: 24
+    complex: 32
+
+on_success_status: review-ready
+cleanup_worktree_on_success: false
+
+runners:
+  jev:
+    api_key_file: ~/MY_SRC/jev.key   # never commit the raw key; TYPESAFE_API_KEY env var also works

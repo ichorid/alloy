@@ -32,6 +32,12 @@ REGISTRY: dict[str, Recipe] = {
         initial_state=tdd_loop.initial_state,
         description="tdd-loop with Jev (Typesafe AI) as the judge instead of Claude",
     ),
+    "tdd-loop-sonnet": Recipe(
+        name="tdd-loop-sonnet",
+        build_graph=tdd_loop.build_graph,
+        initial_state=tdd_loop.initial_state,
+        description="tdd-loop with Sonnet, then Codex gpt-6-sol, implementing the medium tier",
+    ),
     "land": Recipe(
         name="land",
         build_graph=land.build_graph,
