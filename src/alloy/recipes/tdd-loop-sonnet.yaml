@@ -1,7 +1,8 @@
 name: tdd-loop-sonnet
 
 # Same as tdd-loop, except the medium tier implements with Claude Sonnet first
-# and falls back to Codex (gpt-6-sol). Tests/verifier stay on cursor.
+# and falls back to Codex (gpt-6-sol). The complex tier goes Opus 5.5, Codex gpt-6-sol (max), then Kimi.
+# Tests/verifier stay on cursor.
 
 landing:
   mode: auto
@@ -21,9 +22,9 @@ complexity:
       - {runner: claude-write, model: sonnet, effort: high}
       - {runner: codex, model: gpt-6-sol, effort: high}
     complex:
+      - {runner: claude-write, model: claude-opus-5-5}
+      - {runner: codex, model: gpt-6-sol, effort: max}
       - {runner: cursor, model: kimi-k3-high}
-      - {runner: claude-write, model: opus}
-      - {runner: astra}
 
 roles:
   harvest:
