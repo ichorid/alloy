@@ -17,7 +17,7 @@ complexity:
   tiers:
     simple:
       - {runner: cursor, model: composer-2.5}
-      - {runner: codex, model: gpt-5.6-luna}
+      - {runner: codex, model: gpt-6-luna}
       - {runner: claude-write, model: haiku, effort: low}
     medium:
       - {runner: claude-write, model: sonnet, effort: high}

@@ -140,7 +140,7 @@ async def test_live_simple_tier_fails_over_to_codex_when_cursor_missing(
     assert not rows[0]["ok"]
     assert rows[0]["exit_code"] == 127
     assert rows[1]["runner"] == "codex"
-    assert rows[1]["model"] == "gpt-5.6-luna"
+    assert rows[1]["model"] == "gpt-6-luna"
     assert rows[1]["ok"]
 
 
@@ -165,7 +165,7 @@ async def test_live_medium_tier_fails_over_to_codex_terra_when_cursor_missing(
     assert len(rows) >= 2
     second = rows[1]
     assert second["runner"] == "codex"
-    assert second["model"] == "gpt-5.6-terra"
+    assert second["model"] == "gpt-6-sol"
     assert second["ok"]
 
 
@@ -318,15 +318,15 @@ async def test_live_escalation_changes_codex_fallback_when_cursor_missing(
 
     row1 = _ok_implement_rows(harness, iteration=1)[0]
     assert row1["runner"] == "codex"
-    assert row1["model"] == "gpt-5.6-luna"
+    assert row1["model"] == "gpt-6-luna"
 
     row2 = _ok_implement_rows(harness, iteration=2)[0]
     assert row2["runner"] == "codex"
-    assert row2["model"] == "gpt-5.6-luna"
+    assert row2["model"] == "gpt-6-luna"
 
     row3 = _ok_implement_rows(harness, iteration=3)[0]
     assert row3["runner"] == "codex"
-    assert row3["model"] == "gpt-5.6-terra"
+    assert row3["model"] == "gpt-6-sol"
 
 
 async def test_live_escalates_medium_to_complex_after_two_consecutive_judge_retries(

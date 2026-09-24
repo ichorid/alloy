@@ -33,9 +33,9 @@ PROBE_OK_CONFIG = {"unknown": {"text": "OK"}}
 # Distinct (runner, model, effort) tier entries across tdd-loop's three tiers.
 EXPECTED_PROBE_KEYS = {
     ("cursor", "composer-2.5", None),
-    ("codex", "gpt-5.6-luna", None),
+    ("codex", "gpt-6-luna", None),
     ("claude-write", "haiku", "low"),
-    ("codex", "gpt-5.6-terra", "high"),
+    ("codex", "gpt-6-sol", "high"),
     ("claude-write", "sonnet", "high"),
     ("cursor", "kimi-k3-high", None),
     ("claude-write", "opus", None),

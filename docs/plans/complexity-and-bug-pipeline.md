@@ -17,8 +17,8 @@ complexity:
   routing: shadow              # shadow: estimate and record only; live: dispatch by tier
   escalate_after_retries: 2    # live only: consecutive judge retries before bumping one tier
   tiers:
-    simple:  [{runner: cursor, model: composer-2.5}, {runner: codex, model: gpt-5.6-luna}, {runner: claude-write, model: haiku, effort: low}]
-    medium:  [{runner: cursor, model: composer-2.5}, {runner: codex, model: gpt-5.6-terra, effort: high}, {runner: claude-write, model: sonnet, effort: high}]
+    simple:  [{runner: cursor, model: composer-2.5}, {runner: codex, model: gpt-6-luna}, {runner: claude-write, model: haiku, effort: low}]
+    medium:  [{runner: cursor, model: composer-2.5}, {runner: codex, model: gpt-6-sol, effort: high}, {runner: claude-write, model: sonnet, effort: high}]
     complex: [{runner: cursor, model: kimi-k3-high}, {runner: claude-write, model: opus}, {runner: astra}]
 roles:
   implement: {runner: astra, fallback: {runner: claude-write, model: fable}, tiered: true}
@@ -62,7 +62,7 @@ Decisions:
   failed call or the simple tier's head silently ships garbage with no
   fallback. Same for a codex `error` event with no agent message.
 - `alloy recipes --probe` sends one trivial prompt through every tier entry
-  so unverified model ids (`gpt-5.6-luna`, `gpt-5.6-terra`, the `opus` and
+  so unverified model ids (`gpt-6-luna`, `gpt-6-sol`, the `opus` and
   `haiku` aliases) and the effort flags are checked before a real run
   depends on them. `kimi-k3-high` is confirmed by `agent --list-models`.
 - `JevRunner` picks the first enum-valued property, so every classifier

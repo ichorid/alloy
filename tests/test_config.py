@@ -62,7 +62,7 @@ def test_builtin_recipe_simple_tier_chain(recipe_name):
     fb1 = simple.fallback
     assert fb1 is not None
     assert fb1.runner == "codex"
-    assert fb1.model == "gpt-5.6-luna"
+    assert fb1.model == "gpt-6-luna"
     assert fb1.effort is None
 
     fb2 = fb1.fallback
@@ -84,7 +84,7 @@ def test_builtin_recipe_medium_tier_chain(recipe_name):
     fb1 = medium.fallback
     assert fb1 is not None
     assert fb1.runner == "codex"
-    assert fb1.model == "gpt-5.6-terra"
+    assert fb1.model == "gpt-6-sol"
     assert fb1.effort == "high"
 
     fb2 = fb1.fallback
@@ -285,7 +285,7 @@ def test_parse_folds_tier_list_into_fallback_chain():
             "tiers": {
                 "simple": [
                     {"runner": "cursor", "model": "composer-2.5"},
-                    {"runner": "codex", "model": "gpt-5.6-luna"},
+                    {"runner": "codex", "model": "gpt-6-luna"},
                 ],
             },
         }
@@ -296,7 +296,7 @@ def test_parse_folds_tier_list_into_fallback_chain():
     assert simple == RoleSpec(
         runner="cursor",
         model="composer-2.5",
-        fallback=RoleSpec(runner="codex", model="gpt-5.6-luna"),
+        fallback=RoleSpec(runner="codex", model="gpt-6-luna"),
     )
 
 
