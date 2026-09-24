@@ -40,6 +40,7 @@ LIMITS_HARNESS_WIDTH = max(len(name) for name in HARNESSES)
 LIMITS_WINDOW_LABEL_WIDTH = max(len(label) for label in ("5h", "cycle", "weekly"))
 LIMITS_ALIGNED_WINDOW_COUNT = 2
 _QUEUE_READY_CAP = 50
+_DONE_FOLD_IDS = 2
 _COLOR_GREEN = "#7ee787"
 _COLOR_YELLOW = "#e3b341"
 _COLOR_RED = "#f85149"
@@ -405,10 +406,14 @@ def _blocked_row(bead: dict[str, Any], depth: int) -> TreeRow:
 
 def _done_fold_row(epic: dict[str, Any], depth: int) -> TreeRow:
     epic_id = epic["epic_id"]
-    done_ids = " ".join(epic.get("done_ids") or [])
+    ids = list(epic.get("done_ids") or [])
     summary = f"✓ {epic.get('done', 0)} done"
-    if done_ids:
-        summary = f"{summary}  ({done_ids})"
+    if ids:
+        # A long id list would widen the bead column and push the state columns
+        # off-screen, so cap it.
+        shown = " ".join(ids[:_DONE_FOLD_IDS])
+        more = len(ids) - _DONE_FOLD_IDS
+        summary = f"{summary}  ({shown}{f' +{more}' if more > 0 else ''})"
     return TreeRow(
         key=f"epic/{epic_id}/done",
         kind="done_fold",
