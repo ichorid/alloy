@@ -19,3 +19,6 @@ __pycache__/
 
 # not a locked project; agents running `uv` in worktrees leave this behind
 uv.lock
+
+# pytest/uv scratch dirs left in worktrees by sandboxed agent runs
+.tmp/
