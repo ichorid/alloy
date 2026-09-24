@@ -75,7 +75,7 @@ from alloy.diffs import clip_diff_per_file
 from alloy.memory_embed import is_block_stale, last_review_date
 from alloy.prompts import assemble
 from alloy.runtime import RunContext
-from alloy.verify import detect_commands, normalize_command
+from alloy.verify import detect_commands, normalize_command, verifier_check_requests
 from alloy.worktree import is_test_path
 
 MAX_DIFF_CHARS = 12000
@@ -678,14 +678,16 @@ def acceptance_prompt(
 
 VERIFIER_STATIC = """You are choosing the next verification check for a coding task. You are read-only:
 you cannot edit code and you never run anything yourself. Do not modify any file. Alloy runs
-the one command you name, in the worktree root, exactly as written, and shows you the result.
+the command(s) you name, in the worktree root, exactly as written, and shows you the result.
 
 Answer with the structured output. Either:
-- action "run": exactly one shell command Alloy will run in the worktree root, its
-  purpose, its kind (regression, targeted, lint, typecheck, build or custom -- any
-  project script counts as custom) and whether it is required. A red required check
-  sends the task straight back to the implementer; a red optional check is only
-  reported to you.
+- action "run": one or more shell commands Alloy will run in the worktree root. For a single
+  check, set `command`, `purpose`, `kind` (regression, targeted, lint, typecheck, build or
+  custom -- any project script counts as custom) and `required`. For several checks at once,
+  leave `command` empty and list them in `checks` (each entry has command, purpose, kind,
+  required). Alloy runs every listed check before asking you again. A red required check
+  sends the task straight back to the implementer after a single-check run; after a multi-check
+  batch it waits for your stop action. A red optional check is only reported to you.
 - action "stop": when the evidence is sufficient. Give the reason and list the
   remaining_risks you could not check.
 
@@ -1317,7 +1319,8 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
         action = failure if result is None else answer_of(
             "verifier", result, model_cls=VerifierAction, default=failure
         )
-        if action is failure or (action.action == "run" and not action.command.strip()):
+        requests = verifier_check_requests(action) if action.action == "run" else []
+        if action is failure or (action.action == "run" and not requests):
             why = failure.reason if action is failure else \
                 "verifier proposed a run without a command"
             stop = VerifierAction(
@@ -1346,49 +1349,84 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
         unrunnable commands in a row ask a human."""
         iteration = state.get("iteration", 0)
         action = VerifierAction.model_validate(state.get("pending_check") or {})
-        result = await ctx.run_check(action.to_request())
-        result.iteration = iteration
-        record = result.model_dump(mode="json")
-        checks = [*(state.get("checks") or []), record]
-        iteration_checks = int(state.get("iteration_checks", 0) or 0) + 1
-        ctx.set_tests_summary(f"{len(checks)} checks, last: {result.headline()}")
+        requests = verifier_check_requests(action)
+        batch = len(requests) > 1
+        records: list[dict[str, Any]] = []
+        streak = int(state.get("unrunnable_streak", 0) or 0)
+        failed_required: CheckResult | None = None
+
+        for request in requests:
+            result = await ctx.run_check(request)
+            result.iteration = iteration
+            records.append(result.model_dump(mode="json"))
+            if not result.runnable:
+                streak += 1
+                if streak >= 2:
+                    checks = [*(state.get("checks") or []), *records]
+                    unrunnable = [CheckResult.model_validate(c) for c in checks[-2:]]
+                    iteration_checks = int(state.get("iteration_checks", 0) or 0) + len(records)
+                    return {
+                        "stage": "verify",
+                        "checks": records,
+                        "last_check": records[-1],
+                        "iteration_checks": iteration_checks,
+                        "unrunnable_streak": streak,
+                        "verify_route": "human_gate",
+                        "resume_to": "implement",
+                        "decision": JudgeDecision(
+                            decision="human",
+                            reason="the verifier proposed two commands in a row that could "
+                            "not run: " + ", ".join(
+                                f"`{c.command}` ({c.headline()})" for c in unrunnable
+                            ),
+                            next_instructions="Check the worktree's toolchain or tell the "
+                            "implementer what to verify, then resume; the implementer "
+                            "runs again.",
+                        ).model_dump(),
+                    }
+            else:
+                streak = 0
+            if result.required and not result.ok:
+                failed_required = result
+
+        checks = [*(state.get("checks") or []), *records]
+        iteration_checks = int(state.get("iteration_checks", 0) or 0) + len(records)
+        last = CheckResult.model_validate(records[-1]) if records else None
+        ctx.set_tests_summary(
+            f"{len(checks)} checks, last: {last.headline()}" if last else f"{len(checks)} checks"
+        )
         update: dict[str, Any] = {
-            "stage": "verify", "checks": [record], "last_check": record,
-            "iteration_checks": iteration_checks, "verify_route": "verifier_step",
-            "unrunnable_streak": 0,
+            "stage": "verify",
+            "checks": records,
+            "last_check": records[-1] if records else None,
+            "iteration_checks": iteration_checks,
+            "verify_route": "verifier_step",
+            "unrunnable_streak": streak,
         }
 
-        if not result.runnable:
-            streak = int(state.get("unrunnable_streak", 0) or 0) + 1
-            update["unrunnable_streak"] = streak
-            if streak >= 2:
-                unrunnable = [CheckResult.model_validate(c) for c in checks[-2:]]
-                update.update(
-                    verify_route="human_gate",
-                    resume_to="implement",
-                    decision=JudgeDecision(
-                        decision="human",
-                        reason="the verifier proposed two commands in a row that could "
-                        "not run: " + ", ".join(
-                            f"`{c.command}` ({c.headline()})" for c in unrunnable
-                        ),
-                        next_instructions="Check the worktree's toolchain or tell the "
-                        "implementer what to verify, then resume; the implementer "
-                        "runs again.",
-                    ).model_dump(),
-                )
+        if batch:
+            # After a multi-check batch the verifier sees every result and
+            # decides what to do next; the red-required shortcut below only
+            # applies to single-check runs.
             return update
 
-        if result.required and not result.ok:
-            reason = f"required check `{result.command}` failed ({result.headline()})"
+        if last is not None and not last.runnable:
+            update["unrunnable_streak"] = streak
+            return update
+
+        if failed_required is not None:
+            reason = (
+                f"required check `{failed_required.command}` failed "
+                f"({failed_required.headline()})"
+            )
             update.update(
                 verify_route="guard",
                 decision=JudgeDecision(
                     decision="retry",
                     reason=reason,
                     next_instructions=(
-                        f"The required check `{result.command}` exited "
-                        f"{result.exit_code}; see '## Failed check'. Make it pass "
+                        f"The required check `{failed_required.command}` exited "
+                        f"{failed_required.exit_code}; see '## Failed check'. Make it pass "
                         "without weakening or skipping it."
                     ),
                 ).model_dump(),

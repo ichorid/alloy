@@ -17,10 +17,31 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
-from alloy.models import CheckRequest, CheckResult, clip
+from alloy.models import CheckRequest, CheckResult, VerifierAction, clip
 from alloy.procs import terminate_process_tree
 
 DEFAULT_TIMEOUT_S = 900.0
+
+
+def verifier_check_requests(action: VerifierAction) -> list[CheckRequest]:
+    """Expand a verifier response into the checks Alloy should run.
+
+    A batch response lists several entries in ``checks``; a legacy response
+    names one command on the action itself."""
+    if action.checks:
+        return [
+            CheckRequest(
+                command=check.command.strip(),
+                purpose=check.purpose,
+                kind=check.kind,
+                required=check.required,
+            )
+            for check in action.checks
+            if check.command.strip()
+        ]
+    if action.action == "run" and action.command.strip():
+        return [action.to_request()]
+    return []
 
 # Ordered: first marker file whose project layout matches wins.
 AUTODETECT: list[tuple[str, str]] = [

@@ -84,8 +84,8 @@ roles:
       timeout_minutes: 25
 
   verifier:
-    # Proposes one verification check at a time (targeted test, suite, lint, build,
-    # any project script); Alloy runs it as-is and shows the result back.
+    # Proposes verification checks (one command or a batch in `checks`); Alloy runs
+    # them as-is and shows the result back.
     # Same runner/model as the tests role on purpose: the verifier resumes the
     # tests writer's session (context window and prompt cache intact), and a
     # cursor session cannot be resumed by claude. The prompt forbids edits and

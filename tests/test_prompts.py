@@ -260,24 +260,6 @@ _IMPLEMENT_TASK = f"""{BRIEF}
 _IMPLEMENT_VOLATILE = """## Required changes this iteration
 fix slugify"""
 
-_VERIFIER_STATIC = """You are choosing the next verification check for a coding task. You are read-only:
-you cannot edit code and you never run anything yourself. Do not modify any file. Alloy runs
-the one command you name, in the worktree root, exactly as written, and shows you the result.
-
-Answer with the structured output. Either:
-- action "run": exactly one shell command Alloy will run in the worktree root, its
-  purpose, its kind (regression, targeted, lint, typecheck, build or custom -- any
-  project script counts as custom) and whether it is required. A red required check
-  sends the task straight back to the implementer; a red optional check is only
-  reported to you.
-- action "stop": when the evidence is sufficient. Give the reason and list the
-  remaining_risks you could not check.
-
-Prefer the most targeted check that would move the evidence: the tests written for
-this task first, then what the diff could have broken, then the wider suite, lint or
-build. Do not repeat a check whose result cannot have changed. Never claim to have
-run anything yourself."""
-
 _VERIFIER_RUN = f"""## Repository context
 {RENDERED_CONTEXT}
 
@@ -453,7 +435,7 @@ def expected_golden(role: str) -> str:
             volatile=_IMPLEMENT_VOLATILE,
         ),
         "verifier": lambda: _join_layers(
-            _VERIFIER_STATIC,
+            VERIFIER_STATIC,
             run=_VERIFIER_RUN,
             task=_VERIFIER_TASK,
             volatile=_VERIFIER_VOLATILE,
@@ -672,7 +654,7 @@ def test_implement_prompt_iterations_share_prefix_through_task_layer():
 def test_verifier_prompt_consecutive_checks_share_prefix_through_task_layer():
     prompt_one = _fixture_prompt("verifier")
     prompt_two = _verifier_prompt_check_two()
-    task_prefix = _join_layers(_VERIFIER_STATIC, run=_VERIFIER_RUN, task=_VERIFIER_TASK)
+    task_prefix = _join_layers(VERIFIER_STATIC, run=_VERIFIER_RUN, task=_VERIFIER_TASK)
     shared = _common_prefix(prompt_one, prompt_two)
     assert len(shared) >= len(task_prefix)
     assert prompt_one.startswith(task_prefix)

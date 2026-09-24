@@ -316,16 +316,17 @@ VERIFIER_ACTIONS: tuple[str, ...] = ("run", "stop")
 
 
 class VerifierAction(BaseModel):
-    """The verifier role's answer: one more check to run, or stop.
+    """The verifier role's answer: the next check(s) to run, or stop.
 
-    Alloy executes `command` as-is in the worktree root; a `run` without a
-    command is invalid and is treated as a verifier failure by the recipe."""
+    Alloy executes `command` or every entry in `checks` as-is in the worktree root;
+    a `run` with neither is invalid and is treated as a verifier failure by the recipe."""
 
     action: Literal["run", "stop"]
     command: str = ""
     purpose: str = ""
     kind: str = "custom"
     required: bool = True
+    checks: list[CheckRequest] = Field(default_factory=list)
     reason: str = ""
     remaining_risks: list[str] = Field(default_factory=list)
 
@@ -351,6 +352,19 @@ class VerifierAction(BaseModel):
                 "purpose": {"type": "string"},
                 "kind": {"type": "string", "enum": list(CHECK_KINDS)},
                 "required": {"type": "boolean"},
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "string"},
+                            "purpose": {"type": "string"},
+                            "kind": {"type": "string", "enum": list(CHECK_KINDS)},
+                            "required": {"type": "boolean"},
+                        },
+                        "required": ["command", "purpose", "kind", "required"],
+                    },
+                },
                 "reason": {"type": "string"},
                 "remaining_risks": {"type": "array", "items": {"type": "string"}},
             },
