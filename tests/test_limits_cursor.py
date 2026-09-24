@@ -87,34 +87,6 @@ def cursor_home(tmp_path: Path) -> Path:
     return tmp_path / "home"
 
 
-def test_probe_success_exposes_cycle_and_api_windows_when_api_percent_present(
-    cursor_home: Path,
-):
-    write_auth(cursor_home)
-    fetch = RecordingFetch(status=200, body=json.dumps(_dashboard_payload_with_api()))
-
-    result = probe(cursor_home, fetch)
-
-    assert result["source"] == "dashboard-api"
-    windows = result["windows"]
-    assert len(windows) == 2
-
-    cycle, api = windows
-    assert set(cycle) == set(WINDOW_KEYS)
-    assert cycle["key"] == "total"
-    assert cycle["label"] == "cycle"
-    assert cycle["used_percent"] == 24.72
-    assert cycle["resets_at"] == BILLING_CYCLE_END_ISO
-    assert cycle["model"] is None
-
-    assert set(api) == set(WINDOW_KEYS)
-    assert api["key"] == "api"
-    assert api["label"] in ("API", "API usage")
-    assert api["used_percent"] == 67.5
-    assert api["resets_at"] == BILLING_CYCLE_END_ISO
-    assert api["model"] is None
-
-
 def test_probe_success_maps_dashboard_plan_usage_to_total_window(cursor_home: Path):
     write_auth(cursor_home)
     fetch = RecordingFetch(status=200, body=json.dumps(_dashboard_payload()))
@@ -213,47 +185,6 @@ def test_probe_http_error_keeps_cursor_installed(cursor_home: Path):
     assert result["available"] is False
     assert result["windows"] == []
     assert result["error"] == "HTTP 401"
-
-
-def test_cli_limits_json_includes_cursor_cycle_and_api_windows(
-    tmp_path: Path,
-    project: Path,
-    alloy_home: Path,
-    fake_harnesses,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    from typer.testing import CliRunner
-
-    from alloy.cli import app
-
-    fake_harnesses.remove("claude")
-    fake_harnesses.remove("codex")
-    home = tmp_path / "home"
-    write_auth(home)
-    monkeypatch.setattr(Path, "home", lambda: home)
-    monkeypatch.setattr(
-        "alloy.limits.cursor.default_fetch",
-        RecordingFetch(status=200, body=json.dumps(_dashboard_payload_with_api())),
-    )
-
-    runner = CliRunner()
-    result = runner.invoke(
-        app,
-        ["limits", "--json", "--repo", str(project), "--root", str(alloy_home)],
-    )
-
-    assert result.exit_code == 0, result.stdout + result.stderr
-    payload = json.loads(result.stdout)
-    assert set(payload) == {"cursor"}
-    cursor = payload["cursor"]
-    assert cursor["source"] == "dashboard-api"
-    windows = cursor["windows"]
-    assert len(windows) == 2
-    assert windows[0]["key"] == "total"
-    assert windows[0]["used_percent"] == 24.72
-    assert windows[1]["key"] == "api"
-    assert windows[1]["used_percent"] == 67.5
-    assert windows[1]["resets_at"] == windows[0]["resets_at"]
 
 
 def test_probe_no_quota_in_response_returns_error(cursor_home: Path):

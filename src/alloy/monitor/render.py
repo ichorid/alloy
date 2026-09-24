@@ -284,7 +284,9 @@ def task_tree_rows(
                     children.append(_run_tree_row(run, depth=1, mode=mode))
             for bead in ready:
                 if bead.get("epic_id") == epic_id:
-                    children.append(_queued_row(bead, depth=1, mode=mode))
+                    children.append(
+                        _queued_row(bead, depth=1, epic_scope=epic_id, mode=mode)
+                    )
             if epic.get("done", 0):
                 children.append(_done_fold_row(epic, depth=1))
             rows.extend(_prefix_tree_children(children))
@@ -364,13 +366,18 @@ def _queued_row(
     bead: dict[str, Any],
     *,
     queue_index: int | None = None,
+    epic_scope: str | None = None,
     depth: int,
     mode: str | None = None,
 ) -> TreeRow:
     bead_id = bead["bead_id"]
     tests = f"queued #{queue_index}" if queue_index is not None else "-"
+    if epic_scope is not None:
+        row_key = f"epic/{epic_scope}/queued/{bead_id}"
+    else:
+        row_key = f"queue/{bead_id}"
     return TreeRow(
-        key=f"queue/{bead_id}",
+        key=row_key,
         kind="queued",
         depth=depth,
         cells=_blank_cells(
@@ -461,15 +468,8 @@ def _limits_line(harness: str, sample: dict[str, Any]) -> str:
     parts = [label]
     windows = sample.get("windows") or []
     for index, win in enumerate(windows):
-        resets_at = win.get("resets_at")
-        next_resets_at = windows[index + 1].get("resets_at") if index + 1 < len(windows) else None
-        show_resets = resets_at != next_resets_at
         parts.append(
-            _limits_window_segment(
-                win,
-                align_bar=index < LIMITS_ALIGNED_WINDOW_COUNT,
-                show_resets=show_resets,
-            )
+            _limits_window_segment(win, align_bar=index < LIMITS_ALIGNED_WINDOW_COUNT)
         )
     line = "  ".join(parts)
     stale = _stale_as_of(sample.get("as_of"))
@@ -500,16 +500,14 @@ def _limits_window_head(label: str, percent: int, *, align_bar: bool) -> str:
     return f"{label} {percent}%"
 
 
-def _limits_window_segment(
-    win: dict[str, Any], *, align_bar: bool = False, show_resets: bool = True
-) -> str:
+def _limits_window_segment(win: dict[str, Any], *, align_bar: bool = False) -> str:
     percent = int(win["used_percent"])
     color = _usage_color(percent)
     head = _limits_window_head(win["label"], percent, align_bar=align_bar)
     segment = f"[{color}]{head} {_usage_bar(percent)}[/]"
-    resets = _resets_hhmm(win.get("resets_at")) if show_resets else None
-    if resets:
-        segment += f" (resets {resets})"
+    reset_suffix = _reset_suffix(win.get("label"), win.get("resets_at"))
+    if reset_suffix:
+        segment += f" ({reset_suffix})"
     if win.get("stale"):
         segment += f" [{_COLOR_YELLOW}][stale][/]"
     return segment
@@ -876,9 +874,19 @@ def _parse_iso(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def _resets_hhmm(resets_at: str | None) -> str | None:
+def _reset_suffix(label: str | None, resets_at: str | None) -> str | None:
     parsed = _parse_iso(resets_at)
-    return parsed.strftime("%H:%M") if parsed else None
+    if parsed is None:
+        return None
+    local = parsed.astimezone()
+    if label == "5h":
+        return local.strftime("%H:%M")
+    if label == "cycle" or (label or "").startswith("weekly"):
+        now_local = datetime.now().astimezone()
+        if local.date() == now_local.date():
+            return local.strftime("%H:%M")
+        return local.strftime("%Y-%m-%d")
+    return None
 
 
 def _stale_as_of(as_of: str | None) -> str:

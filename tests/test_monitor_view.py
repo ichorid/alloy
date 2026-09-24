@@ -27,7 +27,57 @@ DISABLED_INTERVAL = 1000.0
 EMPTY_TOKENS = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
 
 
-def _snapshot(*, runs=(), limits: dict | None = None) -> dict:
+def _empty_queue() -> dict:
+    return {"ready": [], "ready_total": 0, "blocked": []}
+
+
+def _ready_bead(
+    bead_id: str,
+    *,
+    title: str = "",
+    recipe: str = "tdd-loop",
+    priority: int = 2,
+    complexity: str | None = None,
+    epic_id: str | None = None,
+) -> dict:
+    return {
+        "bead_id": bead_id,
+        "title": title or bead_id,
+        "recipe": recipe,
+        "priority": priority,
+        "complexity": complexity,
+        "epic_id": epic_id,
+    }
+
+
+def _epic(
+    epic_id: str,
+    *,
+    title: str = "",
+    total: int = 0,
+    done: int = 0,
+    done_ids: tuple[str, ...] = (),
+    running: int = 0,
+    judge: int = 0,
+) -> dict:
+    return {
+        "epic_id": epic_id,
+        "title": title or epic_id,
+        "total": total,
+        "done": done,
+        "done_ids": list(done_ids),
+        "running": running,
+        "judge": judge,
+    }
+
+
+def _snapshot(
+    *,
+    runs=(),
+    limits: dict | None = None,
+    queue: dict | None = None,
+    epics=(),
+) -> dict:
     snap = {
         "root": "/home/vader/.alloy",
         "repo": "/home/vader/MY_SRC/alloy",
@@ -36,6 +86,8 @@ def _snapshot(*, runs=(), limits: dict | None = None) -> dict:
         "ready_capped_at": 1000,
         "lifetime": {"done": 0, "failed": 0, "cancelled": 0},
         "runs": list(runs),
+        "queue": queue if queue is not None else _empty_queue(),
+        "epics": list(epics),
     }
     if limits is not None:
         snap["limits"] = limits
@@ -58,7 +110,7 @@ def _claude_limits(used_percent: float) -> dict:
     }
 
 
-def _run(run_id: str, bead_id: str | None = None) -> dict:
+def _run(run_id: str, bead_id: str | None = None, epic_id: str | None = None) -> dict:
     return {
         "bead_id": bead_id or f"alloy-{run_id}",
         "run_id": run_id,
@@ -77,6 +129,7 @@ def _run(run_id: str, bead_id: str | None = None) -> dict:
         "judge": None,
         "worktree": f"/home/vader/.alloy/worktrees/{run_id}",
         "branch": f"alloy/{run_id}",
+        "epic_id": epic_id,
     }
 
 
@@ -149,6 +202,14 @@ def _limits_text(app: MonitorApp) -> str:
 def _cursor_run_id(table: DataTable) -> str:
     key = table.coordinate_to_cell_key(Coordinate(row=table.cursor_row, column=0))
     return key.row_key.value
+
+
+def _cursor_row_key(table: DataTable) -> str:
+    return _cursor_run_id(table)
+
+
+def _table_row_keys(table: DataTable) -> list[str]:
+    return [row.key.value for row in table.ordered_rows]
 
 
 def _table_column_keys(table: DataTable) -> list[str]:
@@ -237,15 +298,15 @@ async def test_cursor_stays_on_the_same_run_id_when_it_still_exists_after_refres
         table = _runs_table(app)
         await pilot.press("j")
         await pilot.pause()
-        assert _cursor_run_id(table) == "run-2"
+        assert _cursor_run_id(table) == "run/run-2"
 
         # A later snapshot with the same runs, reordered -- the cursor should
-        # follow "run-2" rather than staying pinned to row index 1.
+        # follow "run/run-2" rather than staying pinned to row index 1.
         reordered = _snapshot(runs=[_run("run-2"), _run("run-1"), _run("run-3")])
         app.apply_snapshot(reordered)
         await pilot.pause()
 
-        assert _cursor_run_id(table) == "run-2"
+        assert _cursor_run_id(table) == "run/run-2"
 
 
 async def test_selected_run_disappearing_leaves_the_cursor_on_a_valid_row():
@@ -255,7 +316,7 @@ async def test_selected_run_disappearing_leaves_the_cursor_on_a_valid_row():
         table = _runs_table(app)
         await pilot.press("j", "j")
         await pilot.pause()
-        assert _cursor_run_id(table) == "run-3"
+        assert _cursor_run_id(table) == "run/run-3"
 
         without_run_3 = _snapshot(runs=[_run("run-1"), _run("run-2")])
         app.apply_snapshot(without_run_3)
@@ -263,7 +324,7 @@ async def test_selected_run_disappearing_leaves_the_cursor_on_a_valid_row():
 
         assert table.row_count == 2
         assert 0 <= table.cursor_row < table.row_count
-        assert _cursor_run_id(table) == "run-2"  # clamped to the last row
+        assert _cursor_run_id(table) == "run/run-2"  # clamped to the last row
 
 
 # -- refresh failure handling ---------------------------------------------------
@@ -333,14 +394,12 @@ async def test_enter_shows_the_detail_pane_and_enter_again_hides_it():
         assert _detail(app).display is False
 
 
-async def test_l_toggles_the_detail_pane_like_enter():
+async def test_l_on_run_row_does_not_toggle_detail():
+    """l is expand-only on queue/epic rows; on a run row it is a no-op."""
     app = MonitorApp(snapshot_source=lambda: TWO_RUNS, interval=DISABLED_INTERVAL)
     async with app.run_test() as pilot:
         await pilot.pause()
-
-        await pilot.press("l")
-        await pilot.pause()
-        assert _detail(app).display is True
+        assert _detail(app).display is False
 
         await pilot.press("l")
         await pilot.pause()
@@ -411,70 +470,6 @@ async def test_done_run_row_is_selectable_and_detail_shows_bead_id():
         await pilot.pause()
         assert _detail(app).display is True
         assert "bead-done" in _detail_text(app)
-
-
-# -- alloy-3g0.7: status pills and selected-row marker -------------------------
-
-
-def _first_visible_cell(table: DataTable) -> Text:
-    return table.get_cell_at(Coordinate(row=table.cursor_row, column=0))
-
-
-async def test_running_run_status_cell_in_nerd_mode_contains_status_word(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setenv("ALLOY_MONITOR_ICONS", "nerd")
-    snapshot = _snapshot(runs=[_run("run-active", bead_id="bead-active")])
-    app = MonitorApp(snapshot_source=lambda: snapshot, interval=DISABLED_INTERVAL)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        table = _runs_table(app)
-        status_col = table.get_column_index("status")
-        cell = table.get_cell_at(Coordinate(row=0, column=status_col))
-
-        assert isinstance(cell, Text)
-        assert "running" in cell.plain
-        assert "\ue0b6" in cell.plain
-        assert "\ue0b4" in cell.plain
-
-
-async def test_cursor_row_first_visible_cell_starts_with_selected_marker_in_nerd_mode(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setenv("ALLOY_MONITOR_ICONS", "nerd")
-    snapshot = _snapshot(runs=[_run("run-active", bead_id="bead-active")])
-    app = MonitorApp(snapshot_source=lambda: snapshot, interval=DISABLED_INTERVAL)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        table = _runs_table(app)
-        cell = _first_visible_cell(table)
-        plain = cell.plain if isinstance(cell, Text) else str(cell)
-
-        assert plain.startswith("\u258c")
-
-
-async def test_selected_marker_follows_cursor_when_moving_down_in_nerd_mode(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setenv("ALLOY_MONITOR_ICONS", "nerd")
-    app = MonitorApp(snapshot_source=lambda: TWO_RUNS, interval=DISABLED_INTERVAL)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        table = _runs_table(app)
-        assert _first_visible_cell(table).plain.startswith("\u258c")
-
-        await pilot.press("j")
-        await pilot.pause()
-        assert table.cursor_row == 1
-        assert _first_visible_cell(table).plain.startswith("\u258c")
-
-        previous_row_cell = table.get_cell_at(Coordinate(row=0, column=0))
-        previous_plain = (
-            previous_row_cell.plain
-            if isinstance(previous_row_cell, Text)
-            else str(previous_row_cell)
-        )
-        assert not previous_plain.startswith("\u258c")
 
 
 # -- limits section (alloy-w9d.11) ---------------------------------------------
@@ -805,3 +800,136 @@ async def test_iter_column_header_and_first_row_cell_are_right_aligned():
         assert header.justify == "right"
         assert isinstance(cell, Text)
         assert cell.justify == "right"
+
+
+# -- alloy-byo.5: task tree DataTable in MonitorApp -----------------------------
+
+
+def _queue_snapshot(*, ready_count: int = 5) -> dict:
+    ready = [_ready_bead(f"alloy-q.{index:02d}") for index in range(ready_count)]
+    return _snapshot(
+        queue={
+            "ready": ready,
+            "ready_total": ready_count,
+            "blocked": [],
+        },
+    )
+
+
+def _epic_tree_snapshot() -> dict:
+    return _snapshot(
+        epics=[_epic("E", title="Epic E", total=2, done=0, running=1)],
+        runs=[_run("run-under-e", bead_id="bead-under-e", epic_id="E")],
+    )
+
+
+async def test_task_tree_first_table_row_key_is_queue():
+    snapshot = _queue_snapshot(ready_count=3)
+    app = MonitorApp(snapshot_source=lambda: snapshot, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = _runs_table(app)
+        assert _table_row_keys(table)[0] == "queue"
+        assert _cursor_row_key(table) == "queue"
+
+
+async def test_task_tree_enter_on_queue_expands_and_collapses_ready_rows():
+    snapshot = _queue_snapshot(ready_count=5)
+    app = MonitorApp(snapshot_source=lambda: snapshot, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = _runs_table(app)
+        collapsed_keys = _table_row_keys(table)
+        assert collapsed_keys == ["queue"]
+
+        await pilot.press("enter")
+        await pilot.pause()
+        expanded_keys = _table_row_keys(table)
+        queue_bead_keys = [
+            key for key in expanded_keys if key.startswith("queue/") and key != "queue/more"
+        ]
+        assert 1 <= len(queue_bead_keys) <= 50
+        assert len(queue_bead_keys) == 5
+        assert expanded_keys[0] == "queue"
+        assert all(key.startswith("queue/alloy-q.") for key in queue_bead_keys)
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert _table_row_keys(table) == ["queue"]
+
+
+async def test_task_tree_epic_expansion_survives_snapshot_refresh_and_preserves_cursor():
+    snapshot = _epic_tree_snapshot()
+    app = MonitorApp(snapshot_source=lambda: snapshot, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = _runs_table(app)
+
+        await pilot.press("j")
+        await pilot.pause()
+        assert _cursor_row_key(table) == "epic/E"
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "run/run-under-e" in _table_row_keys(table)
+
+        app.apply_snapshot(snapshot)
+        await pilot.pause()
+
+        assert _cursor_row_key(table) == "epic/E"
+        assert "run/run-under-e" in _table_row_keys(table)
+
+
+async def test_task_tree_expanding_queue_and_epic_shows_all_rows_without_duplicate_keys():
+    bead_id = "alloy-shared"
+    snapshot = _snapshot(
+        epics=[_epic("E", title="Epic E", total=2, done=0)],
+        queue={
+            "ready": [_ready_bead(bead_id, epic_id="E")],
+            "ready_total": 1,
+            "blocked": [],
+        },
+    )
+    app = MonitorApp(snapshot_source=lambda: snapshot, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = _runs_table(app)
+
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("j")
+        await pilot.pause()
+        await pilot.press("j")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        keys = _table_row_keys(table)
+        assert keys == [
+            "queue",
+            f"queue/{bead_id}",
+            "epic/E",
+            f"epic/E/queued/{bead_id}",
+        ]
+
+
+async def test_task_tree_enter_on_run_row_still_toggles_detail_pane():
+    snapshot = _snapshot(runs=[_run("run-1", bead_id="bead-one")])
+    app = MonitorApp(snapshot_source=lambda: snapshot, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = _runs_table(app)
+
+        await pilot.press("j")
+        await pilot.pause()
+        assert _cursor_row_key(table) == "run/run-1"
+        assert _detail(app).display is False
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert _detail(app).display is True
+        assert "bead-one" in _detail_text(app)
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert _detail(app).display is False

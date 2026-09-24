@@ -7,9 +7,8 @@ snapshot shape and the read-only contract of `build_snapshot`). Three additions:
    that is installed on this machine, refreshed on its own slow interval. The
    gauges are harness-specific: Claude Code has a 5-hour window, a weekly
    window and per-model weekly windows (Opus, Fable, ...); Codex has a 5-hour
-   ("primary") and a weekly ("secondary") window; Cursor has a billing-cycle
-   total gauge and, when the dashboard reports it, a second API-usage gauge
-   for the same cycle.
+   ("primary") and a weekly ("secondary") window; Cursor has one total-usage
+   gauge for the current billing cycle.
 2. **Per-model usage in the detail pane.** For the selected run, every
    `(runner, model)` pair that made at least one agent call, with its call
    count and tokens, joined to the current limit windows of the harness it
@@ -120,24 +119,20 @@ including `codex exec` sessions Alloy starts, so no network call is needed:
 
 - Credentials: `~/.config/cursor/auth.json`, key `accessToken` (a JWT; the
   `sub` claim is `<provider>|<user_id>`).
-- Primary request: `POST
-  https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`
-  with `Authorization: Bearer <accessToken>`, `Connect-Protocol-Version: 1`,
-  and an empty JSON body; 10 s timeout; injectable fetcher as in A2.
-- Dashboard parsing: read `planUsage.totalPercentUsed` into one window, key
-  `total`, label `cycle`; `resets_at` from `billingCycleEnd` (epoch ms →
-  ISO-8601 UTC). When `planUsage.apiPercentUsed` is present as a number,
-  append a second window, key `api`, label `API`, with the same `resets_at`.
-  When `apiPercentUsed` is absent, the probe returns only the cycle window.
-- Legacy fallback: when the dashboard response has no usable `planUsage`,
+- Request: the cursor.com usage endpoint the dashboard uses:
   `GET https://cursor.com/api/usage?user=<user_id>` with cookie
-  `WorkosCursorSessionToken=<user_id>%3A%3A<accessToken>`; parse per-model
-  `numRequests` / `maxRequestUsage` plus `startOfMonth` into **one** window
-  (key `total`, label `cycle`; `resets_at` = `startOfMonth` plus one month).
-  If no entry has a positive `maxRequestUsage`, `available: false,
-  error: "no quota in response"`.
-- `source: "dashboard-api"` on the primary path; `source: "usage-api"` on
-  the legacy fallback.
+  `WorkosCursorSessionToken=<user_id>%3A%3A<accessToken>`; 10 s timeout;
+  injectable fetcher as in A2. If this endpoint rejects the CLI token, the
+  probe reports `error: "HTTP <status>"` and the gauge simply shows as
+  unavailable — the implementer must not fall back to scraping.
+- Parsing: the response is a dict of per-model entries with `numRequests`
+  and `maxRequestUsage`, plus `startOfMonth`. Produce **one** window, key
+  `total`, label `cycle`, `used_percent = 100 * sum(numRequests) /
+  sum(maxRequestUsage)` over entries whose `maxRequestUsage` is a positive
+  number; `resets_at` = `startOfMonth` plus one month (ISO). If no entry has
+  a positive `maxRequestUsage`, `available: false, error: "no quota in
+  response"`.
+- `source: "usage-api"`.
 
 ### A5. `probe_all` and `alloy limits`
 
