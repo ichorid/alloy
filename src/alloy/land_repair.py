@@ -6,6 +6,17 @@ import subprocess
 from pathlib import Path
 
 EPIC_BRANCH = "alloy/alloy-8by"
+JJG_EPIC_BRANCH = "alloy/alloy-jjg"
+JJG_REPAIR_BEAD_ID = "alloy-088"
+LANDING_MERGE_ACCEPTANCE_CMD: tuple[str, ...] = (
+    "uv",
+    "run",
+    "pytest",
+    "-n",
+    "0",
+    "-q",
+    "tests/test_monitor_render_landing_merge.py",
+)
 
 EPIC_ACCEPTANCE_TEST_PATHS: tuple[str, ...] = (
     "tests/test_runtime_per_run_agent_budget.py",
@@ -35,3 +46,28 @@ def parallel_regression_gate_succeeded(*, repo_root: Path) -> bool:
 def epic_acceptance_test_paths() -> list[str]:
     """Relative paths to pytest modules that cover alloy-8by child acceptance."""
     return list(EPIC_ACCEPTANCE_TEST_PATHS)
+
+
+def jjg_repair_bead_id() -> str:
+    """Bead id for the alloy-jjg landing-merge repair."""
+    return JJG_REPAIR_BEAD_ID
+
+
+def jjg_epic_branch() -> str:
+    """Epic branch name for the alloy-jjg trial merge."""
+    return JJG_EPIC_BRANCH
+
+
+def landing_merge_acceptance_command() -> tuple[str, ...]:
+    """Command that matches alloy-088 acceptance (serial landing_merge gate)."""
+    return LANDING_MERGE_ACCEPTANCE_CMD
+
+
+def landing_merge_gate_succeeded(*, repo_root: Path) -> bool:
+    """Return True when the landing_merge acceptance gate exits 0 at ``repo_root``."""
+    result = subprocess.run(
+        list(landing_merge_acceptance_command()),
+        cwd=repo_root,
+        check=False,
+    )
+    return result.returncode == 0
