@@ -1,6 +1,6 @@
-"""Acceptance tests for alloy-dag: resolve landing conflict in tests/test_monitor_render.py.
+"""Acceptance tests for alloy-yux: resolve landing conflict in tests/test_monitor_render.py.
 
-Main must merge into alloy/alloy-8by with render.py and tests/test_monitor_render.py
+Main must merge into alloy/alloy-3g0 with render.py and tests/test_monitor_render.py
 aligned to main's alloy-gek reset suffixes and calendar icons while keeping the
 alloy-3g0.3 nerd limits bar tests. These fail until that merge resolution lands.
 """
@@ -22,6 +22,17 @@ def test_monitor_render_py_has_no_merge_conflict_markers():
     assert "<<<<<<<" not in text
     assert ">>>>>>>" not in text
     assert "\n=======\n" not in text
+    # Post-merge resolution: nerd limits block precedes alloy-gek helpers (main's layout).
+    assert text.index("# -- alloy-3g0.3: nerd limits bars") < text.index(
+        "# -- alloy-gek: consumed Codex quota"
+    )
+
+
+def test_monitor_render_py_section_order_nerd_block_before_gek():
+    text = MONITOR_RENDER_TESTS.read_text(encoding="utf-8")
+    nerd_pos = text.index("# -- alloy-3g0.3: nerd limits bars")
+    gek_pos = text.index("# -- alloy-gek: consumed Codex quota")
+    assert nerd_pos < gek_pos
 
 
 def test_monitor_render_py_combines_nerd_and_gek_sections_after_merge():
