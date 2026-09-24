@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
 from alloy.beads import BeadsClient, Bead, META_COMPLEXITY_ESTIMATED, META_STAGE
-from alloy.config import RecipeConfig, RoleSpec
+from alloy.config import RecipeConfig, RoleSpec, resolve_max_agent_calls
 from alloy.models import (
     AgentResult,
     CheckRequest,
@@ -280,6 +280,12 @@ class RunContext:
         """
         return 1 + int(state.get("budget_extensions", 0) or 0)
 
+    def agent_call_limit(self, state: Mapping[str, Any]) -> int:
+        """Tier-scaled agent-call ceiling for this run, before budget extensions."""
+        return resolve_max_agent_calls(
+            self.recipe, state.get("complexity"), state.get("memory_calibration", "")
+        )
+
     def check_limits(self, state: dict[str, Any]) -> str | None:
         """Return a description of the first limit breached, else None."""
         limits = self.recipe.limits
@@ -295,7 +301,7 @@ class RunContext:
             return f"max_consiliums reached ({consiliums}/{limits.max_consiliums * multiplier})"
 
         calls = self.store.call_count(self.run_id)
-        allowed_calls = limits.max_agent_calls * multiplier
+        allowed_calls = self.agent_call_limit(state) * multiplier
         if calls >= allowed_calls:
             return f"max_agent_calls reached ({calls}/{allowed_calls})"
 
@@ -341,7 +347,7 @@ class RunContext:
             f"{limits.max_iterations * multiplier} iterations allowed, "
             f"{limits.max_consiliums * multiplier} consilium(s) allowed, "
             f"{self.store.call_count(self.run_id)}/"
-            f"{limits.max_agent_calls * multiplier} agent calls used, "
+            f"{self.agent_call_limit(state) * multiplier} agent calls used, "
             f"{self.elapsed().total_seconds() / 60:.0f}m of "
             f"{limits.max_wall_time_minutes * multiplier:.0f}m elapsed"
         )

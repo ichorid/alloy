@@ -142,6 +142,12 @@ limits:
   max_consiliums: 1
   max_wall_time_minutes: 90
   max_agent_calls: 20
+  # Per-tier floors for the agent-call ceiling; 1.5x the alloy:calibration
+  # mean for the run's tier can raise it further (see resolve_max_agent_calls).
+  max_agent_calls_by_tier:
+    simple: 20
+    medium: 24
+    complex: 32
 
 on_success_status: review-ready
 cleanup_worktree_on_success: false

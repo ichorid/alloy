@@ -2033,7 +2033,7 @@ def build_graph(ctx: RunContext):
                         "the implementer continues from there.",
                     )}
                 estimate = remediation_call_estimate(state)
-                allowed_calls = ctx.recipe.limits.max_agent_calls * ctx.budget(state)
+                allowed_calls = ctx.agent_call_limit(state) * ctx.budget(state)
                 remaining = allowed_calls - ctx.store.call_count(ctx.run_id)
                 if remaining < estimate:
                     return {**update, "blocking_bug": {**entry, "reason": verdict.reason},
