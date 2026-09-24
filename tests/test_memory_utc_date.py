@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -75,14 +76,18 @@ def memory_utc_skew(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin CLI to UTC today while ``date.today()`` returns the local calendar day."""
     monkeypatch.setattr("alloy.cli.utcnow", lambda: UTC_CLOCK)
     monkeypatch.setattr("alloy.models.utcnow", lambda: UTC_CLOCK)
-    monkeypatch.setattr(
-        "datetime.date",
-        type(
-            "_SkewedDate",
-            (date,),
-            {"today": classmethod(lambda cls: LOCAL_TODAY)},
-        ),
+    skewed_date = type(
+        "_SkewedDate",
+        (date,),
+        {"today": classmethod(lambda cls: LOCAL_TODAY)},
     )
+    monkeypatch.setattr("datetime.date", skewed_date)
+    # This module's own ``utcnow``/``date`` bindings were imported by name, so
+    # patching the source modules above does not reach them; rebind them here
+    # or the cross-check assertions below read the real wall clock.
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "utcnow", lambda: UTC_CLOCK)
+    monkeypatch.setattr(module, "date", skewed_date)
 
 
 def _invoke_memory_list(*, project, alloy_home):
