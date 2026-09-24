@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
+
+# Self-referential bty acceptance test shells out to the parallel gate; exclude it
+# from in-suite gate probes so nested full-suite runs do not recurse (conftest).
+BTY_PARALLEL_GATE_IGNORE = "tests/test_alloy_bty_landing_repair.py"
+_SUITE_ACTIVE_ENV = "ALLOY_FULL_SUITE_ACTIVE"
 
 EPIC_BRANCH = "alloy/alloy-8by"
 EIGHT_BY_REPAIR_BEAD_ID = "alloy-0zj"
 JJG_EPIC_BRANCH = "alloy/alloy-jjg"
 JJG_REPAIR_BEAD_ID = "alloy-088"
+BTY_REPAIR_BEAD_ID = "alloy-bty"
+BTY_ACCEPTANCE_TEST_PATHS: tuple[str, ...] = (
+    "tests/test_alloy_jjg_monitor_render_conflict.py",
+    "tests/test_monitor_render_landing_merge.py",
+    "tests/test_alloy_bty_landing_repair.py",
+)
 LANDING_MERGE_ACCEPTANCE_CMD: tuple[str, ...] = (
     "uv",
     "run",
@@ -96,4 +108,35 @@ def landing_merge_gate_succeeded(*, repo_root: Path) -> bool:
         cwd=repo_root,
         check=False,
     )
+    return result.returncode == 0
+
+
+def bty_repair_bead_id() -> str:
+    """Bead id for the alloy-bty full parallel regression land-repair."""
+    return BTY_REPAIR_BEAD_ID
+
+
+def bty_epic_branch() -> str:
+    """Epic branch name for the alloy-jjg trial merge (alloy-bty gate)."""
+    return JJG_EPIC_BRANCH
+
+
+def bty_parallel_regression_command() -> tuple[str, ...]:
+    """Command that matches alloy-bty acceptance (full parallel regression)."""
+    return parallel_regression_command()
+
+
+def bty_acceptance_test_paths() -> list[str]:
+    """Relative paths to pytest modules that cover alloy-bty / alloy-jjg landing."""
+    return list(BTY_ACCEPTANCE_TEST_PATHS)
+
+
+def bty_parallel_gate_succeeded(*, repo_root: Path) -> bool:
+    """Return True when the alloy-bty parallel regression gate exits 0 at ``repo_root``."""
+    cmd = [
+        *bty_parallel_regression_command(),
+        f"--ignore={BTY_PARALLEL_GATE_IGNORE}",
+    ]
+    env = {k: v for k, v in os.environ.items() if k != _SUITE_ACTIVE_ENV}
+    result = subprocess.run(cmd, cwd=repo_root, check=False, env=env)
     return result.returncode == 0
