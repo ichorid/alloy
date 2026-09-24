@@ -206,7 +206,12 @@ class MonitorApp(App[None]):
             table.move_cursor(row=target, scroll=False)
             self._sync_selected_marker(table, target)
         # clear() resets the viewport; a periodic refresh must not throw away where
-        # the user scrolled. Restore once the rebuilt table has been laid out.
+        # the user scrolled. Restore it now, before the next paint (the virtual size
+        # is only recomputed on idle, so the old scroll range still accepts it) --
+        # restoring only after a refresh shows one frame at the origin (flicker).
+        # The deferred call covers the case where the size did change.
+        table.scroll_x = table.scroll_target_x = scroll_x
+        table.scroll_y = table.scroll_target_y = scroll_y
         self.call_after_refresh(table.scroll_to, scroll_x, scroll_y, animate=False)
         self.title = title_line(snapshot, table_width, mode)
         self.query_one("#stats", Static).update(header_line(snapshot, mode))

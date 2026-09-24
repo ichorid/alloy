@@ -262,6 +262,9 @@ async def test_refresh_keeps_horizontal_scroll_of_runs_table():
         assert table.scroll_x == 1
 
         app.apply_snapshot(snapshot)
+
+        # Immediately, not after a later refresh: no frame may show the origin.
+        assert table.scroll_x == 1
         await pilot.pause()
 
         assert table.scroll_x == 1
