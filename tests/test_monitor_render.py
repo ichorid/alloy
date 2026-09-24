@@ -917,7 +917,7 @@ def codex_home(tmp_path):
     return tmp_path / "home"
 
 
-def test_limits_lines_codex_rollout_shows_consumed_percent_with_compact_reset_suffix(
+def test_limits_lines_codex_rollout_shows_used_percent_with_compact_reset_suffix(
     codex_home,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -955,9 +955,10 @@ def test_limits_lines_codex_rollout_shows_consumed_percent_with_compact_reset_su
 
     line = limits_lines(snapshot)[0]
 
-    assert sample["windows"][0]["used_percent"] == 47.0
-    assert "47%" in line
-    assert "53%" not in line
+    # The rollout's used_percent already is the consumed fraction (it grows with use).
+    assert sample["windows"][0]["used_percent"] == 53.0
+    assert "53%" in line
+    assert "47%" not in line
     assert "resets" not in line
     assert "(05:32)" in line
 

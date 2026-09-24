@@ -552,8 +552,8 @@ def _cached_codex_limits() -> dict:
         "error": None,
         "status": None,
         "windows": [
-            window("primary", "5h", 47.0, None),
-            window("secondary", "weekly", 49.0, None),
+            window("primary", "5h", 53.0, None),
+            window("secondary", "weekly", 51.0, None),
         ],
     }
 
