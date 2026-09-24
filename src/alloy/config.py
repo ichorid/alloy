@@ -8,6 +8,7 @@ There is deliberately no DSL here.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
@@ -15,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from alloy.models import COMPLEXITY_LEVELS
+from alloy.models import COMPLEXITY_LEVELS, _load_calibration
 
 log = logging.getLogger(__name__)
 
@@ -124,11 +125,17 @@ class Limits:
     max_consiliums: int = 1
     max_wall_time_minutes: float = 90.0
     max_agent_calls: int = 20
+    max_agent_calls_by_tier: dict[str, int] = field(default_factory=dict)
 
     @classmethod
     def parse(cls, raw: dict[str, Any] | None) -> "Limits":
         raw = raw or {}
         defaults = cls()
+        by_tier: dict[str, int] = {}
+        for level, value in (raw.get("max_agent_calls_by_tier") or {}).items():
+            if level not in COMPLEXITY_LEVELS:
+                raise ConfigError(f"unknown max_agent_calls_by_tier tier: {level!r}")
+            by_tier[level] = int(value)
         return cls(
             max_iterations=int(raw.get("max_iterations", defaults.max_iterations)),
             max_consiliums=int(raw.get("max_consiliums", defaults.max_consiliums)),
@@ -136,7 +143,38 @@ class Limits:
                 raw.get("max_wall_time_minutes", defaults.max_wall_time_minutes)
             ),
             max_agent_calls=int(raw.get("max_agent_calls", defaults.max_agent_calls)),
+            max_agent_calls_by_tier=by_tier,
         )
+
+
+DEFAULT_TIER_AGENT_CALL_MULTIPLIER = 1.5
+"""Calibration mean multiplier behind the per-tier agent-call ceiling."""
+
+
+def resolve_max_agent_calls(
+    config: "RecipeConfig", complexity: str | None, calibration_body: str = ""
+) -> int:
+    """Agent-call ceiling for a run of the given complexity tier.
+
+    The flat ``limits.max_agent_calls`` is the floor. A known tier raises it
+    to whichever is higher: the recipe's explicit
+    ``limits.max_agent_calls_by_tier`` value, or
+    DEFAULT_TIER_AGENT_CALL_MULTIPLIER x the stored alloy:calibration
+    mean_agent_calls for that tier. A run without a complexity estimate yet
+    gets the flat limit.
+    """
+    limits = config.limits
+    if complexity not in COMPLEXITY_LEVELS:
+        return limits.max_agent_calls
+    ceiling = max(
+        limits.max_agent_calls,
+        limits.max_agent_calls_by_tier.get(complexity, limits.max_agent_calls),
+    )
+    entry = _load_calibration(calibration_body).get(complexity) or {}
+    mean = float(entry.get("mean_agent_calls", 0.0) or 0.0)
+    if mean > 0:
+        ceiling = max(ceiling, math.ceil(mean * DEFAULT_TIER_AGENT_CALL_MULTIPLIER))
+    return ceiling
 
 
 @dataclass(frozen=True)

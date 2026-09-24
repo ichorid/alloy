@@ -243,10 +243,12 @@ Remediation is bounded twice, never by a counter. Before a child's fix merges,
 the `scope` role (Jev) reads the child's diff against the bug bead and the
 project context and returns a scope verdict; only `merge` lands the fix, while
 `too-broad`, `off-target` or a merge conflict fails the child and parks the
-parent at the human gate with the reason. The parent's own budget is the
-deterministic backstop: agent calls and wall time spent in children count
-toward the parent's `max_agent_calls` and `max_wall_time_minutes`, so a bead
-can only remediate as much as its own limits allow. Remediation is one level
+parent at the human gate with the reason. Each run's own budget is the
+deterministic backstop: a run is capped by its own `max_agent_calls`
+(remediation children spend their own budget, not the parent's), while wall
+time spent in children still counts toward the parent's
+`max_wall_time_minutes`, so a bead can only remediate as much as its own
+limits allow. Remediation is one level
 deep -- a blocking bug found inside a child is filed unclaimed at P1 and the
 child parks, which parks the parent in turn. When reviewing a parent branch
 that carries a merged child branch, read the parent's WIP commit, the merge of

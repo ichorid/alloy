@@ -154,7 +154,7 @@ def test_nerd_limits_clock_icon_uses_local_reset_suffix_not_utc_hhmm(
     assert "(20:00)" not in line
 
 
-def test_nerd_limits_weekly_reset_uses_local_date_suffix_with_clock_icon(
+def test_nerd_limits_weekly_reset_uses_local_date_suffix_with_calendar_icon(
     monkeypatch: pytest.MonkeyPatch,
 ):
     _freeze_render_now(
@@ -168,10 +168,11 @@ def test_nerd_limits_weekly_reset_uses_local_date_suffix_with_clock_icon(
         mode="nerd",
     )
 
-    assert "\uf017" in line
-    assert "2026-09-25" in line
+    assert "\uf073" in line
+    assert "Sep 25" in line
+    assert "\uf017" not in line
     assert "resets" not in line
-    assert "(2026-09-25)" not in line
+    assert "2026" not in line
 
 
 def test_task_tree_epic_scoped_queued_row_uses_epic_queued_key():

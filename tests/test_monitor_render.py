@@ -641,187 +641,6 @@ def test_limits_line_unavailable_harness_renders_error_in_red():
     assert "[#f85149]unavailable: no local sample[/]" in line
 
 
-# -- alloy-gek: consumed Codex quota + compact local reset suffix --------------
-
-
-_AMSTERDAM = ZoneInfo("Europe/Amsterdam")
-
-
-def _freeze_render_now(monkeypatch: pytest.MonkeyPatch, when: datetime) -> None:
-    import alloy.monitor.render as render_mod
-
-    real_datetime = render_mod.datetime
-
-    class _FrozenDatetime(real_datetime):
-        @classmethod
-        def now(cls, tz=None):
-            if tz is None:
-                return when.astimezone().replace(tzinfo=None)
-            return when.astimezone(tz)
-
-    monkeypatch.setattr(render_mod, "datetime", _FrozenDatetime)
-
-
-def _limits_line_for_single_window(
-    label: str,
-    resets_at: str,
-    *,
-    harness: str = "claude",
-    used_percent: float = 42.0,
-    key: str = "five_hour",
-) -> str:
-    from alloy.limits import window
-    from alloy.monitor.render import limits_lines
-
-    snapshot = _snapshot()
-    snapshot["limits"] = {
-        harness: {
-            "harness": harness,
-            "installed": True,
-            "available": True,
-            "fetched_at": "2026-09-24T08:00:00+00:00",
-            "as_of": "2026-09-24T08:00:00+00:00",
-            "source": "oauth-usage-api",
-            "error": None,
-            "status": None,
-            "windows": [window(key, label, used_percent, resets_at)],
-        },
-    }
-    lines = limits_lines(snapshot)
-    assert len(lines) == 1
-    return lines[0]
-
-
-def test_limits_line_5h_reset_suffix_is_local_hhmm_without_resets_word(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    _freeze_render_now(
-        monkeypatch,
-        datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM),
-    )
-    line = _limits_line_for_single_window("5h", "2026-09-24T14:00:00+00:00")
-
-    assert "resets" not in line
-    assert "(16:00)" in line
-
-
-def test_limits_line_5h_reset_suffix_uses_local_time_on_different_calendar_day(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    _freeze_render_now(
-        monkeypatch,
-        datetime(2026, 9, 24, 22, 0, tzinfo=_AMSTERDAM),
-    )
-    line = _limits_line_for_single_window("5h", "2026-09-24T23:00:00+00:00")
-
-    assert "resets" not in line
-    assert "(01:00)" in line
-    assert "2026-09-25" not in line
-
-
-def test_limits_line_weekly_reset_suffix_same_local_day_shows_hhmm(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    _freeze_render_now(
-        monkeypatch,
-        datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM),
-    )
-    line = _limits_line_for_single_window(
-        "weekly",
-        "2026-09-24T18:00:00+00:00",
-        key="seven_day",
-    )
-
-    assert "resets" not in line
-    assert "(20:00)" in line
-    assert "2026-09-24" not in line
-
-
-def test_limits_line_weekly_reset_suffix_other_local_day_shows_date(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    _freeze_render_now(
-        monkeypatch,
-        datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM),
-    )
-    line = _limits_line_for_single_window(
-        "weekly",
-        "2026-09-24T23:00:00+00:00",
-        key="seven_day",
-    )
-
-    assert "resets" not in line
-    assert "(2026-09-25)" in line
-
-
-def test_limits_line_cycle_reset_suffix_matches_weekly_date_rule(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    _freeze_render_now(
-        monkeypatch,
-        datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM),
-    )
-    line = _limits_line_for_single_window(
-        "cycle",
-        "2026-09-24T23:00:00+00:00",
-        harness="cursor",
-        key="total",
-    )
-
-    assert "resets" not in line
-    assert "(2026-09-25)" in line
-
-
-@pytest.fixture
-def codex_home(tmp_path):
-    return tmp_path / "home"
-
-
-def test_limits_lines_codex_rollout_shows_consumed_percent_with_compact_reset_suffix(
-    codex_home,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    from alloy.limits.codex import probe
-    from alloy.monitor.render import limits_lines
-
-    from test_limits_codex import (
-        CODEX_TS,
-        RESETS_AT_EPOCH,
-        _primary,
-        _token_count_line,
-        write_rollout,
-    )
-
-    write_rollout(
-        codex_home,
-        "session-a",
-        "rollout-a.jsonl",
-        [
-            _token_count_line(
-                CODEX_TS,
-                limit_id="codex",
-                primary=_primary(53, 300, RESETS_AT_EPOCH),
-                secondary=_primary(51, 10080, RESETS_AT_EPOCH),
-            ),
-        ],
-    )
-    sample = probe(codex_home)
-    snapshot = _snapshot()
-    snapshot["limits"] = {"codex": sample}
-    _freeze_render_now(
-        monkeypatch,
-        datetime(2026, 9, 12, 5, 0, tzinfo=_AMSTERDAM),
-    )
-
-    line = limits_lines(snapshot)[0]
-
-    assert sample["windows"][0]["used_percent"] == 47.0
-    assert "47%" in line
-    assert "53%" not in line
-    assert "resets" not in line
-    assert "(05:32)" in line
-
-
 # -- alloy-3g0.3: nerd limits bars, warn/clock icons, wrap at 80 -------------
 
 
@@ -886,26 +705,22 @@ def test_limits_line_34_percent_nerd_has_no_warn_glyph():
     assert "\uf071" not in line
 
 
-def test_limits_line_nerd_reset_shows_clock_without_parentheses(
-    monkeypatch: pytest.MonkeyPatch,
-):
+def test_limits_line_nerd_reset_shows_clock_without_parentheses():
     from alloy.limits import window
     from alloy.monitor.render import limits_lines
 
-    _freeze_render_now(
-        monkeypatch,
-        datetime(2026, 9, 23, 10, 0, tzinfo=_AMSTERDAM),
-    )
     snapshot = _snapshot()
     snapshot["limits"] = _available_claude_limits(
         window("five_hour", "5h", 34.0, "2026-09-23T18:00:00+00:00"),
     )
     line = limits_lines(snapshot, mode="nerd")[0]
 
+    local_clock = datetime.fromisoformat("2026-09-23T18:00:00+00:00").astimezone().strftime("%H:%M")
+
     assert "\uf017" in line
-    assert "20:00" in line
+    assert local_clock in line
     assert "(resets" not in line
-    assert "(20:00)" not in line
+    assert f"({local_clock})" not in line
 
 
 def _two_window_claude_limits() -> dict:
@@ -947,6 +762,220 @@ def test_limits_lines_ascii_matches_legacy_output():
     legacy = limits_lines(snapshot)
 
     assert limits_lines(snapshot, mode="ascii") == legacy
+
+
+# -- alloy-gek: consumed Codex quota + compact local reset suffix --------------
+
+
+_AMSTERDAM = ZoneInfo("Europe/Amsterdam")
+
+
+@pytest.fixture(autouse=True)
+def _local_tz_amsterdam():
+    """Reset suffixes render in the machine's local zone; pin it so expectations are stable."""
+    import os
+    import time
+
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = "Europe/Amsterdam"
+    time.tzset()
+    yield
+    if previous is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = previous
+    time.tzset()
+
+
+def _freeze_render_now(monkeypatch: pytest.MonkeyPatch, when: datetime) -> None:
+    import alloy.monitor.render as render_mod
+
+    real_datetime = render_mod.datetime
+
+    class _FrozenDatetime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return when.astimezone().replace(tzinfo=None)
+            return when.astimezone(tz)
+
+    monkeypatch.setattr(render_mod, "datetime", _FrozenDatetime)
+
+
+def _limits_line_for_single_window(
+    label: str,
+    resets_at: str,
+    *,
+    harness: str = "claude",
+    used_percent: float = 42.0,
+    key: str = "five_hour",
+) -> str:
+    from alloy.limits import window
+    from alloy.monitor.render import limits_lines
+
+    snapshot = _snapshot()
+    snapshot["limits"] = {
+        harness: {
+            "harness": harness,
+            "installed": True,
+            "available": True,
+            "fetched_at": "2026-09-24T08:00:00+00:00",
+            "as_of": "2026-09-24T08:00:00+00:00",
+            "source": "oauth-usage-api",
+            "error": None,
+            "status": None,
+            "windows": [window(key, label, used_percent, resets_at)],
+        },
+    }
+    lines = limits_lines(snapshot)
+    assert len(lines) == 1
+    return lines[0]
+
+
+def test_reset_suffix_weekly_other_local_day_returns_sep_compact_date(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from alloy.monitor.render import _reset_suffix
+
+    _freeze_render_now(
+        monkeypatch,
+        datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM),
+    )
+    suffix = _reset_suffix("weekly", "2026-09-24T23:00:00+00:00")
+
+    assert suffix == "Sep 25"
+    assert "2026" not in suffix
+
+
+def test_limits_line_5h_reset_suffix_is_local_hhmm_without_resets_word(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _freeze_render_now(
+        monkeypatch,
+        datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM),
+    )
+    line = _limits_line_for_single_window("5h", "2026-09-24T14:00:00+00:00")
+
+    assert "resets" not in line
+    assert "(16:00)" in line
+
+
+def test_limits_line_5h_reset_suffix_uses_local_time_on_different_calendar_day(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _freeze_render_now(
+        monkeypatch,
+        datetime(2026, 9, 24, 22, 0, tzinfo=_AMSTERDAM),
+    )
+    line = _limits_line_for_single_window("5h", "2026-09-24T23:00:00+00:00")
+
+    assert "resets" not in line
+    assert "(01:00)" in line
+    assert "2026-09-25" not in line
+
+
+def test_limits_line_weekly_reset_suffix_same_local_day_shows_hhmm(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _freeze_render_now(
+        monkeypatch,
+        datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM),
+    )
+    line = _limits_line_for_single_window(
+        "weekly",
+        "2026-09-24T18:00:00+00:00",
+        key="seven_day",
+    )
+
+    assert "resets" not in line
+    assert "(20:00)" in line
+    assert "2026-09-24" not in line
+
+
+def test_limits_line_weekly_reset_suffix_other_local_day_shows_date(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _freeze_render_now(
+        monkeypatch,
+        datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM),
+    )
+    line = _limits_line_for_single_window(
+        "weekly",
+        "2026-09-24T23:00:00+00:00",
+        key="seven_day",
+    )
+
+    assert "resets" not in line
+    assert "(Sep 25)" in line
+
+
+def test_limits_line_cycle_reset_suffix_matches_weekly_date_rule(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _freeze_render_now(
+        monkeypatch,
+        datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM),
+    )
+    line = _limits_line_for_single_window(
+        "cycle",
+        "2026-09-24T23:00:00+00:00",
+        harness="cursor",
+        key="total",
+    )
+
+    assert "resets" not in line
+    assert "(Sep 25)" in line
+
+
+@pytest.fixture
+def codex_home(tmp_path):
+    return tmp_path / "home"
+
+
+def test_limits_lines_codex_rollout_shows_used_percent_with_compact_reset_suffix(
+    codex_home,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from alloy.limits.codex import probe
+    from alloy.monitor.render import limits_lines
+
+    from test_limits_codex import (
+        CODEX_TS,
+        RESETS_AT_EPOCH,
+        _primary,
+        _token_count_line,
+        write_rollout,
+    )
+
+    write_rollout(
+        codex_home,
+        "session-a",
+        "rollout-a.jsonl",
+        [
+            _token_count_line(
+                CODEX_TS,
+                limit_id="codex",
+                primary=_primary(53, 300, RESETS_AT_EPOCH),
+                secondary=_primary(51, 10080, RESETS_AT_EPOCH),
+            ),
+        ],
+    )
+    sample = probe(codex_home)
+    snapshot = _snapshot()
+    snapshot["limits"] = {"codex": sample}
+    _freeze_render_now(
+        monkeypatch,
+        datetime(2026, 9, 12, 5, 0, tzinfo=_AMSTERDAM),
+    )
+
+    line = limits_lines(snapshot)[0]
+
+    # The rollout's used_percent already is the consumed fraction (it grows with use).
+    assert sample["windows"][0]["used_percent"] == 53.0
+    assert "53%" in line
+    assert "47%" not in line
+    assert "resets" not in line
+    assert "(05:32)" in line
 
 
 def test_header_line_includes_session_totals_when_present():
@@ -1466,3 +1495,22 @@ def test_task_tree_expanded_queue_and_epics_yield_unique_row_keys():
     keys = [row.key for row in rows]
 
     assert len(keys) == len(set(keys)), f"duplicate keys: {[k for k in keys if keys.count(k) > 1]}"
+
+
+def test_limits_line_weekly_date_suffix_uses_calendar_icon_not_clock(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from alloy.limits import window
+    from alloy.monitor.render import limits_lines
+
+    _freeze_render_now(monkeypatch, datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM))
+    snapshot = _snapshot()
+    snapshot["limits"] = _available_claude_limits(
+        window("seven_day", "weekly", 34.0, "2026-09-24T23:00:00+00:00"),
+    )
+
+    line = limits_lines(snapshot, mode="nerd")[0]
+
+    assert "\uf073 Sep 25" in line
+    assert "\uf017" not in line
+    assert "2026" not in line

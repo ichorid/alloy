@@ -11,6 +11,9 @@ present: `null` where a value is genuinely absent, never omitted.
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
@@ -29,8 +32,110 @@ QUEUE_READY_CAP = 50
 LIFETIME_STATUSES = (RUN_DONE, RUN_FAILED, RUN_CANCELLED)
 
 
+SLOW_TTL_S = 5.0  # bead tree and memories change rarely; the runs table refreshes every second
+
+
+def _slow_cached(beads: Any, name: str, fetch: Callable[[], Any]) -> Any:
+    """Per-client TTL cache for data that changes on human timescales."""
+    cache: dict[str, tuple[float, Any]] = beads.__dict__.setdefault("_monitor_cache", {})
+    hit = cache.get(name)
+    now = time.monotonic()
+    if hit is not None and now - hit[0] < SLOW_TTL_S:
+        return hit[1]
+    value = fetch()
+    cache[name] = (now, value)
+    return value
+
+
+class _Prefetch:
+    """The independent `bd` reads, run concurrently: latency is the slowest, not the sum.
+
+    Each `bd` call is 0.25s idle but seconds while agents hold the Dolt lock.
+    """
+
+    def __init__(self, engine: Engine) -> None:
+        beads = engine.beads
+        all_rows = getattr(beads, "all_rows", None)
+        jobs: dict[str, Callable[[], Any]] = {
+            # superset of the recipe-tagged queue: ready_count and queue both derive from it
+            "ready": lambda: beads.ready(include_unassigned=True, limit=READY_CAP),
+            "blocked": beads.blocked,
+            "memories": lambda: _slow_cached(beads, "memories", beads.memories),
+        }
+        if all_rows is not None:
+            jobs["rows"] = lambda: _slow_cached(beads, "rows", all_rows)
+        self.results: dict[str, Any] = {}
+        with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+            futures = {name: pool.submit(job) for name, job in jobs.items()}
+        for name, future in futures.items():
+            try:
+                self.results[name] = future.result()
+            except (bd.BeadsError, OSError) as exc:
+                self.results[name] = exc
+
+    def get(self, name: str) -> Any:
+        """The fetched value, or raise the BeadsError/OSError the fetch hit."""
+        value = self.results.get(name)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
+class _BeadIndex:
+    """Epic/parent lookups from ONE `bd list --all` instead of a `show` per bead.
+
+    Clients without `all_rows` fall back to the per-bead calls.
+    """
+
+    def __init__(self, engine: Engine, prefetch: _Prefetch) -> None:
+        self._beads = engine.beads
+        self.rows: dict[str, dict[str, Any]] | None = None
+        if "rows" in prefetch.results:
+            try:
+                self.rows = {str(row.get("id")): row for row in prefetch.get("rows")}
+            except (bd.BeadsError, OSError):
+                self.rows = {}
+
+    def epic_for(self, bead_id: str, max_depth: int = 3) -> str | None:
+        if self.rows is None:
+            try:
+                return self._beads.epic_for(bead_id)
+            except (bd.BeadsError, OSError):
+                return None
+        current = bead_id
+        for _ in range(max_depth):
+            row = self.rows.get(current)
+            parent_id = bd._parent_id(row) if row else None
+            parent = self.rows.get(parent_id) if parent_id else None
+            if parent is None:
+                return None
+            if parent.get("issue_type") == "epic":
+                return str(parent.get("id") or "")
+            current = str(parent_id)
+        return None
+
+    def children(self, parent_id: str) -> list[tuple[str, bool]]:
+        """(child id, is closed) pairs."""
+        if self.rows is None:
+            return [(c.id, c.status == bd.STATUS_DONE) for c in self._beads.children(parent_id)]
+        return [
+            (str(r["id"]), r.get("status") == bd.STATUS_DONE)
+            for r in self.rows.values()
+            if bd._parent_id(r) == parent_id
+        ]
+
+    def title(self, bead_id: str) -> str | None:
+        if self.rows is None:
+            bead = self._beads.show(bead_id)
+            return bead.title if bead else None
+        row = self.rows.get(bead_id)
+        return row.get("title") if row else None
+
+
 def build_snapshot(engine: Engine) -> dict[str, Any]:
     """One frozen-shape view of the scheduler, the queue and every active run."""
+    prefetch = _Prefetch(engine)
+    index = _BeadIndex(engine, prefetch)
     pid = read_pid(engine.paths.scheduler_pid)
     totals = engine.store.run_status_totals(engine.repo)
     limits = _limits(engine)
@@ -48,21 +153,21 @@ def build_snapshot(engine: Engine) -> dict[str, Any]:
             if record["run_id"] not in active_ids
         ]
     runs = [
-        _run_entry(engine, record, limits) for record in active_records
-    ] + [_run_entry(engine, record, limits) for record in finished_records]
+        _run_entry(engine, record, limits, index) for record in active_records
+    ] + [_run_entry(engine, record, limits, index) for record in finished_records]
     return {
         "root": str(engine.paths.root),
         "repo": str(engine.repo),
         "scheduler": {"running": pid is not None, "pid": pid},
-        "ready_count": _ready_count(engine),
+        "ready_count": _ready_count(prefetch),
         "ready_capped_at": READY_CAP,
         "lifetime": {status: int(totals.get(status, 0)) for status in LIFETIME_STATUSES},
         "limits": limits,
         "session": session,
         "session_totals": _session_totals(finished_records),
-        "queue": _queue(engine),
+        "queue": _queue(prefetch, index),
         "runs": runs,
-        "epics": _epics(engine, runs, active_ids),
+        "epics": _epics(index, runs, active_ids),
     }
 
 
@@ -97,35 +202,32 @@ def _limits(engine: Engine) -> dict[str, Any]:
     }
 
 
-def _ready_count(engine: Engine) -> int:
+def _ready_count(prefetch: _Prefetch) -> int:
     try:
-        return len(engine.beads.ready(limit=READY_CAP))
+        return sum(1 for bead in prefetch.get("ready") if bead.recipe)
     except (bd.BeadsError, OSError):
         return 0  # the queue is unknowable without bd; the runs are still worth showing
 
 
-def _queue(engine: Engine) -> dict[str, Any]:
+def _queue(prefetch: _Prefetch, index: _BeadIndex) -> dict[str, Any]:
     try:
-        return _build_queue(engine)
+        return _build_queue(prefetch, index)
     except (bd.BeadsError, OSError):
         return {"ready": [], "ready_total": 0, "blocked": []}
 
 
-def _build_queue(engine: Engine) -> dict[str, Any]:
+def _build_queue(prefetch: _Prefetch, index: _BeadIndex) -> dict[str, Any]:
     """Dispatchable ready beads (Scheduler order) plus blocked beads."""
     from alloy import recipes
 
     known = set(recipes.names())
-    default = engine.beads.memories().get(DEFAULT_RECIPE_KEY)
+    default = prefetch.get("memories").get(DEFAULT_RECIPE_KEY)
     if default and default not in known:
         default = None
     default_recipe = default or None
 
     dispatchable: list[bd.Bead] = []
-    for bead in engine.beads.ready(
-        include_unassigned=default_recipe is not None,
-        limit=READY_CAP,
-    ):
+    for bead in prefetch.get("ready"):
         if (bead.recipe or default_recipe) in known:
             dispatchable.append(bead)
 
@@ -136,7 +238,7 @@ def _build_queue(engine: Engine) -> dict[str, Any]:
             "recipe": bead.recipe or default_recipe,
             "priority": bead.priority,
             "complexity": bead.complexity_override,
-            "epic_id": engine.beads.epic_for(bead.id),
+            "epic_id": index.epic_for(bead.id),
         }
         for bead in dispatchable[:QUEUE_READY_CAP]
     ]
@@ -145,15 +247,15 @@ def _build_queue(engine: Engine) -> dict[str, Any]:
             "bead_id": bead.id,
             "title": bead.title,
             "blocked_by": list(bead.blocked_by),
-            "epic_id": engine.beads.epic_for(bead.id),
+            "epic_id": index.epic_for(bead.id),
         }
-        for bead in engine.beads.blocked()
+        for bead in prefetch.get("blocked")
     ]
     return {"ready": ready, "ready_total": len(dispatchable), "blocked": blocked}
 
 
 def _epics(
-    engine: Engine,
+    index: _BeadIndex,
     runs: list[dict[str, Any]],
     active_ids: set[str],
 ) -> list[dict[str, Any]]:
@@ -165,14 +267,13 @@ def _epics(
         active_runs = [run for run in runs if run["run_id"] in active_ids]
         entries: list[dict[str, Any]] = []
         for epic_id in sorted(epic_ids):
-            children = engine.beads.children(epic_id)
-            done_ids = [child.id for child in children if child.status == bd.STATUS_DONE]
+            children = index.children(epic_id)
+            done_ids = [child_id for child_id, closed in children if closed]
             epic_runs = [run for run in active_runs if run["epic_id"] == epic_id]
-            bead = engine.beads.show(epic_id)
             entries.append(
                 {
                     "epic_id": epic_id,
-                    "title": bead.title if bead else None,
+                    "title": index.title(epic_id),
                     "total": len(children),
                     "done": len(done_ids),
                     "done_ids": done_ids,
@@ -186,7 +287,7 @@ def _epics(
 
 
 def _run_entry(
-    engine: Engine, record: dict[str, Any], limits: dict[str, Any]
+    engine: Engine, record: dict[str, Any], limits: dict[str, Any], index: _BeadIndex
 ) -> dict[str, Any]:
     run_id = record["run_id"]
     checkpoint = engine.graph_snapshot_for_run(run_id)
@@ -233,15 +334,8 @@ def _run_entry(
         "models_used": _models_used(engine, run_id, limits),
         "worktree": record["worktree"],
         "branch": record["branch"],
-        "epic_id": _epic_id(engine, record["bead_id"]),
+        "epic_id": index.epic_for(record["bead_id"]),
     }
-
-
-def _epic_id(engine: Engine, bead_id: str) -> str | None:
-    try:
-        return engine.beads.epic_for(bead_id)
-    except (bd.BeadsError, OSError):
-        return None
 
 
 def _models_used(

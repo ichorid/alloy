@@ -21,6 +21,11 @@ _ICONS: Final[dict[str, tuple[str, str, str]]] = {
     "blocked": ("\uf05e", "\u2298", "X"),       # ban, ⊘
     "done": ("\uf00c", "\u2713", "+"),          # check, ✓
     "ready": ("\uf017", "\u25f7", "."),         # clock, ◷
+    "failed": ("\uf00d", "\u2717", "x"),        # times, \u2717
+    "cancelled": ("\uf05e", "\u2298", "-"),     # ban, \u2298
+    "waiting-human": ("\uf007", "\u263a", "?"), # user, \u263a
+    "review-ready": ("\uf06e", "\u25c9", "r"),  # eye, \u25c9
+    "unknown": ("\uf128", "?", "?"),            # question mark
     "pill_l": ("\ue0b6", "[", "["),
     "pill_r": ("\ue0b4", "]", "]"),
     "arrow": ("\ue0b0", "\u203a", ">"),         # powerline right
@@ -30,6 +35,7 @@ _ICONS: Final[dict[str, tuple[str, str, str]]] = {
     "warn": ("\uf071", "\u26a0", "!"),
     "stale": ("\uf1da", "\u21bb", "~"),         # history
     "clock": ("\uf017", "\u25f7", "o"),
+    "calendar": ("\uf073", "\u25a6", "d"),     # calendar, ▦
     "branch": ("\ue0a0", "\u2387", "@"),       # powerline branch
     "scheduler": ("\uf111", "\u25cf", "*"),     # dot
     "queue": ("\uf0ae", "\u2630", "#"),         # tasks
@@ -48,7 +54,7 @@ _ICONS: Final[dict[str, tuple[str, str, str]]] = {
 
 def icon(role: str, mode: Mode) -> str:
     """Return the glyph for ``role`` in ``mode`` (nerd, unicode, or ascii)."""
-    nerd, unicode_glyph, ascii_glyph = _ICONS[role]
+    nerd, unicode_glyph, ascii_glyph = _ICONS.get(role) or _ICONS["unknown"]
     if mode == "nerd":
         return nerd
     if mode == "ascii":

@@ -145,6 +145,25 @@ def test_recipes_table_lists_routing_tiers_models_and_effort(project, alloy_home
         assert needle in output
 
 
+def test_recipes_json_exports_per_tier_max_agent_calls(project, alloy_home):
+    """alloy recipes --json lists a higher max_agent_calls for complex than simple."""
+    result = _invoke("recipes", "--json", project=project, alloy_home=alloy_home)
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    entry = _tdd_loop_recipe(payload)
+    by_tier = entry["limits"]["max_agent_calls_by_tier"]
+    assert by_tier["complex"] > by_tier["simple"]
+    assert by_tier["simple"] >= entry["limits"]["max_agent_calls"]
+
+
+def test_recipes_table_shows_per_tier_max_agent_calls(project, alloy_home):
+    result = _invoke("recipes", project=project, alloy_home=alloy_home)
+
+    assert result.exit_code == 0
+    assert "max_agent_calls_by_tier" in result.stdout
+
+
 # -- alloy recipes --probe ---------------------------------------------------
 
 
