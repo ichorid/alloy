@@ -175,6 +175,34 @@ def test_cli_land_review_ready_green_verifier_merges_closes_and_reports_landed(
     }
 
 
+@pytest.mark.asyncio
+async def test_land_commits_uncommitted_work_before_merging(
+    land_engine, beads_project, alloy_home, fake_harnesses,
+):
+    """Uncommitted agent work must be committed before the land recipe runs."""
+    fake_harnesses.configure(_land_script())
+    bead_id = bd_create(beads_project, "dirty worktree", alloy_recipe="tdd-loop")
+    worktree = _seed_review_ready(land_engine, beads_project, alloy_home, bead_id)
+    (worktree.path / "feature.txt").write_text("bead work\n", encoding="utf-8")
+    (worktree.path / "tests").mkdir(exist_ok=True)
+    (worktree.path / "tests" / "test_placeholder.py").write_text(
+        "def test_placeholder():\n    assert True\n", encoding="utf-8",
+    )
+    # Deliberately uncommitted: land must not verify/merge HEAD without this file.
+    (worktree.path / "only_dirty.txt").write_text("wip\n", encoding="utf-8")
+    primary_head_before = _head(beads_project)
+    (beads_project / "main.txt").write_text("main advance\n", encoding="utf-8")
+    _git(beads_project, "add", "-A")
+    _git(beads_project, "commit", "-m", "main advance")
+
+    await land_engine.land(bead_id)
+
+    merged = _git(beads_project, "show", "HEAD:only_dirty.txt").stdout
+    assert merged.strip() == "wip"
+    assert _head(beads_project) != primary_head_before
+    assert land_engine.beads.show(bead_id).status == bd.STATUS_DONE
+
+
 # -- parked when primary checkout is wrong -----------------------------------
 
 

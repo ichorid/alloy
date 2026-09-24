@@ -82,7 +82,10 @@ class MonitorApp(App[None]):
     BINDINGS = [
         ("j,down", "cursor_down", "move"),
         ("k,up", "cursor_up", ""),
-        ("enter,l", "toggle_detail", "Detail"),
+        ("enter", "toggle_detail", "Detail"),
+        ("h", "collapse_tree", "Collapse"),
+        ("l", "expand_tree", "Expand"),
+        ("E", "toggle_expand_all", "All"),
         ("r", "refresh", "Refresh"),
         ("q", "quit", "Quit"),
     ]
@@ -151,40 +154,41 @@ class MonitorApp(App[None]):
         self.call_from_thread(self.apply_snapshot, snapshot)
 
     def apply_snapshot(self, snapshot: dict[str, Any], *, width: int | None = None) -> None:
-        """Rebuild the runs table from the task tree, preserving the cursor where possible."""
+        """Rebuild the runs table from the task tree, preserving cursor and expansion."""
         self._snapshot = snapshot
         table_width = width if width is not None else self.size.width
         self._sync_runs_table_columns(table_width)
         table = self.query_one("#runs", DataTable)
-        selected = self._selected_row_key(table)
+        selected_key = self._selected_row_key(table)
         self._marked_row = None
         table.clear()
         visible = visible_columns(table_width)
         mode = resolve_mode(interactive=True)
         tree_rows = task_tree_rows(snapshot, self._expanded, table_width, mode=mode)
-        keys = [
-            tree_row.key.removeprefix("run/") if tree_row.kind == "run" else tree_row.key
-            for tree_row in tree_rows
-        ]
-        if keys:
-            if selected is None:
-                target = 0
-            elif selected in keys:
-                target = keys.index(selected)
-            else:
-                target = len(keys) - 1
-        else:
-            target = None
-        for key, tree_row in zip(keys, tree_rows):
+        row_keys: list[str] = []
+        seen_keys: set[str] = set()
+        target: int | None = None
+        for tree_row in tree_rows:
+            if tree_row.key in seen_keys:
+                continue
+            seen_keys.add(tree_row.key)
+            row_keys.append(tree_row.key)
             row = []
             for column in visible:
-                value = tree_row.cells[column]
+                value = tree_row.cells.get(column, "-")
                 if column == "status" and tree_row.kind == "run":
                     value = status_badge(str(value), mode)
                 elif column_align(column) == "right" and not isinstance(value, Text):
                     value = Text(value, justify="right")
                 row.append(value)
-            table.add_row(*row, key=key)
+            table.add_row(*row, key=tree_row.key)
+        if row_keys:
+            if selected_key is None:
+                target = 0
+            elif selected_key in row_keys:
+                target = row_keys.index(selected_key)
+            else:
+                target = len(row_keys) - 1
         if target is not None:
             table.move_cursor(row=target)
             self._sync_selected_marker(table, target)
@@ -265,21 +269,6 @@ class MonitorApp(App[None]):
             table.add_column(label, key=column)
         return True
 
-    @staticmethod
-    def _selected_run_id(table: DataTable) -> str | None:
-        if table.row_count == 0 or table.cursor_row is None:
-            return None
-        try:
-            return str(table.ordered_rows[table.cursor_row].key.value)
-        except IndexError:
-            return None
-
-    def _selected_run(self) -> dict[str, Any] | None:
-        run_id = self._selected_run_id(self.query_one("#runs", DataTable))
-        if run_id is None or self._snapshot is None:
-            return None
-        return next((run for run in self._snapshot.get("runs") or [] if run["run_id"] == run_id), None)
-
     def _selected_row_key(self, table: DataTable) -> str | None:
         if table.row_count == 0 or table.cursor_row is None:
             return None
@@ -287,6 +276,111 @@ class MonitorApp(App[None]):
             return str(table.ordered_rows[table.cursor_row].key.value)
         except IndexError:
             return None
+
+    @staticmethod
+    def _is_expandable_row_key(row_key: str) -> bool:
+        if row_key == "queue":
+            return True
+        if not row_key.startswith("epic/"):
+            return False
+        return "/" not in row_key.removeprefix("epic/")
+
+    def _toggle_expansion(self, row_key: str) -> None:
+        if not self._is_expandable_row_key(row_key):
+            return
+        if row_key in self._expanded:
+            self._expanded.discard(row_key)
+        else:
+            self._expanded.add(row_key)
+        if self._snapshot is not None:
+            self.apply_snapshot(self._snapshot)
+
+    def _expandable_keys(self, snapshot: dict[str, Any]) -> set[str]:
+        keys = {f"epic/{epic['epic_id']}" for epic in snapshot.get("epics") or []}
+        queue = snapshot.get("queue") or {}
+        ready_total = int(queue.get("ready_total") or 0)
+        blocked = queue.get("blocked") or []
+        if ready_total > 0 or blocked or "queue" in self._expanded:
+            keys.add("queue")
+        return keys
+
+    def _parent_expandable_key(self, row_key: str) -> str | None:
+        if row_key.startswith("run/"):
+            if self._snapshot is None:
+                return None
+            run_id = row_key.removeprefix("run/")
+            run = next(
+                (entry for entry in self._snapshot.get("runs") or []
+                 if entry["run_id"] == run_id),
+                None,
+            )
+            if run is None:
+                return None
+            epic_id = run.get("epic_id")
+            return f"epic/{epic_id}" if epic_id else None
+        if row_key.startswith("queue/"):
+            return "queue"
+        if row_key.startswith("epic/") and "/queued/" in row_key:
+            epic_id = row_key.split("/")[1]
+            return f"epic/{epic_id}"
+        if row_key.startswith("epic/") and row_key.endswith("/done"):
+            return row_key.removesuffix("/done")
+        return None
+
+    def _move_cursor_to_key(self, row_key: str) -> None:
+        table = self.query_one("#runs", DataTable)
+        row_keys = [str(entry.key.value) for entry in table.ordered_rows]
+        if row_key in row_keys:
+            table.move_cursor(row=row_keys.index(row_key))
+            self._sync_selected_marker(table, row_keys.index(row_key))
+
+    def action_collapse_tree(self) -> None:
+        row_key = self._selected_row_key(self.query_one("#runs", DataTable))
+        if row_key is None or self._snapshot is None:
+            return
+        if self._is_expandable_row_key(row_key) and row_key in self._expanded:
+            self._expanded.discard(row_key)
+            self.apply_snapshot(self._snapshot)
+            self._refresh_detail()
+            return
+        parent = self._parent_expandable_key(row_key)
+        if parent is None or parent not in self._expanded:
+            return
+        self._expanded.discard(parent)
+        self._move_cursor_to_key(parent)
+        self.apply_snapshot(self._snapshot)
+        self._refresh_detail()
+
+    def action_expand_tree(self) -> None:
+        row_key = self._selected_row_key(self.query_one("#runs", DataTable))
+        if row_key is None or self._snapshot is None:
+            return
+        if not self._is_expandable_row_key(row_key) or row_key in self._expanded:
+            return
+        self._expanded.add(row_key)
+        self.apply_snapshot(self._snapshot)
+        self._refresh_detail()
+
+    def action_toggle_expand_all(self) -> None:
+        if self._snapshot is None:
+            return
+        expandable = self._expandable_keys(self._snapshot)
+        if expandable and expandable <= self._expanded:
+            self._expanded.clear()
+        else:
+            self._expanded.update(expandable)
+        self.apply_snapshot(self._snapshot)
+        self._refresh_detail()
+
+    def _selected_run(self) -> dict[str, Any] | None:
+        row_key = self._selected_row_key(self.query_one("#runs", DataTable))
+        if row_key is None or self._snapshot is None or not row_key.startswith("run/"):
+            return None
+        run_id = row_key.removeprefix("run/")
+        return next(
+            (run for run in self._snapshot.get("runs") or [] if run["run_id"] == run_id),
+            None,
+        )
 
     def _refresh_detail(self, *, width: int | None = None) -> None:
         """Re-render the detail pane for the row under the cursor; hide when unsupported."""
@@ -301,6 +395,9 @@ class MonitorApp(App[None]):
             return
         mode = resolve_mode(interactive=True)
         table_width = width if width is not None else self.size.width
+        if row_key.startswith("queue/") or "/queued/" in row_key:
+            detail.display = False
+            return
         if row_key == "queue":
             detail.update("\n".join(queue_detail(snapshot, mode=mode)))
             detail.border_title = detail_panel_border_title_queue()
@@ -357,15 +454,23 @@ class MonitorApp(App[None]):
         self._marked_row = row
 
     def on_data_table_row_selected(self, _event: DataTable.RowSelected) -> None:
-        """The focused table consumes `enter` as row selection; treat that as the toggle."""
+        """Enter on queue/epic toggles expansion; on a run row toggles the detail pane."""
+        row_key = self._selected_row_key(self.query_one("#runs", DataTable))
+        if row_key is not None and self._is_expandable_row_key(row_key):
+            self._toggle_expansion(row_key)
+            return
         self.action_toggle_detail()
 
     def action_toggle_detail(self) -> None:
+        row_key = self._selected_row_key(self.query_one("#runs", DataTable))
+        if row_key is not None and self._is_expandable_row_key(row_key):
+            self._toggle_expansion(row_key)
+            return
         detail = self.query_one("#detail", Static)
         if detail.display:
             detail.display = False
             return
-        if self._selected_row_key(self.query_one("#runs", DataTable)) is None:
+        if self._selected_run() is None:
             return
         detail.display = True
         self._refresh_detail()

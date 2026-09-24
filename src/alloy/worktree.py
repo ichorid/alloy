@@ -180,6 +180,11 @@ class WorktreeManager:
     def has_changes(self, worktree: Worktree) -> bool:
         return bool(self.changed_files(worktree))
 
+    def is_dirty(self, worktree: Worktree) -> bool:
+        """True when the worktree has uncommitted git changes."""
+        proc = _git(["status", "--porcelain"], worktree.path, check=False)
+        return bool(proc.stdout.strip())
+
     def head(self, path: Path) -> str:
         """The worktree's current HEAD commit."""
         return self._head(path)

@@ -8,6 +8,13 @@ No Textual involved -- see tests/test_monitor_view.py for the pilot tests.
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import pytest
+
 from alloy.monitor.icons import icon
 from alloy.monitor.render import COLUMNS, header_line, run_rows
 
@@ -459,6 +466,32 @@ def _usage_bar_indices(line: str) -> list[int]:
     return [match.start() for match in re.finditer(r"\[[█░]", line)]
 
 
+def test_limits_lines_cursor_cycle_from_probe_on_one_row(tmp_path: Path):
+    from test_limits_cursor import (
+        RecordingFetch,
+        _dashboard_payload_with_api,
+        write_auth,
+    )
+
+    from alloy.limits.cursor import probe
+    from alloy.monitor.render import limits_lines
+
+    home = tmp_path / "home"
+    write_auth(home)
+    fetch = RecordingFetch(status=200, body=json.dumps(_dashboard_payload_with_api()))
+
+    cursor_sample = probe(home, fetch)
+    snapshot = _snapshot()
+    snapshot["limits"] = {"cursor": cursor_sample}
+
+    lines = limits_lines(snapshot)
+    assert len(lines) == 1
+    line = " ".join(lines[0].split())
+    assert "cycle" in line
+    assert "25%" in line or "24%" in line
+    assert len(_usage_bar_indices(lines[0])) == 1
+
+
 def test_limits_lines_align_weekly_window_across_harnesses():
     from alloy.limits import window
     from alloy.monitor.render import limits_lines
@@ -608,6 +641,7 @@ def test_limits_line_unavailable_harness_renders_error_in_red():
     assert "[#f85149]unavailable: no local sample[/]" in line
 
 
+<<<<<<< HEAD
 # -- alloy-3g0.3: nerd limits bars, warn/clock icons, wrap at 80 -------------
 
 
@@ -646,10 +680,42 @@ def _assert_contiguous_limits_color_segment(line: str, *, color: str, percent: i
 
 
 def test_limits_line_88_percent_nerd_has_warn_icon_and_contiguous_red_tag():
+=======
+# -- alloy-gek: consumed Codex quota + compact local reset suffix --------------
+
+
+_AMSTERDAM = ZoneInfo("Europe/Amsterdam")
+
+
+def _freeze_render_now(monkeypatch: pytest.MonkeyPatch, when: datetime) -> None:
+    import alloy.monitor.render as render_mod
+
+    real_datetime = render_mod.datetime
+
+    class _FrozenDatetime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return when.astimezone().replace(tzinfo=None)
+            return when.astimezone(tz)
+
+    monkeypatch.setattr(render_mod, "datetime", _FrozenDatetime)
+
+
+def _limits_line_for_single_window(
+    label: str,
+    resets_at: str,
+    *,
+    harness: str = "claude",
+    used_percent: float = 42.0,
+    key: str = "five_hour",
+) -> str:
+>>>>>>> main
     from alloy.limits import window
     from alloy.monitor.render import limits_lines
 
     snapshot = _snapshot()
+<<<<<<< HEAD
     snapshot["limits"] = _available_claude_limits(
         window("five_hour", "5h", 88.0, None),
     )
@@ -727,6 +793,154 @@ def test_limits_lines_ascii_matches_legacy_output():
     legacy = limits_lines(snapshot)
 
     assert limits_lines(snapshot, mode="ascii") == legacy
+=======
+    snapshot["limits"] = {
+        harness: {
+            "harness": harness,
+            "installed": True,
+            "available": True,
+            "fetched_at": "2026-09-24T08:00:00+00:00",
+            "as_of": "2026-09-24T08:00:00+00:00",
+            "source": "oauth-usage-api",
+            "error": None,
+            "status": None,
+            "windows": [window(key, label, used_percent, resets_at)],
+        },
+    }
+    lines = limits_lines(snapshot)
+    assert len(lines) == 1
+    return lines[0]
+
+
+def test_limits_line_5h_reset_suffix_is_local_hhmm_without_resets_word(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _freeze_render_now(
+        monkeypatch,
+        datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM),
+    )
+    line = _limits_line_for_single_window("5h", "2026-09-24T14:00:00+00:00")
+
+    assert "resets" not in line
+    assert "(16:00)" in line
+
+
+def test_limits_line_5h_reset_suffix_uses_local_time_on_different_calendar_day(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _freeze_render_now(
+        monkeypatch,
+        datetime(2026, 9, 24, 22, 0, tzinfo=_AMSTERDAM),
+    )
+    line = _limits_line_for_single_window("5h", "2026-09-24T23:00:00+00:00")
+
+    assert "resets" not in line
+    assert "(01:00)" in line
+    assert "2026-09-25" not in line
+
+
+def test_limits_line_weekly_reset_suffix_same_local_day_shows_hhmm(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _freeze_render_now(
+        monkeypatch,
+        datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM),
+    )
+    line = _limits_line_for_single_window(
+        "weekly",
+        "2026-09-24T18:00:00+00:00",
+        key="seven_day",
+    )
+
+    assert "resets" not in line
+    assert "(20:00)" in line
+    assert "2026-09-24" not in line
+
+
+def test_limits_line_weekly_reset_suffix_other_local_day_shows_date(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _freeze_render_now(
+        monkeypatch,
+        datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM),
+    )
+    line = _limits_line_for_single_window(
+        "weekly",
+        "2026-09-24T23:00:00+00:00",
+        key="seven_day",
+    )
+
+    assert "resets" not in line
+    assert "(2026-09-25)" in line
+
+
+def test_limits_line_cycle_reset_suffix_matches_weekly_date_rule(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _freeze_render_now(
+        monkeypatch,
+        datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM),
+    )
+    line = _limits_line_for_single_window(
+        "cycle",
+        "2026-09-24T23:00:00+00:00",
+        harness="cursor",
+        key="total",
+    )
+
+    assert "resets" not in line
+    assert "(2026-09-25)" in line
+
+
+@pytest.fixture
+def codex_home(tmp_path):
+    return tmp_path / "home"
+
+
+def test_limits_lines_codex_rollout_shows_consumed_percent_with_compact_reset_suffix(
+    codex_home,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from alloy.limits.codex import probe
+    from alloy.monitor.render import limits_lines
+
+    from test_limits_codex import (
+        CODEX_TS,
+        RESETS_AT_EPOCH,
+        _primary,
+        _token_count_line,
+        write_rollout,
+    )
+
+    write_rollout(
+        codex_home,
+        "session-a",
+        "rollout-a.jsonl",
+        [
+            _token_count_line(
+                CODEX_TS,
+                limit_id="codex",
+                primary=_primary(53, 300, RESETS_AT_EPOCH),
+                secondary=_primary(51, 10080, RESETS_AT_EPOCH),
+            ),
+        ],
+    )
+    sample = probe(codex_home)
+    snapshot = _snapshot()
+    snapshot["limits"] = {"codex": sample}
+    _freeze_render_now(
+        monkeypatch,
+        datetime(2026, 9, 12, 5, 0, tzinfo=_AMSTERDAM),
+    )
+
+    line = limits_lines(snapshot)[0]
+
+    assert sample["windows"][0]["used_percent"] == 47.0
+    assert "47%" in line
+    assert "53%" not in line
+    assert "resets" not in line
+    assert "(05:32)" in line
+>>>>>>> main
 
 
 def test_header_line_includes_session_totals_when_present():
@@ -1196,6 +1410,53 @@ def test_task_tree_ascii_mode_matches_byo4_expectations():
 
     epic_children = _children_after(rows, "epic/E")
     assert [child.kind for child in epic_children] == ["run", "queued", "done_fold"]
+    assert epic_children[0].key == "run/run-under-e"
+    assert epic_children[1].key == "epic/E/queued/alloy-x"
     assert epic_children[0].cells["bead"] == "├─ running-under-e"
     assert epic_children[1].cells["bead"] == "├─ alloy-x"
     assert epic_children[2].cells["bead"] == "└─ ✓ 1 done  (done-1)"
+
+
+def test_task_tree_queued_bead_appears_under_queue_and_epic_when_both_expanded():
+    bead_id = "alloy-shared"
+    snap = _snapshot(
+        epics=[_epic("E", title="Epic E", total=2, done=0)],
+        queue={
+            "ready": [_ready_bead(bead_id, epic_id="E")],
+            "ready_total": 1,
+            "blocked": [],
+        },
+    )
+
+    rows = _task_tree_rows(snap, expanded={"queue", "epic/E"})
+
+    queue_children = _children_after(rows, "queue")
+    epic_children = _children_after(rows, "epic/E")
+
+    queue_queued = [row for row in queue_children if row.kind == "queued" and row.key == f"queue/{bead_id}"]
+    epic_queued = [
+        row
+        for row in epic_children
+        if row.kind == "queued" and row.key == f"epic/E/queued/{bead_id}"
+    ]
+
+    assert len(queue_queued) == 1
+    assert len(epic_queued) == 1
+    assert queue_queued[0].key != epic_queued[0].key
+
+
+def test_task_tree_expanded_queue_and_epics_yield_unique_row_keys():
+    bead_id = "alloy-q.1"
+    snap = _snapshot(
+        epics=[_epic("E", title="Epic E"), _epic("F", title="Epic F")],
+        queue={
+            "ready": [_ready_bead(bead_id, epic_id="E")],
+            "ready_total": 1,
+            "blocked": [],
+        },
+    )
+
+    rows = _task_tree_rows(snap, expanded={"queue", "epic/E", "epic/F"})
+    keys = [row.key for row in rows]
+
+    assert len(keys) == len(set(keys)), f"duplicate keys: {[k for k in keys if keys.count(k) > 1]}"

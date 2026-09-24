@@ -49,6 +49,12 @@ def _dashboard_payload() -> dict:
     }
 
 
+def _dashboard_payload_with_api() -> dict:
+    payload = _dashboard_payload()
+    payload["planUsage"]["apiPercentUsed"] = 67.5
+    return payload
+
+
 def _legacy_usage_payload() -> dict:
     return {
         "gpt-4": {"numRequests": 150, "maxRequestUsage": 500},

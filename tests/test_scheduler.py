@@ -959,3 +959,28 @@ async def test_scheduler_tick_leaves_landing_off_bead_review_ready(
     assert bead.metadata.get(bd.META_LAND_STATE) in (None, "")
     assert land_calls == []
     assert _head(beads_project) == primary_before
+
+
+async def test_scheduler_auto_land_disabled_by_root_flag_file(
+    scheduler, beads_project, fake_harnesses, monkeypatch,
+):
+    """``<alloy-root>/disable-auto-land`` skips auto-landing even when mode is auto."""
+    _patch_engine_recipes(monkeypatch, scheduler.engine, landing_off=False)
+    disable = scheduler.engine.paths.root / "disable-auto-land"
+    disable.write_text("", encoding="utf-8")
+    land_calls: list[str] = []
+    original_land = scheduler.engine.land
+
+    async def track_land(bead_id: str):
+        land_calls.append(bead_id)
+        return await original_land(bead_id)
+
+    monkeypatch.setattr(scheduler.engine, "land", track_land)
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "flag disables auto land", alloy_recipe="tdd-loop")
+
+    assert await scheduler.tick() is True
+
+    assert scheduler.engine.beads.show(bead_id).status == bd.STATUS_REVIEW_READY
+    assert land_calls == []
+    disable.unlink(missing_ok=True)
