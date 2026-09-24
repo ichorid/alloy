@@ -7,6 +7,8 @@ docs/plans/execution-monitor.md.
 
 from __future__ import annotations
 
+import threading
+
 from typing import Any, Callable
 
 from rich.text import Text
@@ -102,6 +104,7 @@ class MonitorApp(App[None]):
         self.interval = interval
         self.limits_source = limits_source
         self.limits_interval = limits_interval
+        self._refresh_lock = threading.Lock()
         self._snapshot: dict[str, Any] | None = None
         self._probed_limits: dict[str, Any] | None = None
         self._marked_row: int | None = None
@@ -142,15 +145,24 @@ class MonitorApp(App[None]):
         if self._sync_runs_table_columns(event.size.width) and self._snapshot is not None:
             self.apply_snapshot(self._snapshot, width=event.size.width)
 
-    @work(thread=True, exclusive=True)
+    @work(thread=True)
     def refresh_snapshot(self) -> None:
-        """Fetch a snapshot off the event loop and apply it; keep the last good one on failure."""
+        """Fetch a snapshot off the event loop and apply it; keep the last good one on failure.
+
+        At most one fetch is in flight: a thread blocked in a `bd` subprocess cannot be
+        cancelled, so `exclusive=True` let slow snapshots pile up and starve each other.
+        A tick that finds one running is simply skipped.
+        """
+        if not self._refresh_lock.acquire(blocking=False):
+            return
         try:
             snapshot = self.snapshot_source()
         except Exception as exc:  # noqa: BLE001 - any failure must leave the view alive
             self.log(f"refresh failed: {exc!r}")
             self.call_from_thread(self._show_failure, type(exc).__name__)
             return
+        finally:
+            self._refresh_lock.release()
         self.call_from_thread(self.apply_snapshot, snapshot)
 
     def apply_snapshot(self, snapshot: dict[str, Any], *, width: int | None = None) -> None:
@@ -160,6 +172,7 @@ class MonitorApp(App[None]):
         self._sync_runs_table_columns(table_width)
         table = self.query_one("#runs", DataTable)
         selected_key = self._selected_row_key(table)
+        scroll_x, scroll_y = table.scroll_x, table.scroll_y
         self._marked_row = None
         table.clear()
         visible = visible_columns(table_width)
@@ -190,8 +203,16 @@ class MonitorApp(App[None]):
             else:
                 target = len(row_keys) - 1
         if target is not None:
-            table.move_cursor(row=target)
+            table.move_cursor(row=target, scroll=False)
             self._sync_selected_marker(table, target)
+        # clear() resets the viewport; a periodic refresh must not throw away where
+        # the user scrolled. Restore it now, before the next paint (the virtual size
+        # is only recomputed on idle, so the old scroll range still accepts it) --
+        # restoring only after a refresh shows one frame at the origin (flicker).
+        # The deferred call covers the case where the size did change.
+        table.scroll_x = table.scroll_target_x = scroll_x
+        table.scroll_y = table.scroll_target_y = scroll_y
+        self.call_after_refresh(table.scroll_to, scroll_x, scroll_y, animate=False)
         self.title = title_line(snapshot, table_width, mode)
         self.query_one("#stats", Static).update(header_line(snapshot, mode))
         self._sync_panel_chrome(snapshot, mode)

@@ -248,3 +248,23 @@ async def test_E_press_twice_toggles_all_queue_and_epic_rows_expanded():
 
         assert app._expanded == set()
         assert _table_row_keys(table) == collapsed_keys
+
+
+async def test_refresh_keeps_horizontal_scroll_of_runs_table():
+    snapshot = _epic_tree_snapshot()
+    app = MonitorApp(snapshot_source=lambda: snapshot, interval=DISABLED_INTERVAL)
+    async with app.run_test(size=(60, 24)) as pilot:
+        await pilot.pause()
+        table = _runs_table(app)
+        assert table.max_scroll_x > 0  # the narrow window overflows horizontally
+        table.scroll_to(x=1, animate=False)
+        await pilot.pause()
+        assert table.scroll_x == 1
+
+        app.apply_snapshot(snapshot)
+
+        # Immediately, not after a later refresh: no frame may show the origin.
+        assert table.scroll_x == 1
+        await pilot.pause()
+
+        assert table.scroll_x == 1

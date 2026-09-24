@@ -8,9 +8,6 @@ newest-first by mtime, reads only the tail of each, and takes the newest
 `codex` token_count with a non-null primary window for the gauges, while
 `status` comes from the newest token_count of any limit_id (that is how
 `workspace_member_credits_depleted` surfaces on a `premium` snapshot).
-
-Codex rollouts report *remaining* quota in `used_percent`; Alloy inverts to
-`100 - n` so gauges match other harnesses (fraction consumed).
 """
 
 from __future__ import annotations
@@ -105,11 +102,6 @@ def _label(key: str, minutes: Any) -> str:
     return f"{int(minutes) // 1440}d" if isinstance(minutes, (int, float)) else key
 
 
-def _used_percent_from_rollout(remaining_percent: float) -> float:
-    """Rollout `used_percent` is remaining quota; monitor shows consumed."""
-    return 100.0 - float(remaining_percent)
-
-
 def _windows(rate_limits: dict[str, Any]) -> list[dict[str, Any]]:
     """primary then secondary, skipping entries that are null or lack used_percent."""
     windows: list[dict[str, Any]] = []
@@ -117,18 +109,11 @@ def _windows(rate_limits: dict[str, Any]) -> list[dict[str, Any]]:
         entry = rate_limits.get(key)
         if not isinstance(entry, dict):
             continue
-        remaining = entry.get("used_percent")
-        if isinstance(remaining, bool) or not isinstance(remaining, (int, float)):
+        used = entry.get("used_percent")
+        if isinstance(used, bool) or not isinstance(used, (int, float)):
             continue
         label = _label(key, entry.get("window_minutes"))
-        windows.append(
-            window(
-                key,
-                label,
-                _used_percent_from_rollout(remaining),
-                _iso_utc(entry.get("resets_at")),
-            ),
-        )
+        windows.append(window(key, label, used, _iso_utc(entry.get("resets_at"))))
     return windows
 
 

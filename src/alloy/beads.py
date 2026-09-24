@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -115,6 +117,8 @@ class BeadsClient:
     binary: str = BD_BINARY
     timeout_s: float = 60.0
     env: dict[str, str] = field(default_factory=dict)
+    _rows: dict[str, dict[str, Any]] | None = field(default=None, init=False, repr=False)
+    _memo_memories: dict[str, str] | None = field(default=None, init=False, repr=False)
 
     # -- plumbing ---------------------------------------------------------
 
@@ -135,6 +139,26 @@ class BeadsClient:
                 f"{proc.stderr.strip() or proc.stdout.strip()}"
             )
         return proc
+
+    @contextmanager
+    def snapshot(self) -> Iterator[None]:
+        """Serve tree reads from ONE `bd list --all` instead of a subprocess per question.
+
+        Inside the block `epic_for`, `epic_root`, `children`, `open_descendants`,
+        `list_by_status` and `memories` read that in-memory copy. Every `bd` call
+        costs ~0.25s idle and seconds under Dolt contention, and the epic walks
+        made one per bead per level. Reads only: enter it around a poll-time scan,
+        never around code that writes beads and then re-reads them.
+        """
+        if self._rows is not None:  # already inside one
+            yield
+            return
+        try:
+            self._rows = {str(r.get("id")): r for r in self.all_rows()}
+            yield
+        finally:
+            self._rows = None
+            self._memo_memories = None
 
     def _json(self, args: list[str]) -> list[dict[str, Any]]:
         proc = self._run([*args, "--json"])
@@ -173,6 +197,8 @@ class BeadsClient:
         return beads
 
     def list_by_status(self, status: str) -> list[Bead]:
+        if self._rows is not None:
+            return [Bead.model_validate(r) for r in self._rows.values() if r.get("status") == status]
         rows = self._json(["list", "--status", status, "--limit", "0", "--flat"])
         return [Bead.model_validate(row) for row in rows]
 
@@ -182,27 +208,39 @@ class BeadsClient:
                            "--has-metadata-key", META_RECIPE])
         return [Bead.model_validate(row) for row in rows]
 
+    def all_rows(self) -> list[dict[str, Any]]:
+        """Raw rows for every bead in one call (parent/issue_type included)."""
+        return self._json(["list", "--all", "--limit", "0", "--flat"])
+
     def blocked(self) -> list[Bead]:
         rows = self._json(["blocked"])
         return [Bead.model_validate(row) for row in rows]
 
     def children(self, parent_id: str) -> list[Bead]:
+        if self._rows is not None:
+            return [Bead.model_validate(r) for r in self._rows.values() if _parent_id(r) == parent_id]
         rows = self._json([
             "list", "--parent", parent_id, "--all", "--limit", "0", "--flat",
         ])
         return [Bead.model_validate(row) for row in rows]
 
+    def _show_rows(self, bead_id: str) -> list[dict[str, Any]]:
+        if self._rows is not None:
+            row = self._rows.get(bead_id)
+            return [row] if row else []
+        return self._json(["show", bead_id])
+
     def epic_for(self, bead_id: str, *, max_depth: int = 3) -> str | None:
         """Return the nearest epic ancestor's id, or None when there isn't one."""
         current = bead_id
         for _ in range(max_depth):
-            rows = self._json(["show", current])
+            rows = self._show_rows(current)
             if not rows:
                 break
             parent_id = _parent_id(rows[0])
             if not parent_id:
                 break
-            parent_rows = self._json(["show", parent_id])
+            parent_rows = self._show_rows(parent_id)
             if not parent_rows:
                 break
             parent = parent_rows[0]
@@ -217,13 +255,13 @@ class BeadsClient:
             current = bead_id
             root_epic: str | None = None
             while True:
-                rows = self._json(["show", current])
+                rows = self._show_rows(current)
                 if not rows:
                     break
                 parent_id = _parent_id(rows[0])
                 if not parent_id:
                     break
-                parent_rows = self._json(["show", parent_id])
+                parent_rows = self._show_rows(parent_id)
                 if not parent_rows:
                     break
                 parent = parent_rows[0]
@@ -254,6 +292,14 @@ class BeadsClient:
 
     def memories(self) -> dict[str, str]:
         """Read project memories, tolerating bd versions without this command."""
+        if self._memo_memories is not None:
+            return dict(self._memo_memories)
+        result = self._read_memories()
+        if self._rows is not None:
+            self._memo_memories = result
+        return dict(result)
+
+    def _read_memories(self) -> dict[str, str]:
         global _memories_unavailable_logged
 
         proc = self._run(["memories", "--json"], check=False)

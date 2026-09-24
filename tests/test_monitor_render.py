@@ -715,11 +715,12 @@ def test_limits_line_nerd_reset_shows_clock_without_parentheses():
     )
     line = limits_lines(snapshot, mode="nerd")[0]
 
+    local_clock = datetime.fromisoformat("2026-09-23T18:00:00+00:00").astimezone().strftime("%H:%M")
+
     assert "\uf017" in line
-    # Merged render.py keeps main's _reset_suffix: local-time HH:MM (18:00 UTC = 20:00 CEST).
-    assert "20:00" in line
+    assert local_clock in line
     assert "(resets" not in line
-    assert "(20:00)" not in line
+    assert f"({local_clock})" not in line
 
 
 def _two_window_claude_limits() -> dict:
@@ -767,6 +768,23 @@ def test_limits_lines_ascii_matches_legacy_output():
 
 
 _AMSTERDAM = ZoneInfo("Europe/Amsterdam")
+
+
+@pytest.fixture(autouse=True)
+def _local_tz_amsterdam():
+    """Reset suffixes render in the machine's local zone; pin it so expectations are stable."""
+    import os
+    import time
+
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = "Europe/Amsterdam"
+    time.tzset()
+    yield
+    if previous is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = previous
+    time.tzset()
 
 
 def _freeze_render_now(monkeypatch: pytest.MonkeyPatch, when: datetime) -> None:
@@ -873,7 +891,7 @@ def test_limits_line_weekly_reset_suffix_other_local_day_shows_date(
     )
 
     assert "resets" not in line
-    assert "(2026-09-25)" in line
+    assert "(Sep 25)" in line
 
 
 def test_limits_line_cycle_reset_suffix_matches_weekly_date_rule(
@@ -891,7 +909,7 @@ def test_limits_line_cycle_reset_suffix_matches_weekly_date_rule(
     )
 
     assert "resets" not in line
-    assert "(2026-09-25)" in line
+    assert "(Sep 25)" in line
 
 
 @pytest.fixture
@@ -899,7 +917,7 @@ def codex_home(tmp_path):
     return tmp_path / "home"
 
 
-def test_limits_lines_codex_rollout_shows_consumed_percent_with_compact_reset_suffix(
+def test_limits_lines_codex_rollout_shows_used_percent_with_compact_reset_suffix(
     codex_home,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -937,11 +955,14 @@ def test_limits_lines_codex_rollout_shows_consumed_percent_with_compact_reset_su
 
     line = limits_lines(snapshot)[0]
 
-    assert sample["windows"][0]["used_percent"] == 47.0
-    assert "47%" in line
-    assert "53%" not in line
+    # The rollout's used_percent already is the consumed fraction (it grows with use).
+    assert sample["windows"][0]["used_percent"] == 53.0
+    assert "53%" in line
+    assert "47%" not in line
     assert "resets" not in line
     assert "(05:32)" in line
+
+
 def test_header_line_includes_session_totals_when_present():
     snapshot = _snapshot()
     snapshot["session_totals"] = {"done": 1, "failed": 1, "cancelled": 0}
@@ -1459,3 +1480,22 @@ def test_task_tree_expanded_queue_and_epics_yield_unique_row_keys():
     keys = [row.key for row in rows]
 
     assert len(keys) == len(set(keys)), f"duplicate keys: {[k for k in keys if keys.count(k) > 1]}"
+
+
+def test_limits_line_weekly_date_suffix_uses_calendar_icon_not_clock(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from alloy.limits import window
+    from alloy.monitor.render import limits_lines
+
+    _freeze_render_now(monkeypatch, datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM))
+    snapshot = _snapshot()
+    snapshot["limits"] = _available_claude_limits(
+        window("seven_day", "weekly", 34.0, "2026-09-24T23:00:00+00:00"),
+    )
+
+    line = limits_lines(snapshot, mode="nerd")[0]
+
+    assert "\uf073 Sep 25" in line
+    assert "\uf017" not in line
+    assert "2026" not in line
