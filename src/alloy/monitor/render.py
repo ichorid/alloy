@@ -443,12 +443,24 @@ def status_badge(status: str, mode: str) -> Text:
     return badge
 
 
-def limits_lines(snapshot: dict[str, Any]) -> list[str]:
-    """One line per harness in HARNESSES order; empty when top-level limits is {}."""
+def limits_lines(
+    snapshot: dict[str, Any],
+    mode: str | None = None,
+    width: int | None = None,
+) -> list[str]:
+    """One line per harness in HARNESSES order; empty when top-level limits is {}.
+
+    In nerd/unicode mode below WIDE_WIDTH, each harness's second and later
+    windows wrap onto their own continuation line indented under the first.
+    """
     limits = snapshot.get("limits") or {}
     if not limits:
         return []
-    return [_limits_line(harness, limits[harness]) for harness in HARNESSES if harness in limits]
+    lines: list[str] = []
+    for harness in HARNESSES:
+        if harness in limits:
+            lines.extend(_limits_line(harness, limits[harness], mode=mode, width=width))
+    return lines
 
 
 def _limits_harness_label(harness: str) -> str:
@@ -456,29 +468,45 @@ def _limits_harness_label(harness: str) -> str:
     return harness.ljust(LIMITS_HARNESS_WIDTH)
 
 
-def _limits_line(harness: str, sample: dict[str, Any]) -> str:
+def _limits_line(
+    harness: str,
+    sample: dict[str, Any],
+    *,
+    mode: str | None = None,
+    width: int | None = None,
+) -> list[str]:
     label = _limits_harness_label(harness)
+    styled = mode in ("nerd", "unicode")
     if not sample.get("available"):
         error = _text(sample.get("error"))
-        line = f"{label}  [{_COLOR_RED}]unavailable: {error}[/]"
+        if styled:
+            badge = _pill_badge(f"{icon('blocked', mode)} unavailable", _COLOR_RED, mode)
+            line = f"{label}  {badge} [{_COLOR_RED}]{error}[/]"
+        else:
+            line = f"{label}  [{_COLOR_RED}]unavailable: {error}[/]"
         status = sample.get("status")
         if status:
             line += f" [{status}]"
-        return line
-    parts = [label]
+        return [line]
     windows = sample.get("windows") or []
-    for index, win in enumerate(windows):
-        parts.append(
-            _limits_window_segment(win, align_bar=index < LIMITS_ALIGNED_WINDOW_COUNT)
-        )
-    line = "  ".join(parts)
-    stale = _stale_as_of(sample.get("as_of"))
+    segments = [
+        _limits_window_segment(win, align_bar=index < LIMITS_ALIGNED_WINDOW_COUNT, mode=mode)
+        for index, win in enumerate(windows)
+    ]
+    wrap = styled and width is not None and width < WIDE_WIDTH and len(segments) > 1
+    if wrap:
+        indent = " " * (LIMITS_HARNESS_WIDTH + 2)
+        lines = [f"{label}  {segments[0]}"]
+        lines.extend(f"{indent}{segment}" for segment in segments[1:])
+    else:
+        lines = ["  ".join([label, *segments])]
+    stale = _stale_as_of(sample.get("as_of"), mode=mode)
     if stale:
-        line += stale
+        lines[-1] += stale
     status = sample.get("status")
     if status:
-        line += f" [{status}]"
-    return line
+        lines[-1] += f" [{status}]"
+    return lines
 
 
 def _usage_color(percent: int) -> str:
@@ -489,9 +517,26 @@ def _usage_color(percent: int) -> str:
     return _COLOR_GREEN
 
 
-def _usage_bar(percent: int) -> str:
-    filled = max(0, min(_USAGE_BAR_WIDTH, round(percent * _USAGE_BAR_WIDTH / 100)))
-    return f"[{'█' * filled}{'░' * (_USAGE_BAR_WIDTH - filled)}]"
+_EIGHTH_BLOCKS = "▏▎▍▌▋▊▉"
+
+
+def _usage_bar(percent: int, mode: str | None = None) -> str:
+    if mode is None or mode == "ascii":
+        filled = max(0, min(_USAGE_BAR_WIDTH, round(percent * _USAGE_BAR_WIDTH / 100)))
+        return f"[{'█' * filled}{'░' * (_USAGE_BAR_WIDTH - filled)}]"
+    eighths = max(0, min(_USAGE_BAR_WIDTH * 8, round(percent * _USAGE_BAR_WIDTH * 8 / 100)))
+    full, part = divmod(eighths, 8)
+    bar = "█" * full + (_EIGHTH_BLOCKS[part - 1] if part else "")
+    return bar + "░" * (_USAGE_BAR_WIDTH - full - (1 if part else 0))
+
+
+def _pill_badge(text: str, color: str, mode: str) -> str:
+    """Textual-markup pill: colored caps around a bold on-color label."""
+    return (
+        f"[{color}]{icon('pill_l', mode)}[/]"
+        f"[bold {_PAGE} on {color}]{text}[/]"
+        f"[{color}]{icon('pill_r', mode)}[/]"
+    )
 
 
 def _limits_window_head(label: str, percent: int, *, align_bar: bool) -> str:
@@ -500,16 +545,31 @@ def _limits_window_head(label: str, percent: int, *, align_bar: bool) -> str:
     return f"{label} {percent}%"
 
 
-def _limits_window_segment(win: dict[str, Any], *, align_bar: bool = False) -> str:
+def _limits_window_segment(
+    win: dict[str, Any],
+    *,
+    align_bar: bool = False,
+    mode: str | None = None,
+) -> str:
     percent = int(win["used_percent"])
     color = _usage_color(percent)
     head = _limits_window_head(win["label"], percent, align_bar=align_bar)
-    segment = f"[{color}]{head} {_usage_bar(percent)}[/]"
+    segment = f"[{color}]{head} {_usage_bar(percent, mode)}[/]"
+    styled = mode in ("nerd", "unicode")
+    if styled and percent >= 80:
+        segment += f" {icon('warn', mode)}"
     reset_suffix = _reset_suffix(win.get("label"), win.get("resets_at"))
     if reset_suffix:
-        segment += f" ({reset_suffix})"
+        if styled:
+            segment += f" {icon('clock', mode)} {reset_suffix}"
+        else:
+            segment += f" ({reset_suffix})"
     if win.get("stale"):
-        segment += f" [{_COLOR_YELLOW}][stale][/]"
+        if styled:
+            badge = _pill_badge(icon("stale", mode) + " stale", _COLOR_YELLOW, mode)
+            segment += f" {badge}"
+        else:
+            segment += f" [{_COLOR_YELLOW}][stale][/]"
     return segment
 
 
@@ -889,13 +949,18 @@ def _reset_suffix(label: str | None, resets_at: str | None) -> str | None:
     return None
 
 
-def _stale_as_of(as_of: str | None) -> str:
+def _stale_as_of(as_of: str | None, mode: str | None = None) -> str:
     parsed = _parse_iso(as_of)
     if parsed is None:
         return ""
     age = (datetime.now(timezone.utc) - parsed).total_seconds()
     if age <= 30 * 60:
         return ""
+    if mode in ("nerd", "unicode"):
+        badge = _pill_badge(
+            icon("stale", mode) + f" as of {parsed.strftime('%H:%M')}", _COLOR_YELLOW, mode
+        )
+        return f" {badge}"
     return f" (as of {parsed.strftime('%H:%M')})"
 
 

@@ -469,8 +469,9 @@ def monitor(
         return
     if once:
         snapshot = build_snapshot(engine)
-        console.print(header_line(snapshot, resolve_mode(interactive=False)))
-        for line in limits_lines(snapshot):
+        mode = resolve_mode(interactive=False)
+        console.print(header_line(snapshot, mode))
+        for line in limits_lines(snapshot, mode=mode, width=console.width):
             console.print(line)
         table = Table(show_header=True, header_style="bold")
         for column in COLUMNS:

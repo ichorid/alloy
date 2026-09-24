@@ -641,6 +641,46 @@ def test_limits_line_unavailable_harness_renders_error_in_red():
     assert "[#f85149]unavailable: no local sample[/]" in line
 
 
+<<<<<<< HEAD
+# -- alloy-3g0.3: nerd limits bars, warn/clock icons, wrap at 80 -------------
+
+
+def test_usage_bar_34_percent_nerd_uses_eighth_blocks_without_brackets():
+    from alloy.monitor.render import _usage_bar
+
+    assert _usage_bar(34, "nerd") == "█" * 5 + "▌" + "░" * 10
+
+
+def test_usage_bar_100_percent_nerd_fills_all_sixteen_cells():
+    from alloy.monitor.render import _usage_bar
+
+    assert _usage_bar(100, "nerd") == "█" * 16
+
+
+def test_usage_bar_0_percent_nerd_is_empty_track():
+    from alloy.monitor.render import _usage_bar
+
+    assert _usage_bar(0, "nerd") == "░" * 16
+
+
+def test_usage_bar_34_percent_ascii_keeps_bracketed_form():
+    from alloy.monitor.render import _usage_bar
+
+    assert _usage_bar(34, "ascii") == "[█████░░░░░░░░░░░]"
+
+
+def _assert_contiguous_limits_color_segment(line: str, *, color: str, percent: int) -> None:
+    open_tag = f"[{color}]"
+    start = line.index(open_tag)
+    end = line.index("[/]", start) + len("[/]")
+    segment = line[start:end]
+    assert f"{percent}%" in segment
+    assert "[█" not in segment
+    assert "█" in segment or "░" in segment
+
+
+def test_limits_line_88_percent_nerd_has_warn_icon_and_contiguous_red_tag():
+=======
 # -- alloy-gek: consumed Codex quota + compact local reset suffix --------------
 
 
@@ -670,10 +710,90 @@ def _limits_line_for_single_window(
     used_percent: float = 42.0,
     key: str = "five_hour",
 ) -> str:
+>>>>>>> main
     from alloy.limits import window
     from alloy.monitor.render import limits_lines
 
     snapshot = _snapshot()
+<<<<<<< HEAD
+    snapshot["limits"] = _available_claude_limits(
+        window("five_hour", "5h", 88.0, None),
+    )
+    line = limits_lines(snapshot, mode="nerd")[0]
+
+    assert "\uf071" in line
+    _assert_contiguous_limits_color_segment(line, color="#f85149", percent=88)
+
+
+def test_limits_line_34_percent_nerd_has_no_warn_glyph():
+    from alloy.limits import window
+    from alloy.monitor.render import limits_lines
+
+    snapshot = _snapshot()
+    snapshot["limits"] = _available_claude_limits(
+        window("five_hour", "5h", 34.0, None),
+    )
+    line = limits_lines(snapshot, mode="nerd")[0]
+
+    assert "\uf071" not in line
+
+
+def test_limits_line_nerd_reset_shows_clock_without_parentheses():
+    from alloy.limits import window
+    from alloy.monitor.render import limits_lines
+
+    snapshot = _snapshot()
+    snapshot["limits"] = _available_claude_limits(
+        window("five_hour", "5h", 34.0, "2026-09-23T18:00:00+00:00"),
+    )
+    line = limits_lines(snapshot, mode="nerd")[0]
+
+    assert "\uf017" in line
+    assert "18:00" in line
+    assert "(resets" not in line
+    assert "(18:00)" not in line
+
+
+def _two_window_claude_limits() -> dict:
+    from alloy.limits import window
+
+    return _available_claude_limits(
+        window("five_hour", "5h", 34.0, "2026-09-23T18:00:00+00:00"),
+        window("seven_day", "weekly", 71.0, "2026-09-30T09:00:00+00:00"),
+    )
+
+
+def test_limits_lines_nerd_wraps_second_window_at_width_80():
+    from alloy.monitor.render import limits_lines
+
+    snapshot = _snapshot()
+    snapshot["limits"] = _two_window_claude_limits()
+
+    lines = limits_lines(snapshot, mode="nerd", width=80)
+
+    assert len(lines) == 2
+
+
+def test_limits_lines_nerd_keeps_both_windows_on_one_line_at_width_100():
+    from alloy.monitor.render import limits_lines
+
+    snapshot = _snapshot()
+    snapshot["limits"] = _two_window_claude_limits()
+
+    lines = limits_lines(snapshot, mode="nerd", width=100)
+
+    assert len(lines) == 1
+
+
+def test_limits_lines_ascii_matches_legacy_output():
+    from alloy.monitor.render import limits_lines
+
+    snapshot = _snapshot()
+    snapshot["limits"] = _two_window_claude_limits()
+    legacy = limits_lines(snapshot)
+
+    assert limits_lines(snapshot, mode="ascii") == legacy
+=======
     snapshot["limits"] = {
         harness: {
             "harness": harness,
@@ -820,6 +940,7 @@ def test_limits_lines_codex_rollout_shows_consumed_percent_with_compact_reset_su
     assert "53%" not in line
     assert "resets" not in line
     assert "(05:32)" in line
+>>>>>>> main
 
 
 def test_header_line_includes_session_totals_when_present():
