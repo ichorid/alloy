@@ -22,6 +22,7 @@ DEFAULT_ESTIMATE_STRUCTURED = {
 ROLE_MARKERS = [
     ("context", "You are gathering context"),
     ("estimate", "You are estimating how hard this task is"),
+    ("tests_review", "You are an independent reviewer of the tests"),
     ("tests", "Write failing tests"),
     ("triage", "You are triaging a bug report"),
     ("scope", "You are deciding whether a bug fix is safe to merge"),

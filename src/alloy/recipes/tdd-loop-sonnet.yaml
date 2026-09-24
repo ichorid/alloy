@@ -2,7 +2,8 @@ name: tdd-loop-sonnet
 
 # Same as tdd-loop, except the medium tier implements with Claude Sonnet first
 # and falls back to Codex (gpt-6-sol). The complex tier goes Opus 5.5, Codex gpt-6-sol (max), then Kimi.
-# Tests/verifier stay on cursor.
+# The tests role is tiered too, and tests_review adds an independent read-only
+# check of the tests before implementation. The verifier stays on cursor.
 
 landing:
   mode: auto
@@ -68,7 +69,12 @@ roles:
       timeout_minutes: 5
 
   tests:
-    # Pinned because tests are the spec the judge enforces; composer-2.5 is non-fast.
+    # Tiered like implement: the tests are the spec the judge enforces, so the
+    # tier chain for the run's complexity writes them (a weak spec cannot be
+    # rescued by more implement iterations). The role's own runner is only the
+    # non-live/shadow fallback. When the tier's runner differs from the verifier's
+    # (cursor), the verifier starts a fresh session instead of resuming this one.
+    tiered: true
     runner: cursor
     model: composer-2.5
     timeout_minutes: 20
@@ -76,6 +82,18 @@ roles:
       runner: claude-write
       model: sonnet
       timeout_minutes: 20
+
+  tests_review:
+    # Independent, read-only second opinion on the red tests before any code is
+    # written: reads the task on its own, then checks the tests for missed
+    # criteria, wrong readings, trivial passes. Advisory (a missing or failing
+    # reviewer is skipped); up to verification.max_test_reviews rounds.
+    runner: codex-readonly
+    timeout_minutes: 10
+    fallback:
+      runner: claude
+      model: sonnet
+      timeout_minutes: 10
 
   implement:
     tiered: true
@@ -138,6 +156,7 @@ verification:
   max_total_checks: 20               # hard cap on checks across the whole run
   max_command_timeout_minutes: 15    # any single check is killed after this long
   max_baseline_repairs: 2            # attempts to repair a pre-existing red baseline
+  max_test_reviews: 2                # independent test reviews per run (review, revise, re-review)
   min_acceptance_confidence: 0.6     # below this, acceptance escalates instead of passing
 
 limits:

@@ -197,6 +197,7 @@ class VerificationSpec:
     max_total_checks: int = 20
     max_command_timeout_minutes: float = 15.0
     max_baseline_repairs: int = 2
+    max_test_reviews: int = 1
     min_acceptance_confidence: float = 0.6
 
     @classmethod
@@ -218,6 +219,7 @@ class VerificationSpec:
             max_total_checks=int(raw.get("max_total_checks", defaults.max_total_checks)),
             max_command_timeout_minutes=float(timeout),
             max_baseline_repairs=int(raw.get("max_baseline_repairs", defaults.max_baseline_repairs)),
+            max_test_reviews=int(raw.get("max_test_reviews", defaults.max_test_reviews)),
             min_acceptance_confidence=float(
                 raw.get("min_acceptance_confidence", defaults.min_acceptance_confidence)
             ),

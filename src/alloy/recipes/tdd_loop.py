@@ -43,6 +43,7 @@ from alloy.models import (
     Attempt,
     BugReport,
     BugTriage,
+    TestsReview,
     CheckRequest,
     CheckResult,
     ComplexityEstimate,
@@ -129,6 +130,7 @@ class TddState(TypedDict, total=False):
     baseline_checks: list[dict[str, Any]]      # CheckRequest dicts from the tests role
     baseline: list[dict[str, Any]] | None      # CheckResult dicts from prove_red
     baseline_repairs: int
+    tests_reviews: int                         # independent reviews of the tests so far
     tests_session: dict[str, Any] | None       # {runner, session_id} of the last tests call
     test_fingerprints: dict[str, str]          # path -> sha256 of every test file after prove_red
 
@@ -334,6 +336,50 @@ def tests_prompt(
 
 
 tests_prompt.__test__ = False  # This prompt helper may be imported by pytest modules.
+
+
+TESTS_REVIEW_STATIC = """You are an independent reviewer of the tests another agent wrote for a task.
+You are read-only: do not modify any file, run only read-only commands.
+
+You did not write these tests and you have not seen the author's reasoning. First read the
+task and the acceptance criteria and decide, in your own words, what the behaviour must be.
+Only then read the tests and compare. Look for:
+- a criterion no test would fail without (missing coverage), or a test that would pass for
+  a wrong implementation (too weak, asserts nothing that matters);
+- a test that encodes a different reading of the task than the acceptance criteria state,
+  or invents requirements the task does not ask for;
+- a test that pins incidental implementation details and would reject a correct solution;
+- edge cases, error paths and regressions the criteria imply but the tests skip;
+- tests that fail for the wrong reason (import error, typo, missing fixture) instead of
+  the missing behaviour.
+
+Answer "sound" when the tests are a faithful, sufficient specification; small style points
+are not a reason to revise. Answer "revise" only with concrete, actionable `issues`, each
+naming the criterion or test it concerns. Do not write the tests yourself."""
+
+
+def tests_review_prompt(
+    brief: str,
+    acceptance: str,
+    context: dict[str, Any],
+    baseline: list[dict[str, Any]],
+    diff: str,
+    *,
+    memory: str = "",
+) -> str:
+    return assemble(
+        TESTS_REVIEW_STATIC,
+        _project_layer(memory),
+        _run_layer(context),
+        _task_layer(brief, acceptance),
+        "\n\n".join([
+            "## Baseline run (these commands must fail right now)\n" + _render_results(baseline),
+            _diff_section(diff),
+        ]),
+    ).text
+
+
+tests_review_prompt.__test__ = False
 
 
 def extract_summary(text: str) -> str:
@@ -1740,7 +1786,7 @@ def build_graph(ctx: RunContext):
 
     async def write_tests(state: TddState) -> dict[str, Any]:
         ctx.set_stage("tests")
-        spec = ctx.recipe.role("tests")
+        spec = ctx.role_spec("tests", state)
         # A repair pass (green or unrunnable baseline) continues the session
         # that wrote the tests; the first pass has no session yet.
         session_id = resumable_session(spec, state.get("tests_session"))
@@ -1860,7 +1906,44 @@ def build_graph(ctx: RunContext):
             return "human_gate"
         if state.get("instructions"):
             return "tests"
+        if (
+            "tests_review" in ctx.recipe.roles
+            and state.get("tests_reviews", 0) < ctx.recipe.verification.max_test_reviews
+        ):
+            return "tests_review"
         return "implement"
+
+    async def review_tests(state: TddState) -> dict[str, Any]:
+        """An independent model checks the red tests against the task before any
+        code is written. Advisory: an unavailable or failing reviewer never blocks."""
+        reviews = state.get("tests_reviews", 0) + 1
+        ctx.set_stage("tests_review")
+        update: dict[str, Any] = {"stage": "tests_review", "tests_reviews": reviews}
+        spec = _first_available(ctx.recipe.role("tests_review"))
+        if spec is None:
+            return update
+        failure = TestsReview(verdict="sound")
+        review = await classify(
+            ctx, "tests_review", spec,
+            tests_review_prompt(
+                ctx.bead.task_brief(), ctx.bead.acceptance_criteria,
+                state.get("context", {}), state.get("baseline") or [], ctx.diff(),
+                memory=state.get("memory_block", ""),
+            ),
+            model_cls=TestsReview, default=failure, iteration=0,
+        )
+        if review is failure or review.verdict == "sound" or not review.issues:
+            return update
+        update["instructions"] = (
+            "An independent reviewer read your tests against the acceptance criteria and "
+            "found problems. Fix them (or, if a point is wrong, keep the test and be sure "
+            "it is right), then answer with the corrected baseline_checks:\n"
+            + "\n".join(f"- {issue}" for issue in review.issues)
+        )
+        return update
+
+    def route_after_review(state: TddState) -> str:
+        return "tests" if state.get("instructions") else "implement"
 
     async def implement(state: TddState) -> dict[str, Any]:
         iteration = state.get("iteration", 0) + 1
@@ -2468,6 +2551,7 @@ def build_graph(ctx: RunContext):
     graph.add_node("estimate", estimate)
     graph.add_node("tests", write_tests)
     graph.add_node("prove_red", prove_red)
+    graph.add_node("tests_review", review_tests)
     graph.add_node("implement", implement)
     graph.add_node("triage", triage)
     graph.add_node("remediate", remediate)
@@ -2487,8 +2571,9 @@ def build_graph(ctx: RunContext):
     graph.add_edge("estimate", "tests")
     graph.add_conditional_edges("tests", route_after_tests, ["prove_red", "finish", "human_gate"])
     graph.add_conditional_edges(
-        "prove_red", route_after_prove_red, ["tests", "implement", "human_gate"]
+        "prove_red", route_after_prove_red, ["tests", "tests_review", "implement", "human_gate"]
     )
+    graph.add_conditional_edges("tests_review", route_after_review, ["tests", "implement"])
     graph.add_conditional_edges(
         "implement", route_after_implement, ["triage", "verifier_step"]
     )
@@ -2546,6 +2631,7 @@ def initial_state(ctx: RunContext) -> TddState:
         baseline_checks=[],
         baseline=None,
         baseline_repairs=0,
+        tests_reviews=0,
         tests_session=None,
         test_fingerprints={},
         implementer="",

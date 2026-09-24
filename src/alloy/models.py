@@ -161,6 +161,36 @@ class BugTriage(BaseModel):
         }
 
 
+TESTS_REVIEW_VERDICTS: tuple[str, ...] = ("sound", "revise")
+TestsReviewLabel = Literal["sound", "revise"]
+
+
+class TestsReview(BaseModel):
+    """The tests_review role's verdict: do the tests written for a task really
+    encode its acceptance criteria? `issues` are what the tests role must fix."""
+
+    verdict: TestsReviewLabel
+    issues: list[str] = Field(default_factory=list)
+    reason: str = ""
+    confidence: float = 0.0
+
+    @classmethod
+    def schema_for_agents(cls) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "verdict": {"type": "string", "enum": list(TESTS_REVIEW_VERDICTS)},
+                "issues": {"type": "array", "items": {"type": "string"}},
+                "reason": {"type": "string"},
+                "confidence": {"type": "number"},
+            },
+            "required": ["verdict", "issues", "reason", "confidence"],
+            "additionalProperties": False,
+        }
+
+    __test__ = False
+
+
 SCOPE_VERDICTS: tuple[str, ...] = ("merge", "too-broad", "subverts-task")
 ScopeLabel = Literal["merge", "too-broad", "subverts-task"]
 
