@@ -605,10 +605,104 @@ def _judge(judge: dict[str, Any] | None) -> str:
 
 _METADATA_PREFIXES = ("bead:", "worktree:", "branch:", "logs:")
 
+_DETAIL_TOKEN_BAR_WIDTH = 8
 
-def format_detail(run: dict[str, Any], width: int, log_dir: str | None = None) -> str:
+
+def detail_panel_border_title(run: dict[str, Any]) -> str:
+    """Detail panel top-border title: ``<bead id> · <title>`` for the selected run."""
+    bead_id = _text(run.get("bead_id"))
+    title = run.get("title")
+    if title:
+        return f"{bead_id} · {title}"
+    return bead_id
+
+
+def detail_panel_border_title_queue() -> str:
+    return "QUEUE"
+
+
+def detail_panel_border_title_epic(epic: dict[str, Any]) -> str:
+    epic_id = _text(epic.get("epic_id"))
+    title = epic.get("title")
+    if title:
+        return f"{epic_id} · {title}"
+    return epic_id
+
+
+def detail_panel_border_subtitle(run: dict[str, Any]) -> str:
+    """Detail panel top-border subtitle: ``<status> <stage>`` for the selected run."""
+    return f"{_text(run.get('status'))} {_text(run.get('stage'))}"
+
+
+def detail_panel_border_subtitle_queue(snapshot: dict[str, Any]) -> str:
+    queue = snapshot.get("queue") or {}
+    ready_total = int(queue.get("ready_total") or 0)
+    blocked = queue.get("blocked") or []
+    return f"{ready_total} ready · {len(blocked)} blocked"
+
+
+def detail_panel_border_subtitle_epic(epic: dict[str, Any]) -> str:
+    done = int(epic.get("done") or 0)
+    total = int(epic.get("total") or 0)
+    return f"{done}/{total} done"
+
+
+def queue_detail(snapshot: dict[str, Any], *, mode: str | None = None) -> list[str]:
+    """Detail pane for the QUEUE row: dispatch note and ready/blocked counts."""
+    queue = snapshot.get("queue") or {}
+    ready_total = int(queue.get("ready_total") or 0)
+    blocked = queue.get("blocked") or []
+    if mode in ("nerd", "unicode"):
+        return [
+            f"{icon('queue', mode)} dispatch  priority, then age.",
+            f"{icon('ready', mode)} ready  {ready_total}",
+            f"{icon('blocked', mode)} blocked  {len(blocked)}",
+        ]
+    return [
+        "Dispatch order: priority, then age.",
+        f"{ready_total} ready",
+        f"{len(blocked)} blocked",
+    ]
+
+
+def epic_detail(epic: dict[str, Any], *, mode: str | None = None) -> list[str]:
+    """Detail pane for an epic row: title, progress, running/judge counts, done ids."""
+    title = epic.get("title") or epic.get("epic_id") or ""
+    done = int(epic.get("done") or 0)
+    total = int(epic.get("total") or 0)
+    running = int(epic.get("running") or 0)
+    judge = int(epic.get("judge") or 0)
+    if mode in ("nerd", "unicode"):
+        lines = [
+            f"{icon('folder', mode)} title  {title}",
+            f"{icon('done', mode)} progress  {done}/{total} done",
+            (
+                f"{icon('running', mode)} active  {running} running"
+                f" · {judge} judge"
+            ),
+        ]
+        lines.extend(epic.get("done_ids") or [])
+        return lines
+    lines = [
+        title,
+        f"{done}/{total} done",
+        f"{running} running · {judge} judge",
+    ]
+    lines.extend(epic.get("done_ids") or [])
+    return lines
+
+
+def format_detail(
+    run: dict[str, Any],
+    width: int,
+    log_dir: str | None = None,
+    *,
+    mode: str | None = None,
+) -> str:
     """Render detail pane text: two columns at comfortable width, stacked below."""
-    lines = detail_lines(run, log_dir)
+    if mode in ("nerd", "unicode"):
+        return _format_detail_styled(run, width, log_dir, mode)
+    lines = detail_lines(run, log_dir, mode=mode)
     if width < COMFORTABLE_WIDTH:
         return "\n".join(lines)
     activity = [line for line in lines if not line.startswith(_METADATA_PREFIXES)]
@@ -626,7 +720,90 @@ def format_detail(run: dict[str, Any], width: int, log_dir: str | None = None) -
     return "\n".join(rows)
 
 
-def detail_lines(run: dict[str, Any], log_dir: str | None = None) -> list[str]:
+def _format_detail_styled(
+    run: dict[str, Any],
+    width: int,
+    log_dir: str | None,
+    mode: str,
+) -> str:
+    left = _detail_left_column(run, mode)
+    right = _detail_right_column(run, log_dir, mode)
+    if width < COMFORTABLE_WIDTH:
+        return "\n".join(left + right)
+    left_width = max((len(line) for line in left), default=0)
+    row_count = max(len(left), len(right))
+    rows: list[str] = []
+    for index in range(row_count):
+        left_line = left[index] if index < len(left) else ""
+        right_line = right[index] if index < len(right) else ""
+        if right_line:
+            rows.append(f"{left_line:<{left_width}}  {right_line}" if left_width else right_line)
+        else:
+            rows.append(left_line)
+    return "\n".join(rows)
+
+
+def _detail_left_column(run: dict[str, Any], mode: str) -> list[str]:
+    lines: list[str] = []
+    for call in run.get("current_calls") or []:
+        requested = _runner(call.get("requested_runner"), call.get("requested_model"))
+        effective = _runner(call.get("effective_runner"), call.get("effective_model"))
+        seconds = call.get("elapsed_seconds")
+        elapsed = "-" if seconds is None else f"{int(seconds)}s"
+        lines.append(
+            f"{icon('running', mode)} verify  {requested} -> {effective} ({elapsed})"
+        )
+    judge_line = _judge_detail(run.get("judge"))
+    if judge_line is not None:
+        lines.append(f"{icon('judge', mode)} {judge_line.replace('judge:', 'judge  ', 1)}")
+    tokens_by_role = run.get("tokens_by_role") or {}
+    if tokens_by_role:
+        total_in = sum(entry.get("input_tokens") or 0 for entry in tokens_by_role.values())
+        total_out = sum(entry.get("output_tokens") or 0 for entry in tokens_by_role.values())
+        lines.append(
+            f"{icon('tokens', mode)} tokens  in {total_in}  out {total_out}"
+        )
+        max_tokens = max((entry.get("total_tokens") or 0 for entry in tokens_by_role.values()), default=0)
+        for role, entry in tokens_by_role.items():
+            total = entry.get("total_tokens") or 0
+            bar = _detail_role_token_bar(total, max_tokens)
+            lines.append(f"   {role}  {total}  {bar}".rstrip())
+    for entry in run.get("models_used") or []:
+        lines.append(f"{icon('complexity', mode)} {_models_used_line(entry)}")
+    return lines
+
+
+def _detail_right_column(run: dict[str, Any], log_dir: str | None, mode: str) -> list[str]:
+    lines: list[str] = []
+    complexity = run.get("complexity")
+    if complexity is not None:
+        bar = _complexity(complexity, mode)
+        estimated = run.get("complexity_estimated")
+        suffix = " (est.)" if estimated else ""
+        lines.append(f"cx  {bar} {complexity}{suffix}")
+    lines.append(f"worktree {_text(run.get('worktree'))}")
+    lines.append(f"branch {_text(run.get('branch'))}")
+    if log_dir is not None:
+        lines.append(f"logs {log_dir}")
+    parent = run.get("parent_id") or run.get("epic_id")
+    if parent:
+        lines.append(f"parent {_text(parent)}")
+    return lines
+
+
+def _detail_role_token_bar(tokens: int, max_tokens: int) -> str:
+    if max_tokens <= 0 or tokens <= 0:
+        return ""
+    filled = max(1, round(tokens / max_tokens * _DETAIL_TOKEN_BAR_WIDTH))
+    return "█" * min(filled, _DETAIL_TOKEN_BAR_WIDTH)
+
+
+def detail_lines(
+    run: dict[str, Any],
+    log_dir: str | None = None,
+    *,
+    mode: str | None = None,
+) -> list[str]:
     """Selected-run detail pane: in-flight calls, raw vs effective judge, per-role tokens, paths.
 
     `log_dir` is not part of the run dict (it is `{root}/logs/{run_id}`), so the
