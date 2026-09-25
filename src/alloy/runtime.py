@@ -19,6 +19,8 @@ from typing import Any, Awaitable, Callable, Mapping
 from alloy.beads import BeadsClient, Bead, META_COMPLEXITY_ESTIMATED, META_STAGE
 from alloy.config import RecipeConfig, RoleSpec, resolve_max_agent_calls
 from alloy.models import (
+    UNAVAILABLE_KEY,
+    is_unavailable,
     AgentResult,
     CheckRequest,
     CheckResult,
@@ -156,6 +158,11 @@ class RunContext:
                 retry_at = parse_retry_at(result.error or result.text, now=datetime.now())
                 if retry_at is not None:
                     result.retry_at = retry_at.astimezone()
+            if is_unavailable(result):
+                # The harness never ran (missing binary, spend or rate limit):
+                # the ledger keeps the row but it does not spend the run's
+                # agent-call budget.
+                result.usage = {**result.usage, UNAVAILABLE_KEY: True}
             self.store.finish_call(
                 call_id, run_id=self.run_id, bead_id=self.bead.id, role=role,
                 iteration=iteration, result=result,

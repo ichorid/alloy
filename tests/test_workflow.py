@@ -384,6 +384,44 @@ async def test_judge_runner_failure_is_survived(project, alloy_home, fake_harnes
     assert "judge runner failed" in final["attempts"][0]["reason"]
 
 
+async def test_unavailable_judge_parks_at_the_human_gate_instead_of_retrying(
+    project, alloy_home, fake_harnesses
+):
+    """A spend/session limit on the judge is not a verdict: no retry iteration,
+    and the failed call does not spend the run's agent-call budget."""
+    fake_harnesses.configure(
+        script(judge=[{"exit": 1, "stderr": "session limit resets 6:20pm"}, judge_entry("done")])
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        paused = await harness.start()
+        assert "__interrupt__" in paused
+        assert "judge role could not run" in paused["__interrupt__"][0].value["reason"]
+        assert len(fake_harnesses.calls_for("implement")) == 1
+        calls = harness.store.agent_calls(harness.run_id)
+        failed = [c for c in calls if not c["ok"]]
+        assert failed
+        assert harness.store.call_count(harness.run_id) == len(calls) - len(failed)
+    finally:
+        harness.close()
+
+
+async def test_unavailable_implement_parks_at_the_human_gate(
+    project, alloy_home, fake_harnesses
+):
+    fake_harnesses.configure(
+        script(implement=[{"exit": 1, "stderr": "session limit resets 6:20pm"}])
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        paused = await harness.start()
+    finally:
+        harness.close()
+    assert "__interrupt__" in paused
+    assert "implement role could not run" in paused["__interrupt__"][0].value["reason"]
+    assert fake_harnesses.calls_for("verifier") == []
+
+
 async def test_failing_tests_role_pauses_for_a_human_before_burning_an_implementation(
     project, alloy_home, fake_harnesses
 ):

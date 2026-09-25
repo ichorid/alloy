@@ -21,7 +21,7 @@ from alloy.events import (
     EVENT_CANCELLED, EVENT_DONE, EVENT_FAILED, EVENT_NEEDS_HUMAN, EVENT_RESUMED, EventLog,
 )
 from alloy.limits import harness_for_runner
-from alloy.models import AgentCallRecord, AgentResult, utcnow
+from alloy.models import UNAVAILABLE_KEY, AgentCallRecord, AgentResult, utcnow
 from alloy.usage import normalize
 
 SCHEMA = """
@@ -466,9 +466,10 @@ class Store:
                     json.dumps(result.structured) if result.structured is not None else None,
                 ),
             )
-            conn.execute(
-                "UPDATE runs SET agent_calls = agent_calls + 1 WHERE run_id = ?", (run_id,)
-            )
+            if not (result.usage or {}).get(UNAVAILABLE_KEY):
+                conn.execute(
+                    "UPDATE runs SET agent_calls = agent_calls + 1 WHERE run_id = ?", (run_id,)
+                )
 
     def agent_calls(self, run_id: str) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -480,12 +481,18 @@ class Store:
     def call_count(self, run_id: str, *, include_children: bool = False) -> int:
         """Agent calls made by the run; with `include_children`, also those of
         its remediation children. Limit enforcement uses the per-run count:
-        each run is judged on its own calls only."""
-        query = "SELECT COUNT(*) AS n FROM agent_calls WHERE run_id = ?"
+        each run is judged on its own calls only. Calls whose harness was
+        unavailable (spend/rate limit, missing binary) do not count."""
+        query = (
+            "SELECT COUNT(*) AS n FROM agent_calls WHERE"
+            " COALESCE(json_extract(usage_json, '$.unavailable'), 0) = 0"
+            " AND (run_id = ?"
+        )
         params: tuple[Any, ...] = (run_id,)
         if include_children:
             query += " OR run_id IN (SELECT run_id FROM runs WHERE parent_run_id = ?)"
             params += (run_id,)
+        query += ")"
         with self.connect() as conn:
             row = conn.execute(query, params).fetchone()
         return int(row["n"]) if row else 0

@@ -258,6 +258,20 @@ class RunnerUnavailable(RuntimeError):
     """The harness CLI is not installed or not authenticated."""
 
 
+UNAVAILABLE_KEY = "unavailable"
+"""usage_json flag on a call whose harness never ran (see `is_unavailable`)."""
+
+
+def is_unavailable(result: "AgentResult") -> bool:
+    """A failed call that says nothing about the work: the harness was missing
+    (exit 127) or reported a spend, session or rate limit (it names a
+    `retry_at`). `AgentResult.usage` carries `UNAVAILABLE_KEY` once recorded."""
+    if result.ok:
+        return False
+    return bool((result.usage or {}).get(UNAVAILABLE_KEY)) or \
+        result.exit_code == 127 or result.retry_at is not None
+
+
 class ContextPacket(BaseModel):
     """Compact repository understanding produced by the context role."""
 

@@ -36,6 +36,7 @@ from alloy.models import (
     CHECK_HINTS_KEY,
     CONTRADICTION_KEY_PREFIX,
     EMBED_STALE_KEY,
+    is_unavailable,
     MEMORY_RENDER_HEADER,
     REGRESSION_KEY_PREFIX,
     LESSON_KEY_PREFIX,
@@ -171,6 +172,7 @@ class TddState(TypedDict, total=False):
     conflict_files: list[str]               # land: paths the trial merge conflicted on
     limit_hit: str | None
     human_note: str
+    implement_unavailable: bool  # implement's whole fallback chain was unavailable
     resume_to: str | None      # stage that parked the run at the human gate
     resume_target: str | None  # where human_gate sends the resumed run
 
@@ -1678,6 +1680,14 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
             schema=JudgeDecision.schema_for_agents(),
             iteration=state.get("iteration", 0),
         )
+        if is_unavailable(result):
+            # The fallback chain is exhausted too: retrying would only burn
+            # budget on a harness that cannot answer.
+            return {
+                "stage": "judge",
+                "resume_to": "implement",
+                "decision": _unavailable_decision("judge", result).model_dump(),
+            }
         decision = _decision_from(result, state)
         attempt = Attempt(
             iteration=state.get("iteration", 0),
@@ -2033,7 +2043,17 @@ def build_graph(ctx: RunContext):
             iteration=iteration,
         )
         reported_bugs = _capture_bugs("implement", result, state, iteration)
+        if is_unavailable(result):
+            return {
+                "reported_bugs": reported_bugs,
+                "iteration": iteration,
+                "stage": "implement",
+                "resume_to": "implement",
+                "implement_unavailable": True,
+                "decision": _unavailable_decision("implement", result).model_dump(),
+            }
         return {
+            "implement_unavailable": False,
             "reported_bugs": reported_bugs,
             "implementer_stopped": any(bug.get("blocks_task") for bug in reported_bugs),
             "iteration": iteration,
@@ -2049,6 +2069,8 @@ def build_graph(ctx: RunContext):
         }
 
     def route_after_implement(state: TddState) -> str:
+        if state.get("implement_unavailable"):
+            return "human_gate"
         return "triage" if untriaged(state) else "verifier_step"
 
     def _first_available(spec: RoleSpec) -> RoleSpec | None:
@@ -2639,7 +2661,7 @@ def build_graph(ctx: RunContext):
     )
     graph.add_conditional_edges("tests_review", route_after_review, ["tests", "implement"])
     graph.add_conditional_edges(
-        "implement", route_after_implement, ["triage", "verifier_step"]
+        "implement", route_after_implement, ["triage", "verifier_step", "human_gate"]
     )
     graph.add_conditional_edges(
         "triage", route_after_triage,
@@ -2827,6 +2849,16 @@ def _retry_at_iso(result) -> str | None:
     """The harness's own "available again at" time, for the human-gate payload."""
     retry_at = getattr(result, "retry_at", None)
     return retry_at.isoformat() if retry_at is not None else None
+
+
+def _unavailable_decision(role: str, result) -> JudgeDecision:
+    """Park at the human gate: every runner in the role's chain was unavailable."""
+    return JudgeDecision(
+        decision="human",
+        reason=f"the {role} role could not run (primary and fallback unavailable): "
+        f"{result.error or 'runner unavailable'}",
+        next_instructions="Resume when a harness is available again.",
+    )
 
 
 def _decision_from(result, state: TddState) -> JudgeDecision:
