@@ -654,6 +654,23 @@ def test_next_task_skips_everything_else_when_epic_child_has_waiting_human_run(
     assert scheduler.next_task() is None
 
 
+def test_next_task_never_dispatches_epic_itself_while_child_run_is_parked(
+    scheduler, beads_project,
+):
+    epic_id = _create_epic(beads_project, "epic with paused child")
+    subprocess.run(
+        ["bd", "update", epic_id, "--set-metadata", "alloy_recipe=tdd-loop"],
+        cwd=str(beads_project), check=True, capture_output=True, text=True,
+    )
+    child = _create_epic_child(
+        beads_project, "paused child", epic_id, priority=1, alloy_recipe="tdd-loop",
+    )
+    _seed_parked_run(scheduler, beads_project, child, "epic-child-paused")
+
+    picked = scheduler.next_task()
+    assert picked is None or picked.id != epic_id
+
+
 def test_next_task_returns_next_epic_child_after_blocking_sibling_run_is_done(
     scheduler, beads_project,
 ):
