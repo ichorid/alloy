@@ -271,10 +271,41 @@ class Scheduler:
         ):
             if (bead.recipe or self._default_recipe) not in known:
                 continue
+            if self._top_level_dispatch_blocked(bead.id):
+                continue
             if self._epic_dispatch_blocked(bead.id):
                 continue
             return bead
         return None
+
+    def _top_level_unit(self, bead_id: str) -> str:
+        """The epic root a bead belongs to, or the bead itself when standalone."""
+        return self.engine.beads.epic_root(bead_id) or bead_id
+
+    def _top_level_dispatch_blocked(self, bead_id: str) -> bool:
+        """True while another epic or standalone bead has an unfinished run
+        or sits at review-ready.
+
+        Top-level units run strictly one after another: a run that is running
+        or parked at waiting-human holds the repo until it lands, so a stuck
+        bead never lets unrelated work pile up merge conflicts behind it.
+        """
+        unit = self._top_level_unit(bead_id)
+        holders = [run["bead_id"] for run in self.engine.store.active_runs(self.engine.repo)]
+        # A review-ready bead holds its unit until it lands, except for the
+        # repair bug it is waiting on, which must run for it to ever land.
+        for held in self.engine.beads.list_by_status(bd.STATUS_REVIEW_READY):
+            if held.metadata.get(bd.META_LAND_REPAIR) != bead_id:
+                holders.append(held.id)
+        for holder_bead in holders:
+            holder = self._top_level_unit(holder_bead)
+            if holder == unit:
+                continue
+            if holder not in self._epic_block_logged:
+                log.info("skipping %s: %s has unfinished work", unit, holder)
+                self._epic_block_logged.add(holder)
+            return True
+        return False
 
     def _epic_dispatch_blocked(self, bead_id: str) -> bool:
         """True when an epic child must wait for a sibling or its own prior run."""

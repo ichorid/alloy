@@ -636,7 +636,7 @@ def _seed_parked_run(
     scheduler.engine.store.update_run(run_id, status=status, stage=status)
 
 
-def test_next_task_skips_epic_children_when_sibling_has_waiting_human_run(
+def test_next_task_skips_everything_else_when_epic_child_has_waiting_human_run(
     scheduler, beads_project,
 ):
     epic_id = _create_epic(beads_project, "shared epic worktree")
@@ -646,14 +646,12 @@ def test_next_task_skips_epic_children_when_sibling_has_waiting_human_run(
     child_y = _create_epic_child(
         beads_project, "epic child Y", epic_id, priority=1, alloy_recipe="tdd-loop",
     )
-    standalone = bd_create(beads_project, "standalone S", priority=2, alloy_recipe="tdd-loop")
+    bd_create(beads_project, "standalone S", priority=2, alloy_recipe="tdd-loop")
     _seed_parked_run(scheduler, beads_project, child_x, "epic-x-waiting")
 
-    picked = scheduler.next_task()
-
-    assert picked is not None
-    assert picked.id == standalone
-    assert picked.id not in {child_x, child_y}
+    # Neither the sibling nor an unrelated standalone bead may start while the
+    # epic holds a parked run: top-level units run strictly one at a time.
+    assert scheduler.next_task() is None
 
 
 def test_next_task_returns_next_epic_child_after_blocking_sibling_run_is_done(
@@ -984,3 +982,60 @@ async def test_scheduler_auto_land_disabled_by_root_flag_file(
     assert scheduler.engine.beads.show(bead_id).status == bd.STATUS_REVIEW_READY
     assert land_calls == []
     disable.unlink(missing_ok=True)
+
+
+# -- strict top-level serialization ------------------------------------------
+
+
+def _park_run(scheduler, beads_project, bead_id, status=RUN_WAITING_HUMAN):
+    run_id = f"run-{bead_id}"
+    scheduler.engine.store.create_run(
+        run_id=run_id, bead_id=bead_id, thread_id=run_id, recipe="tdd-loop",
+        repo=scheduler.engine.repo, worktree=str(beads_project), branch=f"alloy/{bead_id}",
+        log_dir=None,
+    )
+    scheduler.engine.store.update_run(run_id, status=status, stage=status)
+
+
+def test_a_waiting_human_bead_blocks_independent_beads(scheduler, beads_project):
+    stuck = bd_create(beads_project, "stuck", priority=0, alloy_recipe="tdd-loop")
+    bd_create(beads_project, "other", priority=1, alloy_recipe="tdd-loop")
+    _park_run(scheduler, beads_project, stuck)
+    scheduler.engine.beads.set_status(stuck, bd.STATUS_WAITING_HUMAN)
+
+    assert scheduler.next_task() is None
+
+
+def test_a_running_bead_blocks_other_top_level_units(scheduler, beads_project):
+    busy = bd_create(beads_project, "busy", alloy_recipe="tdd-loop")
+    bd_create(beads_project, "other", alloy_recipe="tdd-loop")
+    _park_run(scheduler, beads_project, busy, status=RUN_RUNNING)
+    scheduler.engine.beads.set_status(busy, bd.STATUS_IMPLEMENTING)
+
+    assert scheduler.next_task() is None
+
+
+def test_a_review_ready_bead_blocks_other_top_level_units(scheduler, beads_project):
+    held = bd_create(beads_project, "held", alloy_recipe="tdd-loop")
+    bd_create(beads_project, "other", alloy_recipe="tdd-loop")
+    scheduler.engine.beads.set_status(held, bd.STATUS_REVIEW_READY)
+
+    assert scheduler.next_task() is None
+
+
+def test_the_repair_bug_of_a_review_ready_bead_is_not_blocked(scheduler, beads_project):
+    held = bd_create(beads_project, "held", alloy_recipe="tdd-loop")
+    bug = bd_create(beads_project, "repair", alloy_recipe="tdd-loop")
+    scheduler.engine.beads.set_status(held, bd.STATUS_REVIEW_READY)
+    scheduler.engine.beads.set_metadata(held, {bd.META_LAND_REPAIR: bug})
+
+    picked = scheduler.next_task()
+
+    assert picked is not None and picked.id == bug
+
+
+def test_a_unit_with_unfinished_work_can_still_dispatch_itself(scheduler, beads_project):
+    only = bd_create(beads_project, "only", alloy_recipe="tdd-loop")
+    _park_run(scheduler, beads_project, only, status=RUN_FAILED)
+
+    assert scheduler.next_task() is not None
