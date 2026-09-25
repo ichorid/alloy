@@ -963,7 +963,7 @@ def _detail_left_column(
 
 
 def _detail_right_column(run: dict[str, Any], log_dir: str | None, mode: str) -> list[str]:
-    lines: list[str] = []
+    lines: list[str] = [f"title {_text(run.get('title'))}"]
     complexity = run.get("complexity")
     if complexity is not None:
         bar = _complexity(complexity, mode)
@@ -974,7 +974,6 @@ def _detail_right_column(run: dict[str, Any], log_dir: str | None, mode: str) ->
     parent = run.get("parent_id") or run.get("epic_id")
     if parent:
         lines.append(f"parent {_text(parent)}")
-    lines.append(f"title {_text(run.get('title'))}")
     return lines
 
 
@@ -997,7 +996,7 @@ def detail_lines(
     `log_dir` is not part of the run dict (it is `{root}/logs/{run_id}`), so the
     caller passes it in; it is omitted when None.
     """
-    lines: list[str] = []
+    lines: list[str] = [f"title: {_text(run.get('title'))}"]
     for call in run.get("current_calls") or []:
         requested = _runner(call.get("requested_runner"), call.get("requested_model"))
         effective = _runner(call.get("effective_runner"), call.get("effective_model"))
@@ -1017,7 +1016,6 @@ def detail_lines(
         lines.extend(_models_table(models, indent="  ", usage_style=usage_style))
     lines.append(f"bead: {_text(run.get('bead_id'))}")
     lines.append(f"branch: {_text(run.get('branch'))}")
-    lines.append(f"title: {_text(run.get('title'))}")
     return lines
 
 

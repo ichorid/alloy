@@ -462,6 +462,7 @@ _ASCII_DETAIL_FIXTURES: dict[str, tuple[dict, list[str]]] = {
     "empty": (
         _run(),
         [
+            "title: -",
             "bead: alloy-a1b2",
             "branch: alloy/alloy-a1b2",
         ],
@@ -479,6 +480,7 @@ _ASCII_DETAIL_FIXTURES: dict[str, tuple[dict, list[str]]] = {
             ],
         ),
         [
+            "title: -",
             "implement: astra -> codex (42s)",
             "critic: claude -> cursor (3s)",
             "bead: alloy-a1b2",
@@ -503,6 +505,7 @@ _ASCII_DETAIL_FIXTURES: dict[str, tuple[dict, list[str]]] = {
             },
         ),
         [
+            "title: -",
             "tokens per role (total = in + out):",
             "  role       total     in    out  share",
             "  implement    150    100     50  " + "█" * 8,
@@ -514,6 +517,7 @@ _ASCII_DETAIL_FIXTURES: dict[str, tuple[dict, list[str]]] = {
     "layout": (
         _layout_run(),
         [
+            "title: -",
             "implement: astra -> codex (42s)",
             "judge: retry (confidence 0.61)",
             "tokens per role (total = in + out):",
