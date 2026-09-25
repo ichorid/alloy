@@ -1,6 +1,6 @@
 """LangGraph checkpoint storage.
 
-One SQLite file under ~/.alloy holds every workflow's graph state. The nodes are
+One SQLite file under the project's .alloy holds its workflow graph state. The nodes are
 async (they shell out to harnesses), so execution uses the async saver; the
 read-only inspection path used by `alloy status` opens the same file
 synchronously.

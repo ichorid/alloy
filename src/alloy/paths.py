@@ -1,15 +1,13 @@
-"""Filesystem layout for Alloy's local state.
+"""Filesystem layout for project state and shared user configuration.
 
-Everything Alloy owns lives under one root so that a crash, a reboot or a
-manual inspection all start from the same place::
-
-    ~/.alloy/
+    <project>/.alloy/
       alloy.db          run + agent-call ledger (Alloy metadata)
       workflows.db      LangGraph checkpoints
       logs/<run_id>/    raw agent transcripts and test output
       worktrees/<bead>/ isolated git checkout per task
-      recipes/          user-supplied recipe configs (override built-ins)
       scheduler.pid     daemon lockfile
+    ~/.alloy/
+      recipes/          user-supplied recipe configs (override built-ins)
       limits.json       last harness usage-limit samples (alloy.limits)
 """
 
@@ -20,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ENV_ROOT = "ALLOY_HOME"
+ENV_PROJECT_ROOT = "ALLOY_ROOT"
 
 
 @dataclass(frozen=True)
@@ -27,10 +26,19 @@ class AlloyPaths:
     root: Path
 
     @classmethod
-    def resolve(cls, root: Path | str | None = None) -> "AlloyPaths":
+    def resolve(
+        cls, root: Path | str | None = None, *, project: Path | str | None = None,
+    ) -> "AlloyPaths":
         if root is None:
-            root = os.environ.get(ENV_ROOT) or (Path.home() / ".alloy")
+            root = os.environ.get(ENV_PROJECT_ROOT) or (
+                Path(project or Path.cwd()) / ".alloy"
+            )
         return cls(Path(root).expanduser().resolve())
+
+    @property
+    def shared_root(self) -> Path:
+        root = os.environ.get(ENV_ROOT) or (Path.home() / ".alloy")
+        return Path(root).expanduser().resolve()
 
     @property
     def alloy_db(self) -> Path:
@@ -50,7 +58,7 @@ class AlloyPaths:
 
     @property
     def recipes(self) -> Path:
-        return self.root / "recipes"
+        return self.shared_root / "recipes"
 
     @property
     def scheduler_pid(self) -> Path:
@@ -66,7 +74,7 @@ class AlloyPaths:
 
     @property
     def limits_cache(self) -> Path:
-        return self.root / "limits.json"
+        return self.shared_root / "limits.json"
 
     def run_logs(self, run_id: str) -> Path:
         return self.logs / run_id

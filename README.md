@@ -30,7 +30,7 @@ recipe to run, and the execution status Alloy writes back:
 t-a3f  status: implementing
        alloy_recipe:   tdd-loop
        alloy_run_id:   019f2c…
-       alloy_worktree: ~/.alloy/worktrees/t-a3f
+       alloy_worktree: <repo>/.alloy/worktrees/t-a3f
        alloy_stage:    verify
 ```
 
@@ -42,7 +42,7 @@ SQLite checkpoint, not on the bead.
 
 Alloy pushes; a supervising agent should not poll `alloy status`. Every time a
 run needs a human, fails, stalls, resumes, finishes or is cancelled, Alloy
-appends one JSON line to `~/.alloy/events.jsonl`, and `alloy events` reads it:
+appends one JSON line to `<repo>/.alloy/events.jsonl`, and `alloy events` reads it:
 
 ```bash
 alloy events --follow --attention      # block; print one line per needs-human/failed/stalled event
@@ -87,7 +87,7 @@ that legitimately runs longer than the threshold is reported too; raise
 ```bash
 npm install -g @beads/bd            # the durable work graph
 uv venv && uv pip install -e .      # Alloy itself
-alloy init                          # ~/.alloy + Beads status registration
+alloy init                          # <repo>/.alloy + Beads status registration
 ```
 
 `alloy init` reports which harness CLIs it can see. Alloy drives them through
@@ -236,13 +236,23 @@ still across a run.
 
 ## Layout
 
+Alloy stores each project's runs, checkpoints, logs, worktrees, events, and
+scheduler files in that project's `.alloy` directory. `alloy monitor` reads
+the current project's `.alloy` by default. `--repo` selects another project;
+`--root` or `ALLOY_ROOT` overrides its state directory. `ALLOY_HOME` selects
+the shared configuration directory, which defaults to `~/.alloy`.
+
 ```
-~/.alloy/
+<repo>/.alloy/
   alloy.db          runs + agent-call ledger
   events.jsonl      attention feed: needs-human, failed, stalled, ...
   workflows.db      LangGraph checkpoints
   logs/<run_id>/    raw transcripts and test output
   worktrees/<bead>/ one isolated checkout per task
+  scheduler.pid     project scheduler lock
+~/.alloy/
+  recipes/          shared user recipes
+  limits.json       shared harness limit samples
 ```
 
 Graph state carries summaries and artifact paths. Full transcripts stay on disk,

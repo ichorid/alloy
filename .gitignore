@@ -22,3 +22,12 @@ uv.lock
 
 # pytest/uv scratch dirs left in worktrees by sandboxed agent runs
 .tmp/
+
+# Alloy project state; .alloy/project.md and .alloy/recipes/ remain trackable
+.alloy/*.db-*
+.alloy/logs/
+.alloy/worktrees/
+.alloy/events.jsonl
+.alloy/scheduler.pid
+.alloy/scheduler.json
+.alloy/scheduler.log

@@ -56,7 +56,7 @@ console = Console()
 err = Console(stderr=True)
 
 RepoOption = typer.Option(None, "--repo", help="Repository root (default: cwd)")
-RootOption = typer.Option(None, "--root", help="Alloy home (default: $ALLOY_HOME or ~/.alloy)")
+RootOption = typer.Option(None, "--root", help="Project state directory (default: $ALLOY_ROOT or <repo>/.alloy)")
 
 T = TypeVar("T")
 
@@ -125,15 +125,15 @@ def init(
     root: Optional[Path] = RootOption,
     json: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Create Alloy's home directory and register its statuses with Beads."""
-    paths = AlloyPaths.resolve(root).ensure()
-    Store(paths.alloy_db)
+    """Create the project's state directory and register its statuses with Beads."""
     repo_path = (repo or Path.cwd()).resolve()
+    paths = AlloyPaths.resolve(root, project=repo_path).ensure()
+    Store(paths.alloy_db)
 
     report: dict[str, Any] = {
         "root": str(paths.root),
         "repo": str(repo_path),
-        "recipes": sorted(discover_recipes(paths.root, repo_path)),
+        "recipes": sorted(discover_recipes(paths.shared_root, repo_path)),
         "beads": "ok",
         "runners": {},
     }
@@ -156,7 +156,7 @@ def init(
         _emit(report, True)
         return
 
-    console.print(f"[bold]Alloy home[/bold]  {paths.root}")
+    console.print(f"[bold]Project state[/bold]  {paths.root}")
     console.print(f"[bold]Repository[/bold]  {repo_path}")
     console.print(f"[bold]Recipes[/bold]     {', '.join(report['recipes']) or '(none)'}")
     console.print(f"[bold]Beads[/bold]       {report['beads']}")
@@ -802,9 +802,9 @@ def recipes_command(
     recipe: Optional[str] = typer.Option(None, "--recipe", help="Limit to one recipe"),
 ) -> None:
     """List recipes, their configured roles, and whether those harnesses exist."""
-    paths = AlloyPaths.resolve(root)
     repo_path = (repo or Path.cwd()).resolve()
-    found = discover_recipes(paths.root, repo_path)
+    paths = AlloyPaths.resolve(root, project=repo_path)
+    found = discover_recipes(paths.shared_root, repo_path)
     if recipe is not None:
         if recipe not in found:
             _fail(f"unknown recipe: {recipe}")
@@ -817,7 +817,7 @@ def recipes_command(
         entry: dict[str, Any] = {"name": name, "config": str(path),
                                  "graph": name in recipes.REGISTRY}
         try:
-            config = load_recipe(name, alloy_root=paths.root, project=repo_path)
+            config = load_recipe(name, alloy_root=paths.shared_root, project=repo_path)
         except ConfigError as exc:
             entry["error"] = str(exc)
             entries.append(entry)

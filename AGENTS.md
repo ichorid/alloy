@@ -82,7 +82,7 @@ Never hand a whole feature to Alloy as one bead. Decompose first:
 ## Alloy commands
 
 ```bash
-alloy init [--repo PATH]              # one-time: create ~/.alloy, register Beads statuses
+alloy init [--repo PATH]              # one-time: create <repo>/.alloy, register Beads statuses
 alloy recipes                         # list recipes, roles, runners, limits — check before running
 alloy run <bead-id> [--recipe NAME]   # run one bead to done / human-gate / failure
 alloy status [<bead-id>] --json       # what's running, stage, iteration count, tests
@@ -98,7 +98,7 @@ alloy limits [--json]                 # probe installed harness usage limits; re
 
 Ctrl-C or SIGTERM on `alloy run` stops the harness with it and leaves the run
 resumable (`alloy run <bead-id>` again picks it up). The detached scheduler
-logs to `~/.alloy/scheduler.log`.
+logs to `<repo>/.alloy/scheduler.log`.
 
 Roles can name a `fallback` runner in the recipe YAML (see `alloy recipes`):
 when the primary is missing, rate-limited or times out, the same prompt goes
@@ -263,8 +263,10 @@ child run id, outcome, reason) says which fixes landed and which did not.
 
 ## Agent skills
 
-Decomposition and day-to-day Alloy operation are spelled out in project skills
-(kept in sync between editors):
+Decomposition and day-to-day Alloy operation are documented in these guides.
+Codex and Claude must use them only when the user explicitly requests an Alloy
+skill or asks to drive work through Alloy; they are not automatically invoked
+for ordinary implementation requests.
 
 | Skill | Role |
 |-------|------|
@@ -272,7 +274,7 @@ Decomposition and day-to-day Alloy operation are spelled out in project skills
 | `alloy-manager` | Run, monitor, human gates, review, merge |
 
 - **Cursor:** `.cursor/skills/<name>/SKILL.md`
-- **Claude Code:** `.claude/skills/<name>/SKILL.md`
+- **Codex and Claude Code:** `docs/agent-skills/<name>/SKILL.md` (manual reference)
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:46cd31e7 -->
 ## Beads Issue Tracker

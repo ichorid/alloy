@@ -73,8 +73,8 @@ class Engine:
 
     @classmethod
     def open(cls, repo: Path | str, root: Path | str | None = None) -> "Engine":
-        paths = AlloyPaths.resolve(root).ensure()
         repo = Path(repo).resolve()
+        paths = AlloyPaths.resolve(root, project=repo).ensure()
         return cls(
             repo=repo,
             paths=paths,
@@ -426,7 +426,7 @@ class Engine:
     # -- graph plumbing ---------------------------------------------------
 
     def load_config(self, name: str) -> RecipeConfig:
-        return load_recipe(name, alloy_root=self.paths.root, project=self.repo)
+        return load_recipe(name, alloy_root=self.paths.shared_root, project=self.repo)
 
     def build_context(
         self, bead: Bead, recipe_name: str, *, run_id: str, checkpointer: Any,
@@ -748,4 +748,3 @@ def _interrupt_payload(pending: Any) -> dict[str, Any]:
 
 def _pid_alive(pid: int | None) -> bool:
     return pid_alive(pid)
-

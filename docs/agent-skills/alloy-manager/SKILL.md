@@ -20,7 +20,7 @@ that fails halfway through a missing runner wastes the bead's iteration
 budget for nothing:
 
 ```bash
-alloy init --repo <path>     # idempotent; creates ~/.alloy, registers Beads statuses
+alloy init --repo <path>     # idempotent; creates <path>/.alloy, registers Beads statuses
 alloy recipes                # confirm the recipe resolves and required runner CLIs exist
 ```
 
