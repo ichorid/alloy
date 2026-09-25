@@ -451,6 +451,7 @@ def limits_lines(
     snapshot: dict[str, Any],
     mode: str | None = None,
     width: int | None = None,
+    usage_style: str = "remaining",
 ) -> list[str]:
     """One line per harness in HARNESSES order; empty when top-level limits is {}.
 
@@ -460,10 +461,22 @@ def limits_lines(
     limits = snapshot.get("limits") or {}
     if not limits:
         return []
+    reset_width = max(
+        (
+            len(suffix) + 2
+            for sample in limits.values()
+            for win in (sample.get("windows") or [])
+            if (suffix := _reset_suffix(win.get("label"), win.get("resets_at")))
+        ),
+        default=0,
+    )
     lines: list[str] = []
     for harness in HARNESSES:
         if harness in limits:
-            lines.extend(_limits_line(harness, limits[harness], mode=mode, width=width))
+            lines.extend(_limits_line(
+                harness, limits[harness], mode=mode, width=width,
+                usage_style=usage_style, reset_width=reset_width,
+            ))
     return lines
 
 
@@ -478,6 +491,8 @@ def _limits_line(
     *,
     mode: str | None = None,
     width: int | None = None,
+    usage_style: str = "remaining",
+    reset_width: int = 0,
 ) -> list[str]:
     label = _limits_harness_label(harness)
     styled = mode in ("nerd", "unicode")
@@ -494,7 +509,10 @@ def _limits_line(
         return [line]
     windows = sample.get("windows") or []
     segments = [
-        _limits_window_segment(win, align_bar=index < LIMITS_ALIGNED_WINDOW_COUNT, mode=mode)
+        _limits_window_segment(
+            win, align_bar=True, mode=mode,
+            usage_style=usage_style, reset_width=reset_width,
+        )
         for index, win in enumerate(windows)
     ]
     wrap = styled and width is not None and width < WIDE_WIDTH and len(segments) > 1
@@ -519,6 +537,11 @@ def _usage_color(percent: int) -> str:
     if percent >= 50:
         return _COLOR_YELLOW
     return _COLOR_GREEN
+
+
+def _display_usage_percent(win: dict[str, Any], usage_style: str) -> int:
+    used = int(win["used_percent"])
+    return 100 - used if usage_style == "remaining" else used
 
 
 _EIGHTH_BLOCKS = "▏▎▍▌▋▊▉"
@@ -554,16 +577,30 @@ def _limits_window_segment(
     *,
     align_bar: bool = False,
     mode: str | None = None,
+    usage_style: str = "remaining",
+    reset_width: int = 0,
 ) -> str:
-    percent = int(win["used_percent"])
-    color = _usage_color(percent)
+    used = int(win["used_percent"])
+    percent = 100 - used if usage_style == "remaining" else used
+    color = _usage_color(used)
     head = _limits_window_head(win["label"], percent, align_bar=align_bar)
     segment = f"[{color}]{head} {_usage_bar(percent, mode)}[/]"
     styled = mode in ("nerd", "unicode")
-    if styled and percent >= 80:
-        segment += f" {icon('warn', mode)}"
+    warning = styled and used >= 80
+    if styled:
+        warning_icon = icon("warn", mode) if warning else " "
+        segment += f" {warning_icon}"
     reset_suffix = _reset_suffix(win.get("label"), win.get("resets_at"))
-    if reset_suffix:
+    if reset_width:
+        reset = ""
+        if reset_suffix:
+            if styled:
+                glyph = icon("clock" if ":" in reset_suffix else "calendar", mode)
+                reset = f"{glyph} {reset_suffix}"
+            else:
+                reset = f"({reset_suffix})"
+        segment += f" {reset:>{reset_width}}"
+    elif reset_suffix:
         if styled:
             glyph = icon("clock" if ":" in reset_suffix else "calendar", mode)  # HH:MM vs "Sep 25"
             segment += f" {glyph} {reset_suffix}"
@@ -794,14 +831,16 @@ def _token_table(tokens_by_role: dict[str, Any], indent: str = "") -> list[str]:
     return lines
 
 
-def _models_table(entries: list[dict[str, Any]], indent: str = "") -> list[str]:
+def _models_table(
+    entries: list[dict[str, Any]], indent: str = "", usage_style: str = "remaining"
+) -> list[str]:
     """Aligned models-used table: model, calls, tokens, then limit windows."""
     rows = []
     for entry in entries:
         runner, model = entry.get("runner"), entry.get("model")
         label = f"{runner}:{model}" if model else _text(runner)
         windows = "  ".join(
-            f"{win['label']} {int(win['used_percent'])}%"
+            f"{win['label']} {_display_usage_percent(win, usage_style)}%"
             for win in (entry.get("windows") or {}).values()
         )
         rows.append((label, str(entry.get("calls", 0)), _text(entry.get("total_tokens")), windows))
@@ -824,11 +863,12 @@ def format_detail(
     log_dir: str | None = None,
     *,
     mode: str | None = None,
+    usage_style: str = "remaining",
 ) -> str:
     """Render detail pane text: two columns at comfortable width, stacked below."""
     if mode in ("nerd", "unicode"):
-        return _format_detail_styled(run, width, log_dir, mode)
-    lines = detail_lines(run, log_dir, mode=mode)
+        return _format_detail_styled(run, width, log_dir, mode, usage_style)
+    lines = detail_lines(run, log_dir, mode=mode, usage_style=usage_style)
     if width < COMFORTABLE_WIDTH:
         return "\n".join(lines)
     activity = [line for line in lines if not line.startswith(_METADATA_PREFIXES)]
@@ -851,8 +891,9 @@ def _format_detail_styled(
     width: int,
     log_dir: str | None,
     mode: str,
+    usage_style: str = "remaining",
 ) -> str:
-    left = _detail_left_column(run, mode)
+    left = _detail_left_column(run, mode, usage_style)
     right = _detail_right_column(run, log_dir, mode)
     if width < COMFORTABLE_WIDTH:
         return "\n".join(left + right)
@@ -869,7 +910,9 @@ def _format_detail_styled(
     return "\n".join(rows)
 
 
-def _detail_left_column(run: dict[str, Any], mode: str) -> list[str]:
+def _detail_left_column(
+    run: dict[str, Any], mode: str, usage_style: str = "remaining"
+) -> list[str]:
     lines: list[str] = []
     for call in run.get("current_calls") or []:
         requested = _runner(call.get("requested_runner"), call.get("requested_model"))
@@ -889,7 +932,7 @@ def _detail_left_column(run: dict[str, Any], mode: str) -> list[str]:
     models = run.get("models_used") or []
     if models:
         lines.append(f"{icon('complexity', mode)} models used")
-        lines.extend(_models_table(models, indent="   "))
+        lines.extend(_models_table(models, indent="   ", usage_style=usage_style))
     return lines
 
 
@@ -924,6 +967,7 @@ def detail_lines(
     log_dir: str | None = None,
     *,
     mode: str | None = None,
+    usage_style: str = "remaining",
 ) -> list[str]:
     """Selected-run detail pane: in-flight calls, raw vs effective judge, per-role tokens, paths.
 
@@ -947,7 +991,7 @@ def detail_lines(
     models = run.get("models_used") or []
     if models:
         lines.append("models used:")
-        lines.extend(_models_table(models, indent="  "))
+        lines.extend(_models_table(models, indent="  ", usage_style=usage_style))
     lines.append(f"bead: {_text(run.get('bead_id'))}")
     lines.append(f"worktree: {_text(run.get('worktree'))}")
     lines.append(f"branch: {_text(run.get('branch'))}")
@@ -961,7 +1005,7 @@ def _runner(runner: Any, model: Any) -> str:
     return f"{_text(runner)}:{model}" if model else _text(runner)
 
 
-def _models_used_line(entry: dict[str, Any]) -> str:
+def _models_used_line(entry: dict[str, Any], usage_style: str = "remaining") -> str:
     runner = entry.get("runner")
     model = entry.get("model")
     label = f"{runner}:{model}" if model else _text(runner)
@@ -971,7 +1015,7 @@ def _models_used_line(entry: dict[str, Any]) -> str:
         f"tokens {_text(entry.get('total_tokens'))}",
     ]
     window_parts = [
-        f"{win['label']} {int(win['used_percent'])}%"
+        f"{win['label']} {_display_usage_percent(win, usage_style)}%"
         for win in (entry.get("windows") or {}).values()
     ]
     line = "  ".join(parts)

@@ -487,8 +487,8 @@ async def test_limits_widget_shows_probed_percent_after_mount():
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert "77%" in _limits_text(app)
-        assert "42%" not in _limits_text(app)
+        assert "23%" in _limits_text(app)
+        assert "58%" not in _limits_text(app)
         assert app.query_one("#limits", Static).display is True
 
 
@@ -519,12 +519,12 @@ async def test_a_raising_limits_source_leaves_the_previous_limits_text_unchanged
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert "55%" in _limits_text(app)
+        assert "45%" in _limits_text(app)
 
         worker = app.refresh_limits()
         await worker.wait()
         await pilot.pause()
-        assert "55%" in _limits_text(app)
+        assert "45%" in _limits_text(app)
 
         app.apply_snapshot(refreshed)
         await pilot.pause()
@@ -566,12 +566,12 @@ async def test_unavailable_limits_probe_keeps_previous_available_sample():
     )
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert "42%" in _limits_text(app)
+        assert "58%" in _limits_text(app)
 
         worker = app.refresh_limits()
         await worker.wait()
         await pilot.pause()
-        assert "42%" in _limits_text(app)
+        assert "58%" in _limits_text(app)
         assert "unavailable" not in _limits_text(app)
 
 
@@ -600,7 +600,7 @@ async def test_r_key_refreshes_snapshot_and_reprobes_limits():
         await pilot.pause()
         assert snapshot_calls == 1
         assert limits_calls == 1
-        assert "56%" in _limits_text(app)
+        assert "44%" in _limits_text(app)
 
         await pilot.press("r")
         for worker in list(app.workers):
@@ -609,7 +609,7 @@ async def test_r_key_refreshes_snapshot_and_reprobes_limits():
 
         assert snapshot_calls == 2
         assert limits_calls == 2
-        assert "57%" in _limits_text(app)
+        assert "43%" in _limits_text(app)
 
 
 # -- CLI: `alloy monitor --once` (plain text, no --json) -----------------------
@@ -685,7 +685,7 @@ def test_cli_monitor_once_plain_text_prints_limits_lines_before_table_rows(
 
     assert result.exit_code == 0
     output = result.stdout
-    limits_pos = output.find("42%")
+    limits_pos = output.find("58%")
     bead_pos = output.find(bead_id)
     assert limits_pos != -1
     assert bead_pos != -1
@@ -699,6 +699,7 @@ def test_cli_monitor_help_lists_limits_interval_and_no_limits():
     assert result.exit_code == 0
     assert "--limits-interval" in result.stdout
     assert "--no-limits" in result.stdout
+    assert "--limits-style" in result.stdout
 
 
 def test_cli_monitor_once_no_limits_skips_probe_all(

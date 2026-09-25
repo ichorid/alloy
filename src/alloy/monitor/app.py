@@ -82,12 +82,16 @@ class MonitorApp(App[None]):
         interval: float = 1.0,
         limits_source: Callable[[], dict[str, Any]] | None = None,
         limits_interval: float = 60.0,
+        limits_style: str = "remaining",
     ) -> None:
         super().__init__()
         self.snapshot_source = snapshot_source
         self.interval = interval
         self.limits_source = limits_source
         self.limits_interval = limits_interval
+        if limits_style not in ("remaining", "spent"):
+            raise ValueError("limits_style must be 'remaining' or 'spent'")
+        self.limits_style = limits_style
         self._refresh_lock = threading.Lock()
         self._snapshot: dict[str, Any] | None = None
         self._probed_limits: dict[str, Any] | None = None
@@ -100,7 +104,7 @@ class MonitorApp(App[None]):
         stats.border_title = "STATS"
         yield stats
         limits = Static("", id="limits", markup=True)
-        limits.border_title = "LIMITS"
+        limits.border_title = f"LIMITS ({self.limits_style})"
         limits.display = False
         yield limits
         runs = DataTable(id="runs", cursor_type="row")
@@ -247,7 +251,10 @@ class MonitorApp(App[None]):
         if self._probed_limits:
             effective.update(self._probed_limits)
         mode = resolve_mode(interactive=True)
-        lines = limits_lines({"limits": effective}, mode=mode, width=self.size.width)
+        lines = limits_lines(
+            {"limits": effective}, mode=mode, width=self.size.width,
+            usage_style=self.limits_style,
+        )
         if not lines:
             limits_widget.display = False
             return
@@ -439,7 +446,9 @@ class MonitorApp(App[None]):
             return
         root = snapshot.get("root")
         log_dir = None if root is None else f"{root}/logs/{run['run_id']}"
-        detail.update(format_detail(run, table_width, log_dir, mode=mode))
+        detail.update(format_detail(
+            run, table_width, log_dir, mode=mode, usage_style=self.limits_style
+        ))
         detail.border_title = detail_panel_border_title(run)
         detail.border_subtitle = detail_panel_border_subtitle(run)
 

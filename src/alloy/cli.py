@@ -507,6 +507,10 @@ def monitor(
     limits_interval: float = typer.Option(
         60.0, "--limits-interval", help="Limits probe interval in seconds",
     ),
+    limits_style: str = typer.Option(
+        "remaining", "--limits-style",
+        help="Show harness capacity as remaining or spent",
+    ),
     no_limits: bool = typer.Option(False, "--no-limits", help="Skip limits probing"),
 ) -> None:
     """Live view of the scheduler, the queue and every active run.
@@ -514,6 +518,8 @@ def monitor(
     `--once --json` prints a single snapshot (the frozen shape from
     docs/plans/execution-monitor.md) and exits; `--once` alone prints it as a
     plain table; the interactive Textual view is the default without flags."""
+    if limits_style not in ("remaining", "spent"):
+        raise typer.BadParameter("must be 'remaining' or 'spent'", param_hint="--limits-style")
     engine = _engine(repo, root)
     if once and json:
         _emit(build_snapshot(engine), True)
@@ -522,7 +528,12 @@ def monitor(
         snapshot = build_snapshot(engine)
         mode = resolve_mode(interactive=False)
         console.print(header_line(snapshot, mode))
-        for line in limits_lines(snapshot, mode=mode, width=console.width):
+        rendered_limits = limits_lines(
+            snapshot, mode=mode, width=console.width, usage_style=limits_style,
+        )
+        if rendered_limits:
+            console.print(f"limits ({limits_style})")
+        for line in rendered_limits:
             console.print(line)
         table = Table(show_header=True, header_style="bold")
         for column in COLUMNS:
@@ -539,6 +550,7 @@ def monitor(
         interval=interval,
         limits_source=limits_source,
         limits_interval=limits_interval,
+        limits_style=limits_style,
     )
     app.run()
     # In-flight refresh workers (a bd call or the limits probe) are non-daemon

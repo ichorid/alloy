@@ -385,10 +385,10 @@ def test_limits_lines_renders_claude_windows_and_unavailable_codex():
     claude_line, codex_line = lines
     # Labels are padded to align the bars; compare on collapsed whitespace.
     claude_line = " ".join(claude_line.split())
-    assert claude_line.index("5h") < claude_line.index("weekly 61%")
-    assert claude_line.index("42%") < claude_line.index("weekly 61%")
-    assert claude_line.index("weekly 61%") < claude_line.index("weekly fable 12%")
-    assert claude_line.index("weekly fable 12%") < claude_line.index("weekly opus 80%")
+    assert claude_line.index("5h") < claude_line.index("weekly 39%")
+    assert claude_line.index("58%") < claude_line.index("weekly 39%")
+    assert claude_line.index("weekly 39%") < claude_line.index("weekly fable 88%")
+    assert claude_line.index("weekly fable 88%") < claude_line.index("weekly opus 20%")
     assert "unavailable: no local sample" in codex_line
     assert "[workspace_member_credits_depleted]" in codex_line
 
@@ -488,7 +488,7 @@ def test_limits_lines_cursor_cycle_from_probe_on_one_row(tmp_path: Path):
     assert len(lines) == 1
     line = " ".join(lines[0].split())
     assert "cycle" in line
-    assert "25%" in line or "24%" in line
+    assert "75%" in line or "76%" in line
     assert len(_usage_bar_indices(lines[0])) == 1
 
 
@@ -589,7 +589,7 @@ def test_limits_line_at_42_percent_renders_green_bracketed_bar():
 
     line = _claude_limits_line(window("five_hour", "5h", 42.0, None))
 
-    _assert_bracketed_usage_bar(line, 42, "#7ee787")
+    _assert_bracketed_usage_bar(line, 58, "#7ee787")
 
 
 def test_limits_line_at_71_percent_renders_yellow_bracketed_bar():
@@ -597,7 +597,7 @@ def test_limits_line_at_71_percent_renders_yellow_bracketed_bar():
 
     line = _claude_limits_line(window("five_hour", "5h", 71.0, None))
 
-    _assert_bracketed_usage_bar(line, 71, "#e3b341")
+    _assert_bracketed_usage_bar(line, 29, "#e3b341")
 
 
 def test_limits_line_at_92_percent_renders_red_bracketed_bar():
@@ -605,7 +605,7 @@ def test_limits_line_at_92_percent_renders_red_bracketed_bar():
 
     line = _claude_limits_line(window("five_hour", "5h", 92.0, None))
 
-    _assert_bracketed_usage_bar(line, 92, "#f85149")
+    _assert_bracketed_usage_bar(line, 8, "#f85149")
 
 
 def test_limits_line_stale_window_renders_stale_badge():
@@ -689,7 +689,7 @@ def test_limits_line_88_percent_nerd_has_warn_icon_and_contiguous_red_tag():
     line = limits_lines(snapshot, mode="nerd")[0]
 
     assert "\uf071" in line
-    _assert_contiguous_limits_color_segment(line, color="#f85149", percent=88)
+    _assert_contiguous_limits_color_segment(line, color="#f85149", percent=12)
 
 
 def test_limits_line_34_percent_nerd_has_no_warn_glyph():
@@ -932,7 +932,7 @@ def codex_home(tmp_path):
     return tmp_path / "home"
 
 
-def test_limits_lines_codex_rollout_shows_used_percent_with_compact_reset_suffix(
+def test_limits_lines_codex_rollout_shows_remaining_percent_with_compact_reset_suffix(
     codex_home,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -970,10 +970,10 @@ def test_limits_lines_codex_rollout_shows_used_percent_with_compact_reset_suffix
 
     line = limits_lines(snapshot)[0]
 
-    # The rollout's used_percent already is the consumed fraction (it grows with use).
+    # Default style is "remaining": the 53% used rollout window shows 47% left.
     assert sample["windows"][0]["used_percent"] == 53.0
-    assert "53%" in line
-    assert "47%" not in line
+    assert "47%" in line
+    assert "53%" not in line
     assert "resets" not in line
     assert "(05:32)" in line
 
