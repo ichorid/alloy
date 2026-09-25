@@ -16,7 +16,7 @@ import signal
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
@@ -27,12 +27,14 @@ from alloy.memory_schedule import (
     MEMORY_REVIEW_RECIPE, apply_review, dirty_instruction_files, embed_instruction_files,
     review_bead_for_note, review_due, review_plan, review_run_id,
 )
+from alloy.events import EVENT_STALLED
 from alloy.models import DEFAULT_RECIPE_KEY, EMBED_STALE_KEY, Outcome, ProjectMemory, utcnow
 from alloy.paths import AlloyPaths
-from alloy.store import RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN
+from alloy.store import _pid_alive, RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN
 from alloy.worktree import WorktreeError, WorktreeManager
 
 DEFAULT_POLL_SECONDS = 15.0
+DEFAULT_STALL_MINUTES = 30.0
 HUMAN_RESUME_MEMORY_PREFIX = "alloy:human:"
 
 log = logging.getLogger("alloy.scheduler")
@@ -50,12 +52,14 @@ class Scheduler:
     recipe_filter: str | None = None
     once: bool = False
     clock: Callable[[], datetime] = utcnow
+    stall_minutes: float = DEFAULT_STALL_MINUTES
     _stopping: bool = field(default=False, init=False)
     _cancel_requested: bool = field(default=False, init=False)
     _current: "asyncio.Task | None" = field(default=None, init=False)
     _default_recipe: str | None = field(default=None, init=False)
     _unknown_default_recipe: str | None = field(default=None, init=False)
     _epic_block_logged: set[str] = field(default_factory=set, init=False)
+    _stalled: set[str] = field(default_factory=set, init=False)
 
     # -- lifecycle --------------------------------------------------------
 
@@ -65,6 +69,7 @@ class Scheduler:
         self._install_signal_handlers()
         log.info("scheduler up (pid %d, poll %.0fs, repo %s)",
                  os.getpid(), self.poll_seconds, self.engine.repo)
+        watcher = None if self.once else asyncio.create_task(self._stall_watch())
         try:
             await self.recover()
             while not self._stopping:
@@ -74,9 +79,52 @@ class Scheduler:
                 if not started:
                     await self._sleep(self.poll_seconds)
         finally:
+            if watcher is not None:
+                watcher.cancel()
             self._finish_session()
             self._remove_pidfile()
             log.info("scheduler down")
+
+    async def _stall_watch(self) -> None:
+        """Runs beside `tick`, which blocks for the whole of a run."""
+        while True:
+            try:
+                self.check_stalls()
+            except Exception:
+                log.exception("stall check failed")
+            await asyncio.sleep(self.poll_seconds)
+
+    def check_stalls(self) -> list[str]:
+        """Announce each running run that has shown no sign of life for
+        `stall_minutes` (or whose process died). One event per stall: the run
+        is remembered until it moves again or ends, then may stall anew."""
+        if self.stall_minutes <= 0:
+            return []
+        store = self.engine.store
+        now = self.clock()
+        limit = timedelta(minutes=self.stall_minutes)
+        running = [r for r in store.active_runs(self.engine.repo) if r["status"] == RUN_RUNNING]
+        flagged: list[str] = []
+        current: set[str] = set()
+        for run in running:
+            idle = now - store.last_activity(run)
+            dead = not _pid_alive(run["pid"])
+            if idle < limit and not dead:
+                continue
+            current.add(run["run_id"])
+            if run["run_id"] in self._stalled:
+                continue
+            calls = store.active_calls(run["run_id"])
+            what = (f"agent call {calls[0]['role']} still running" if calls
+                    else f"stage {run.get('stage') or '?'}")
+            why = ("run process is gone" if dead
+                   else f"no activity for {int(idle.total_seconds() // 60)} min ({what})")
+            log.warning("%s: run %s stalled: %s", run["bead_id"], run["run_id"], why)
+            store.events.emit(EVENT_STALLED, bead=run["bead_id"], run=run["run_id"], reason=why,
+                              stage=run.get("stage"))
+            flagged.append(run["run_id"])
+        self._stalled = current
+        return flagged
 
     async def recover(self) -> list[str]:
         """Adopt runs whose process died -- the reboot-survival path."""
@@ -600,7 +648,8 @@ def signal_stop(pidfile: Path, *, now: bool = False) -> int | None:
 
 
 def spawn_detached(
-    repo: Path, root: Path | None, poll_seconds: float, *, log_file: Path | None = None
+    repo: Path, root: Path | None, poll_seconds: float, *, log_file: Path | None = None,
+    stall_minutes: float = DEFAULT_STALL_MINUTES,
 ) -> int:
     """Start `alloy start --foreground` as a background process.
 
@@ -610,6 +659,7 @@ def spawn_detached(
     argv = [
         sys.executable, "-m", "alloy.cli", "start", "--foreground",
         "--repo", str(repo), "--poll", str(poll_seconds),
+        "--stall-minutes", str(stall_minutes),
     ]
     if root:
         argv += ["--root", str(root)]

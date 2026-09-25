@@ -17,6 +17,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
+from alloy.events import (
+    EVENT_CANCELLED, EVENT_DONE, EVENT_FAILED, EVENT_NEEDS_HUMAN, EVENT_RESUMED, EventLog,
+)
 from alloy.limits import harness_for_runner
 from alloy.models import AgentCallRecord, AgentResult, utcnow
 from alloy.usage import normalize
@@ -95,6 +98,14 @@ RUN_WAITING_HUMAN = "waiting-human"
 RUN_DONE = "done"
 RUN_FAILED = "failed"
 RUN_CANCELLED = "cancelled"
+
+# A run entering one of these statuses is announced on the events feed.
+_STATUS_EVENTS = {
+    RUN_WAITING_HUMAN: EVENT_NEEDS_HUMAN,
+    RUN_FAILED: EVENT_FAILED,
+    RUN_DONE: EVENT_DONE,
+    RUN_CANCELLED: EVENT_CANCELLED,
+}
 
 TERMINAL_RUN_STATUSES = {RUN_DONE, RUN_FAILED, RUN_CANCELLED}
 
@@ -176,16 +187,38 @@ class Store:
                 ),
             )
 
-    def update_run(self, run_id: str, **fields: Any) -> None:
+    @property
+    def events(self) -> EventLog:
+        """The attention feed next to the database (see alloy.events)."""
+        return EventLog(self.path.parent / "events.jsonl")
+
+    def update_run(self, run_id: str, *, event_reason: str = "", **fields: Any) -> None:
         if not fields:
             return
         fields["updated_at"] = utcnow().isoformat()
         assignments = ", ".join(f"{key} = ?" for key in fields)
         with self.connect() as conn:
+            previous = None
+            if "status" in fields:
+                previous = conn.execute(
+                    "SELECT status, bead_id FROM runs WHERE run_id = ?", (run_id,)
+                ).fetchone()
             conn.execute(
                 f"UPDATE runs SET {assignments} WHERE run_id = ?",
                 (*fields.values(), run_id),
             )
+        if previous is not None and previous["status"] != fields["status"]:
+            self._announce(run_id, previous["bead_id"], previous["status"], fields["status"],
+                           event_reason)
+
+    def _announce(
+        self, run_id: str, bead_id: str, old: str, new: str, reason: str
+    ) -> None:
+        event = _STATUS_EVENTS.get(new)
+        if event is None and new == RUN_RUNNING and old == RUN_WAITING_HUMAN:
+            event = EVENT_RESUMED
+        if event is not None:
+            self.events.emit(event, bead=bead_id, run=run_id, reason=reason)
 
     def finish_run(self, run_id: str, *, status: str, outcome: str, reason: str = "") -> None:
         self.update_run(
@@ -195,6 +228,7 @@ class Store:
             outcome_reason=reason,
             ended_at=utcnow().isoformat(),
             pid=None,
+            event_reason=reason or outcome,
         )
         self.set_finished_runs_since_last_review(self.finished_runs_since_last_review() + 1)
 
@@ -298,6 +332,24 @@ class Store:
                 "SELECT * FROM runs WHERE parent_run_id = ? ORDER BY started_at", (run_id,)
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def last_activity(self, run: dict[str, Any]) -> datetime:
+        """Latest sign of life: a run update, a finished call or a started call."""
+        with self.connect() as conn:
+            ended = conn.execute(
+                "SELECT MAX(ended_at) AS t FROM agent_calls WHERE run_id = ?", (run["run_id"],)
+            ).fetchone()["t"]
+            started = conn.execute(
+                "SELECT MAX(started_at) AS t FROM inflight_calls WHERE run_id = ?",
+                (run["run_id"],),
+            ).fetchone()["t"]
+        stamps = []
+        for value in (run["updated_at"], ended, started):
+            try:
+                stamps.append(datetime.fromisoformat(value)) if value else None
+            except ValueError:
+                pass
+        return max(stamps)
 
     def orphaned_runs(self) -> list[dict[str, Any]]:
         """Runs marked running whose process is gone -- i.e. crash survivors.

@@ -38,6 +38,50 @@ t-a3f  status: implementing
 implementation, verification, judgement, consilium, the human gate — lives in a
 SQLite checkpoint, not on the bead.
 
+## Supervising Alloy without polling
+
+Alloy pushes; a supervising agent should not poll `alloy status`. Every time a
+run needs a human, fails, stalls, resumes, finishes or is cancelled, Alloy
+appends one JSON line to `~/.alloy/events.jsonl`, and `alloy events` reads it:
+
+```bash
+alloy events --follow --attention      # block; print one line per needs-human/failed/stalled event
+alloy events --since 1h                # catch up on what happened while you were away
+alloy events --follow --since 30m --json
+```
+
+| event         | meaning |
+|---------------|---------|
+| `needs-human` | the run parked at the human gate; the reason says what to decide (`alloy resume <bead> -m "..."`) |
+| `failed`      | the run ended failed; the worktree is kept |
+| `stalled`     | a running run showed no sign of life for `--stall-minutes` (default 30, `alloy start --stall-minutes 0` disables) or its process died |
+| `resumed`     | a parked run is running again |
+| `done`, `cancelled` | informational |
+
+Each line looks like `2026-09-25T10:04:11 needs-human alloy-x1 run=019f2c… <reason>`;
+`--json` gives `{"ts","event","bead","run","reason"}`. A stall is announced
+once, and again only if the run moves and then stalls anew. Activity means a
+run update or an agent call starting or finishing, so one harness call
+that legitimately runs longer than the threshold is reported too; raise
+`--stall-minutes` if yours do.
+
+### Instruction for a supervising agent
+
+> Supervise Alloy for this repo. Do not poll. Start `alloy events --follow
+> --attention` with the Monitor tool (persistent) and go idle; each stdout
+> line is one event that needs you. On start-up, and whenever you are restarted,
+> first run `alloy events --since 2h --attention` and `alloy status` once to
+> catch up on anything you missed. For each event: `needs-human` -- read the
+> reason, `bd show <bead>` and `alloy logs <bead>`, decide, then unblock with
+> `alloy resume <bead> -m "<guidance>"`; if the decision is genuinely the
+> owner's (product, security, spend), tell the owner instead of guessing.
+> `failed` -- inspect `alloy logs <bead>` and the worktree, then retry with
+> guidance, file a follow-up bead, or escalate. `stalled` -- check
+> `alloy status <bead>`; if the harness is hung, `alloy cancel <bead>` then
+> `alloy resume <bead>`; if the process died, restart `alloy start`. Ignore
+> `done`/`resumed`. If the Monitor stream ends, restart it. Never act on the
+> same event twice.
+
 ## Install
 
 ```bash
@@ -195,6 +239,7 @@ still across a run.
 ```
 ~/.alloy/
   alloy.db          runs + agent-call ledger
+  events.jsonl      attention feed: needs-human, failed, stalled, ...
   workflows.db      LangGraph checkpoints
   logs/<run_id>/    raw transcripts and test output
   worktrees/<bead>/ one isolated checkout per task
@@ -217,9 +262,10 @@ src/alloy/
   scheduler.py   poll, claim, run — no LLM
   procs.py       process-tree control: a stopped run takes its harness with it
   usage.py       one shape for every harness's token report
+  events.py      the attention feed (events.jsonl) behind `alloy events`
   store.py       runs, agent calls, in-flight calls — the ledger
   monitor/       snapshot.py (one read-only view), render.py, app.py (Textual)
-  cli.py         init/run/start/stop/status/monitor/resume/cancel/logs/recipes
+  cli.py         init/run/start/stop/status/events/monitor/resume/cancel/logs/recipes
 ```
 
 `docs/journal.md` records every surprise met while Alloy implemented its own

@@ -227,6 +227,10 @@ exists, and returns one of five labels:
 Every filed bug bead carries a `discovered-from` dependency on the bead whose
 run found it (it does not block that bead) and `alloy_discovered_in_run`
 metadata. `bd list --label alloy-bug` shows everything Alloy has filed;
+Supervising agents must not poll: stream `alloy events --follow --attention`
+(needs-human, failed, stalled; see README "Supervising Alloy without polling")
+and act per event. `alloy start --stall-minutes N` sets the stall threshold.
+
 `bd human list` is the review path for `needs-human` bugs -- resolve or
 dismiss the bug, then `alloy resume <bead-id>`. `needs-human` is the carve-out
 for architecture and product decisions (schema or public API changes,

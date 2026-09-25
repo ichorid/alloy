@@ -41,7 +41,8 @@ from alloy.monitor.icons import resolve_mode
 from alloy.monitor.render import COLUMNS, header_line, limits_lines, run_rows
 from alloy.paths import AlloyPaths
 from alloy.runners import BUILTIN, RunnerRegistry, RunnerUnavailable
-from alloy.scheduler import Scheduler, SchedulerBusy, read_pid, signal_stop, spawn_detached
+from alloy.events import ATTENTION_EVENTS, EventLog, format_line, parse_since
+from alloy.scheduler import DEFAULT_STALL_MINUTES, Scheduler, SchedulerBusy, read_pid, signal_stop, spawn_detached
 from alloy.store import Store
 from alloy.verify import check_logs, checks_summary
 
@@ -335,6 +336,10 @@ def start(
     repo: Optional[Path] = RepoOption,
     root: Optional[Path] = RootOption,
     poll: float = typer.Option(15.0, "--poll", help="Seconds between Beads polls"),
+    stall_minutes: float = typer.Option(
+        DEFAULT_STALL_MINUTES, "--stall-minutes",
+        help="Announce a running run with no activity for this long (0 disables)",
+    ),
     recipe: Optional[str] = typer.Option(None, "--recipe", help="Only run this recipe"),
     foreground: bool = typer.Option(False, "--foreground", help="Do not detach"),
 ) -> None:
@@ -344,17 +349,62 @@ def start(
         existing = read_pid(engine.paths.scheduler_pid)
         if existing:
             _fail(f"scheduler already running (pid {existing})")
-        pid = spawn_detached(engine.repo, engine.paths.root, poll,
+        pid = spawn_detached(engine.repo, engine.paths.root, poll, stall_minutes=stall_minutes,
                              log_file=engine.paths.scheduler_log)
         console.print(f"scheduler started (pid {pid}); log: {engine.paths.scheduler_log}")
         return
     _setup_logging()
-    scheduler = Scheduler(engine=engine, poll_seconds=poll, recipe_filter=recipe)
+    scheduler = Scheduler(engine=engine, poll_seconds=poll, recipe_filter=recipe,
+                          stall_minutes=stall_minutes)
     try:
         asyncio.run(scheduler.serve())
     except SchedulerBusy as exc:
         _fail(str(exc))
     except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+
+
+@app.command()
+def events(
+    root: Optional[Path] = RootOption,
+    follow: bool = typer.Option(False, "--follow", "-f", help="Stream new events as they happen"),
+    since: Optional[str] = typer.Option(
+        None, "--since", help="History from this far back (30m, 2h, 1d) or an ISO time"),
+    only: Optional[str] = typer.Option(
+        None, "--only", help="Comma-separated kinds: needs-human,failed,stalled,done,resumed,cancelled"),
+    attention: bool = typer.Option(
+        False, "--attention", help="Shortcut for --only needs-human,failed,stalled"),
+    json: bool = typer.Option(False, "--json", help="One JSON object per line"),
+) -> None:
+    """The attention feed: what needs a human, failed, stalled or finished.
+
+    Without flags, prints the whole history. `--follow` waits for new events
+    (add `--since 1h` to replay recent ones first), one line per event, so a
+    supervising agent can block on it instead of polling `alloy status`."""
+    paths = AlloyPaths.resolve(root)
+    log_ = EventLog(paths.root / "events.jsonl")
+    kinds = frozenset(k.strip() for k in only.split(",") if k.strip()) if only else None
+    if attention:
+        kinds = ATTENTION_EVENTS if kinds is None else kinds | ATTENTION_EVENTS
+    try:
+        start = parse_since(since) if since else None
+    except ValueError as exc:
+        _fail(str(exc))
+        return
+
+    def show(record: dict[str, Any]) -> None:
+        line = jsonlib.dumps(record, default=str) if json else format_line(record)
+        sys.stdout.write(line + "\n")
+        sys.stdout.flush()
+
+    if not follow:
+        for record in log_.read(since=start, only=kinds):
+            show(record)
+        return
+    try:
+        for record in log_.follow(since=start, only=kinds):
+            show(record)
+    except KeyboardInterrupt:
         pass
 
 

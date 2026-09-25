@@ -664,7 +664,8 @@ class Engine:
             payload = _interrupt_payload(pending)
             retry_at = payload.get("retry_at") or None
             self.store.update_run(run_id, status=RUN_WAITING_HUMAN, stage="waiting-human",
-                                  pid=None, retry_at=retry_at)
+                                  pid=None, retry_at=retry_at,
+                                  event_reason=str(payload.get("reason", "")))
             self.store.mark_paused(run_id)
             self.beads.set_status(bead.id, bd.STATUS_WAITING_HUMAN)
             self.beads.set_metadata(bead.id, {bd.META_STAGE: "waiting-human"})
