@@ -88,12 +88,21 @@ roles:
     # written: reads the task on its own, then checks the tests for missed
     # criteria, wrong readings, trivial passes. Advisory (a missing or failing
     # reviewer is skipped); up to verification.max_test_reviews rounds.
-    runner: codex-readonly
-    model: gpt-6-sol
-    timeout_minutes: 10
+    # A panel of two cheap reviewers runs in parallel and their issues are merged
+    # (an A/B over 11 finished beads showed each catches different problems).
+    # A member whose runner is missing or that fails just narrows the panel; only
+    # when no member answers does the role-level fallback (Sonnet, low effort) run.
+    panel:
+      - runner: cursor-plan
+        model: composer-2.5
+        timeout_minutes: 10
+      - runner: codex-readonly
+        model: gpt-6-luna
+        timeout_minutes: 10
     fallback:
       runner: claude
       model: sonnet
+      effort: low
       timeout_minutes: 10
 
   implement:

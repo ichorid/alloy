@@ -17,6 +17,7 @@ Two rules shape everything below:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import operator
 import re
@@ -1957,26 +1958,49 @@ def build_graph(ctx: RunContext):
         reviews = state.get("tests_reviews", 0) + 1
         ctx.set_stage("tests_review")
         update: dict[str, Any] = {"stage": "tests_review", "tests_reviews": reviews}
-        spec = _first_available(ctx.recipe.role("tests_review"))
-        if spec is None:
-            return update
-        failure = TestsReview(verdict="sound")
-        review = await classify(
-            ctx, "tests_review", spec,
-            tests_review_prompt(
-                ctx.bead.task_brief(), ctx.bead.acceptance_criteria,
-                state.get("context", {}), state.get("baseline") or [], ctx.diff(),
-                memory=state.get("memory_block", ""),
-            ),
-            model_cls=TestsReview, default=failure, iteration=0,
+        role_spec = ctx.recipe.role("tests_review")
+        prompt = tests_review_prompt(
+            ctx.bead.task_brief(), ctx.bead.acceptance_criteria,
+            state.get("context", {}), state.get("baseline") or [], ctx.diff(),
+            memory=state.get("memory_block", ""),
         )
-        if review is failure or review.verdict == "sound" or not review.issues:
+
+        async def review_with(spec: RoleSpec) -> TestsReview | None:
+            failure = TestsReview(verdict="sound")
+            review = await classify(
+                ctx, "tests_review", spec, prompt,
+                model_cls=TestsReview, default=failure, iteration=0,
+            )
+            return None if review is failure else review
+
+        members = [m for m in role_spec.panel if ctx.registry.available(m.runner)]
+        if members:
+            # A panel: every available member reviews independently. One member
+            # failing or missing just narrows it; only when none answers does the
+            # role's own fallback run.
+            answers = [r for r in await asyncio.gather(*(review_with(m) for m in members))
+                       if r is not None]
+            if not answers and role_spec.fallback is not None:
+                spec = _first_available(role_spec.fallback)
+                answers = [r for r in [await review_with(spec) if spec else None] if r]
+            issues = list(dict.fromkeys(
+                i for r in answers if r.verdict != "sound" for i in r.issues
+            ))
+        else:
+            spec = _first_available(role_spec) if not role_spec.panel else (
+                _first_available(role_spec.fallback) if role_spec.fallback else None
+            )
+            if spec is None:
+                return update
+            review = await review_with(spec)
+            issues = review.issues if review and review.verdict != "sound" else []
+        if not issues:
             return update
         update["instructions"] = (
             "An independent reviewer read your tests against the acceptance criteria and "
             "found problems. Fix them (or, if a point is wrong, keep the test and be sure "
             "it is right), then answer with the corrected baseline_checks:\n"
-            + "\n".join(f"- {issue}" for issue in review.issues)
+            + "\n".join(f"- {issue}" for issue in issues)
         )
         return update
 

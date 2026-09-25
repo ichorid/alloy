@@ -48,6 +48,10 @@ class RoleSpec:
     """Reasoning effort for this entry (claude ``--effort``, codex
     ``model_reasoning_effort``). Per entry, not a global default, so a tier can
     pair a cheap model with low effort and its fallback with high."""
+    panel: "tuple[RoleSpec, ...]" = ()
+    """Independent members that all run for this role (tests_review only). Each
+    is one whole RoleSpec; `fallback` then applies to the panel as a whole, used
+    only when no member produced a usable answer."""
 
     @property
     def timeout(self) -> timedelta:
@@ -77,6 +81,8 @@ class RoleSpec:
             if fallback_raw else None,
             tiered=bool(raw.get("tiered", False)),
             effort=effort,
+            panel=tuple(cls.parse(item, default_runner=default_runner)
+                        for item in (raw.get("panel") or [])),
         )
 
 

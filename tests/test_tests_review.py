@@ -119,3 +119,67 @@ async def test_tiered_tests_role_uses_the_complexity_tier_chain(
     assert final["outcome"] == "done"
     row = rows(harness, "tests")[0]
     assert (row["runner"], row["model"]) == ("cursor", "kimi-k3-high")
+
+
+def config_with_panel(*, fallback: bool = True):
+    config = config_with_review()
+    roles = dict(config.roles)
+    roles["tests_review"] = RoleSpec(
+        runner="claude",
+        panel=(
+            RoleSpec(runner="cursor-plan", model="composer-2.5"),
+            RoleSpec(runner="codex-readonly", model="gpt-6-luna"),
+        ),
+        fallback=RoleSpec(runner="claude", model="sonnet", effort="low") if fallback else None,
+    )
+    return replace(config, roles=roles)
+
+
+async def test_panel_merges_issues_from_every_member(project, alloy_home, fake_harnesses):
+    fake_harnesses.configure(script(tests_review=[
+        review_entry("revise", "issue from one member"),
+        review_entry("revise", "issue from the other", "issue from one member"),
+        review_entry("sound"),
+        review_entry("sound"),
+    ]))
+    harness, final = await run(project, alloy_home, config_with_panel(fallback=False))
+
+    assert final["outcome"] == "done"
+    runners = {c["runner"] for c in rows(harness, "tests_review")}
+    assert {"cursor-plan", "codex-readonly"} <= runners
+    assert len(rows(harness, "tests_review")) >= 2
+    assert len(rows(harness, "tests")) >= 2
+
+
+async def test_panel_runs_on_the_remaining_member_when_one_is_missing(
+    project, alloy_home, fake_harnesses
+):
+    fake_harnesses.remove("cursor-agent")
+    fake_harnesses.configure(script(tests_review=[
+        review_entry("revise", "only the codex member is left"),
+        review_entry("sound"),
+    ]))
+    harness, final = await run(project, alloy_home, config_with_panel())
+
+    assert final["outcome"] == "done"
+    reviews = rows(harness, "tests_review")
+    assert [c["runner"] for c in reviews] == ["codex-readonly", "codex-readonly"]
+    assert all(c["model"] == "gpt-6-luna" for c in reviews)
+    assert len([c for c in rows(harness, "tests") if c["ok"]]) == 2
+
+
+async def test_panel_falls_back_to_sonnet_low_when_every_member_is_missing(
+    project, alloy_home, fake_harnesses
+):
+    fake_harnesses.remove("cursor-agent")
+    fake_harnesses.remove("codex")
+    fake_harnesses.configure(script(tests_review=[
+        review_entry("revise", "fallback reviewer speaking"),
+        review_entry("sound"),
+    ]))
+    harness, final = await run(project, alloy_home, config_with_panel())
+
+    assert final["outcome"] == "done"
+    reviews = rows(harness, "tests_review")
+    assert [(c["runner"], c["model"]) for c in reviews] == [("claude", "sonnet")] * 2
+    assert len([c for c in rows(harness, "tests") if c["ok"]]) == 2
