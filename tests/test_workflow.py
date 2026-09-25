@@ -1033,6 +1033,35 @@ async def test_acceptance_verify_more_returns_to_verifier_with_reason(
     assert gate_reason in fake_harnesses.calls[second_verifier]["prompt"]
 
 
+async def test_verify_more_without_new_evidence_escalates_to_judge(
+    project, alloy_home, fake_harnesses
+):
+    """A verifier that stops without running anything cannot loop acceptance forever."""
+    fake_harnesses.configure(
+        acceptance_script(
+            acceptance=[acceptance_entry("verify_more", reason="unverifiable risk")] * 10,
+            verifier=[
+                verifier_run_entry(FULL_SUITE, kind="regression"),
+                verifier_stop_entry("first stop"),
+                verifier_stop_entry("nothing new to run"),
+                verifier_stop_entry("still nothing"),
+            ] + [verifier_stop_entry("still nothing")] * 6,
+            judge=[judge_entry("done")],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert len(fake_harnesses.calls_for("acceptance")) == 2
+    assert len(fake_harnesses.calls_for("judge")) == 1
+    assert final["outcome"] == "done"
+    second = fake_harnesses.calls_for("acceptance")[1]["prompt"]
+    assert "asked for more verification 1 time(s)" in second
+
+
 async def test_acceptance_repair_routes_to_implement_with_gate_reason(
     project, alloy_home, fake_harnesses
 ):

@@ -146,6 +146,8 @@ class TddState(TypedDict, total=False):
     last_instructions: str                     # what the last implement call was told
     pending_check: dict[str, Any] | None       # the VerifierAction run_check_step executes
     unrunnable_streak: int                     # consecutive checks that could not run
+    verify_more_at_checks: int | None          # len(checks) when acceptance last said verify_more
+    verify_more_declined: int                  # verify_more rounds asked this iteration
     verify_route: str | None                   # where verifier_step / run_check_step sent the run
     acceptance: dict[str, Any] | None          # the AcceptanceVerdict after post-processing
     acceptance_route: str | None               # where acceptance_gate sent the run
@@ -720,15 +722,23 @@ def acceptance_prompt(
     changed_tests: list[str],
     checks_this_iteration: list[dict[str, Any]],
     verifier_stop: dict[str, Any] | None,
+    declined: int = 0,
 ) -> str:
     task = f"## Acceptance criteria\n{acceptance or '(none stated)'}"
+    prior = ""
+    if declined:
+        prior = (
+            f"\n\n## Earlier rounds\nYou already asked for more verification {declined} "
+            "time(s) and the verifier ran no new check: it judged that re-running would "
+            "not change the evidence. Do not ask again for something no command can settle."
+        )
     volatile = f"""{_diff_section(diff)}
 
 ## Tests changed by the implementer
 {chr(10).join(changed_tests) or "(none)"}
 
 ## Check evidence (this iteration)
-{_render_results(checks_this_iteration, verifier_stop)}"""
+{_render_results(checks_this_iteration, verifier_stop)}{prior}"""
     return assemble(ACCEPTANCE_STATIC, "", "", task, volatile).text
 
 
@@ -745,7 +755,8 @@ Answer with the structured output. Either:
   sends the task straight back to the implementer after a single-check run; after a multi-check
   batch it waits for your stop action. A red optional check is only reported to you.
 - action "stop": when the evidence is sufficient. Give the reason and list the
-  remaining_risks you could not check.
+  remaining_risks: only risks that a shell command could check and you did not run.
+  Leave out out-of-scope work and concerns no command can settle.
 
 Prefer the most targeted check that would move the evidence: the tests written for
 this task first, then what the diff could have broken, then the wider suite, lint or
@@ -1547,6 +1558,7 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
             ctx, "acceptance", spec,
             acceptance_prompt(
                 ctx.bead.acceptance_criteria, ctx.diff(), changed_tests, checks, stop_raw,
+                declined=int(state.get("verify_more_declined", 0) or 0),
             ),
             model_cls=AcceptanceVerdict,
             default=AcceptanceVerdict(decision="escalate", reason="acceptance role failed"),
@@ -1566,6 +1578,30 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
                 reason=f"{verdict.reason}; verifier check budget exhausted",
                 confidence=verdict.confidence,
             )
+
+        # The acceptance <-> verifier cycle never passes through guard, so the run's
+        # own budgets and a stalled cycle (verify_more with no new evidence) are
+        # enforced here.
+        n_checks = len(state.get("checks") or [])
+        declined = int(state.get("verify_more_declined", 0) or 0)
+        if verdict.decision == "verify_more":
+            breach = ctx.check_limits(state)
+            if breach:
+                return {
+                    "stage": "acceptance",
+                    "acceptance": verdict.model_dump(),
+                    "acceptance_route": "guard",
+                    "decision": JudgeDecision(
+                        decision="retry",
+                        reason=f"acceptance asked for more verification but {breach}",
+                    ).model_dump(),
+                }
+            if state.get("verify_more_at_checks") == n_checks:
+                verdict = AcceptanceVerdict(
+                    decision="escalate",
+                    reason=f"{verdict.reason}; verify_more produced no new evidence",
+                    confidence=verdict.confidence,
+                )
 
         update: dict[str, Any] = {"stage": "acceptance", "acceptance": verdict.model_dump()}
         risks = "; ".join(stop.remaining_risks) if stop and stop.remaining_risks else ""
@@ -1606,6 +1642,8 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
                 acceptance_route="verifier_step",
                 verifier_stop=None,
                 unrunnable_streak=0,
+                verify_more_at_checks=n_checks,
+                verify_more_declined=declined + 1,
                 instructions=instructions,
             )
         else:
@@ -1977,6 +2015,8 @@ def build_graph(ctx: RunContext):
             "iteration": iteration,
             "iteration_checks": 0,
             "unrunnable_streak": 0,
+            "verify_more_at_checks": None,
+            "verify_more_declined": 0,
             "last_instructions": state.get("instructions", ""),
             "stage": "implement",
             "instructions": "",
@@ -2645,6 +2685,8 @@ def initial_state(ctx: RunContext) -> TddState:
         verify_route=None,
         acceptance=None,
         acceptance_route=None,
+        verify_more_at_checks=None,
+        verify_more_declined=0,
         attempts=[],
         reported_bugs=[],
         triaged_titles=[],

@@ -11,7 +11,8 @@ Answer with the structured output. Either:
   sends the task straight back to the implementer after a single-check run; after a multi-check
   batch it waits for your stop action. A red optional check is only reported to you.
 - action "stop": when the evidence is sufficient. Give the reason and list the
-  remaining_risks you could not check.
+  remaining_risks: only risks that a shell command could check and you did not run.
+  Leave out out-of-scope work and concerns no command can settle.
 
 Prefer the most targeted check that would move the evidence: the tests written for
 this task first, then what the diff could have broken, then the wider suite, lint or
