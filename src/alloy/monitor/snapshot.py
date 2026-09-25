@@ -34,6 +34,21 @@ LIFETIME_STATUSES = (RUN_DONE, RUN_FAILED, RUN_CANCELLED)
 
 
 SLOW_TTL_S = 5.0  # bead tree and memories change rarely; the runs table refreshes every second
+SUMMARY_SNIPPET_LEN = 80
+
+
+def _bead_summary(title: str | None, description: str | None) -> str | None:
+    """The bead's title, or else a leading snippet of its description."""
+    title = (title or "").strip()
+    if title:
+        return title
+    description = (description or "").strip()
+    if not description:
+        return None
+    snippet = description.splitlines()[0].strip() or description
+    if len(snippet) > SUMMARY_SNIPPET_LEN:
+        snippet = snippet[:SUMMARY_SNIPPET_LEN].rstrip() + "…"
+    return snippet
 
 
 def _slow_cached(beads: Any, name: str, fetch: Callable[[], Any]) -> Any:
@@ -125,12 +140,20 @@ class _BeadIndex:
             if bd._parent_id(r) == parent_id
         ]
 
-    def title(self, bead_id: str) -> str | None:
+    def summary(self, bead_id: str) -> str | None:
+        """The bead's title, or a snippet of its description when it has none."""
         if self.rows is None:
-            bead = self._beads.show(bead_id)
-            return bead.title if bead else None
+            try:
+                bead = self._beads.show(bead_id)
+            except (bd.BeadsError, OSError):
+                return None
+            if bead is None:
+                return None
+            return _bead_summary(bead.title, bead.description)
         row = self.rows.get(bead_id)
-        return row.get("title") if row else None
+        if row is None:
+            return None
+        return _bead_summary(row.get("title"), row.get("description"))
 
 
 def build_snapshot(engine: Engine) -> dict[str, Any]:
@@ -241,7 +264,7 @@ def _build_queue(prefetch: _Prefetch, index: _BeadIndex) -> dict[str, Any]:
     ready = [
         {
             "bead_id": bead.id,
-            "title": bead.title,
+            "title": _bead_summary(bead.title, bead.description),
             "recipe": bead.recipe or default_recipe,
             "priority": bead.priority,
             "complexity": bead.complexity_override,
@@ -252,7 +275,7 @@ def _build_queue(prefetch: _Prefetch, index: _BeadIndex) -> dict[str, Any]:
     blocked = [
         {
             "bead_id": bead.id,
-            "title": bead.title,
+            "title": _bead_summary(bead.title, bead.description),
             "blocked_by": list(bead.blocked_by),
             "epic_id": index.epic_for(bead.id),
         }
@@ -280,7 +303,7 @@ def _epics(
             entries.append(
                 {
                     "epic_id": epic_id,
-                    "title": index.title(epic_id),
+                    "title": index.summary(epic_id),
                     "total": len(children),
                     "done": len(done_ids),
                     "done_ids": done_ids,
@@ -342,6 +365,7 @@ def _run_entry(
         "worktree": record["worktree"],
         "branch": record["branch"],
         "epic_id": index.epic_for(record["bead_id"]),
+        "title": index.summary(record["bead_id"]),
     }
 
 

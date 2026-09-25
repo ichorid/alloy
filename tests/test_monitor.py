@@ -54,7 +54,7 @@ RUN_ENTRY_KEYS = {
     "bead_id", "run_id", "recipe", "status", "stage", "iteration", "max_iterations",
     "consiliums", "max_consiliums", "tests_summary", "checks", "elapsed_minutes",
     "current_calls", "tokens", "tokens_by_role", "judge", "worktree", "branch",
-    "parent_run_id", "parent_bead_id", "complexity", "models_used", "epic_id",
+    "parent_run_id", "parent_bead_id", "complexity", "models_used", "epic_id", "title",
 }
 CURRENT_CALL_KEYS = {
     "role", "requested_runner", "effective_runner", "requested_model",
@@ -223,6 +223,56 @@ def test_freshly_initialized_alloy_home_does_not_raise(project, alloy_home):
     snapshot = build_snapshot(engine)
 
     assert snapshot["runs"] == []
+
+
+# -- run entry title falls back to a description snippet --------------------
+
+
+def _run_with_bead(engine: Engine, run_id: str, bead_id: str) -> None:
+    engine.store.create_run(
+        run_id=run_id, bead_id=bead_id, thread_id=run_id, recipe="tdd-loop",
+        repo=engine.repo, worktree=None, branch=None, log_dir=None,
+    )
+    engine.store.update_run(run_id, status=RUN_RUNNING, pid=os.getpid())
+
+
+def test_run_entry_title_uses_bead_title_when_present(project, alloy_home):
+    bead_id = "bead-run-titled"
+    beads = FakeBeads(shows={
+        bead_id: bd.Bead(id=bead_id, title="Fix the thing", description="Longer story."),
+    })
+    engine = _engine(project, alloy_home, beads=beads)
+    _run_with_bead(engine, "run-titled", bead_id)
+
+    run = build_snapshot(engine)["runs"][0]
+
+    assert run["title"] == "Fix the thing"
+
+
+def test_run_entry_title_falls_back_to_description_snippet_when_title_is_blank(
+    project, alloy_home,
+):
+    bead_id = "bead-run-untitled"
+    beads = FakeBeads(shows={
+        bead_id: bd.Bead(id=bead_id, title="", description="Fix the flaky retry loop.\nMore detail."),
+    })
+    engine = _engine(project, alloy_home, beads=beads)
+    _run_with_bead(engine, "run-untitled", bead_id)
+
+    run = build_snapshot(engine)["runs"][0]
+
+    assert run["title"] == "Fix the flaky retry loop."
+
+
+def test_run_entry_title_is_none_when_bead_has_no_title_or_description(project, alloy_home):
+    bead_id = "bead-run-empty"
+    beads = FakeBeads(shows={bead_id: bd.Bead(id=bead_id, title="", description="")})
+    engine = _engine(project, alloy_home, beads=beads)
+    _run_with_bead(engine, "run-empty", bead_id)
+
+    run = build_snapshot(engine)["runs"][0]
+
+    assert run["title"] is None
 
 
 # -- shape of a run entry ----------------------------------------------------

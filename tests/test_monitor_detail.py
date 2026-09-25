@@ -17,7 +17,7 @@ from alloy.monitor.render import COMFORTABLE_WIDTH, detail_lines
 
 DISABLED_INTERVAL = 1000.0
 
-_METADATA_PREFIXES = ("bead:", "worktree:", "branch:", "logs:")
+_METADATA_PREFIXES = ("bead:", "branch:")
 
 EMPTY_TOKENS = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
 
@@ -243,15 +243,19 @@ def test_detail_lines_models_used_with_empty_windows_has_no_percent():
 # -- worktree / branch --------------------------------------------------------
 
 
-def test_worktree_and_branch_appear_in_the_detail_lines():
-    lines = detail_lines(_run(
-        worktree="/home/vader/.alloy/worktrees/alloy-a1b2",
-        branch="alloy/alloy-a1b2",
-    ))
+def test_branch_appears_but_worktree_and_logs_do_not_in_the_detail_lines():
+    lines = detail_lines(
+        _run(
+            worktree="/home/vader/.alloy/worktrees/alloy-a1b2",
+            branch="alloy/alloy-a1b2",
+        ),
+        "/home/vader/.alloy/logs/run-1",
+    )
 
     text = "\n".join(lines)
-    assert "/home/vader/.alloy/worktrees/alloy-a1b2" in text
     assert "alloy/alloy-a1b2" in text
+    assert "/home/vader/.alloy/worktrees/alloy-a1b2" not in text
+    assert "/home/vader/.alloy/logs/run-1" not in text
 
 
 # -- responsive layout (alloy-o89.5) ------------------------------------------
@@ -459,7 +463,6 @@ _ASCII_DETAIL_FIXTURES: dict[str, tuple[dict, list[str]]] = {
         _run(),
         [
             "bead: alloy-a1b2",
-            "worktree: /home/vader/.alloy/worktrees/alloy-a1b2",
             "branch: alloy/alloy-a1b2",
         ],
     ),
@@ -479,7 +482,6 @@ _ASCII_DETAIL_FIXTURES: dict[str, tuple[dict, list[str]]] = {
             "implement: astra -> codex (42s)",
             "critic: claude -> cursor (3s)",
             "bead: alloy-a1b2",
-            "worktree: /home/vader/.alloy/worktrees/alloy-a1b2",
             "branch: alloy/alloy-a1b2",
         ],
     ),
@@ -506,7 +508,6 @@ _ASCII_DETAIL_FIXTURES: dict[str, tuple[dict, list[str]]] = {
             "  implement    150    100     50  " + "█" * 8,
             "  critic        30     20     10  " + "█" * 2,
             "bead: alloy-a1b2",
-            "worktree: /home/vader/.alloy/worktrees/alloy-a1b2",
             "branch: alloy/alloy-a1b2",
         ],
     ),
@@ -519,7 +520,6 @@ _ASCII_DETAIL_FIXTURES: dict[str, tuple[dict, list[str]]] = {
             "  role       total     in    out  share",
             "  implement    150    100     50  " + "█" * 8,
             "bead: alloy-a1b2",
-            "worktree: /home/vader/.alloy/worktrees/alloy-detail-layout",
             "branch: alloy/alloy-detail-layout",
         ],
     ),
@@ -531,7 +531,7 @@ def test_detail_lines_ascii_matches_existing_fixture_output():
     for name, (run, expected_prefix) in _ASCII_DETAIL_FIXTURES.items():
         lines = detail_lines(run, log_dir, mode="ascii")
         assert lines[: len(expected_prefix)] == expected_prefix, name
-        assert lines[-2] == f"logs: {log_dir}", name
+        assert not any(line.startswith(("worktree", "logs")) for line in lines), name
 
 
 def test_format_detail_nerd_per_role_token_bars_scale_to_largest_role():
@@ -554,7 +554,7 @@ def test_format_detail_nerd_per_role_token_bars_scale_to_largest_role():
     assert context_bar == 0
 
 
-def test_format_detail_nerd_right_column_labels_worktree_branch_logs():
+def test_format_detail_nerd_right_column_labels_branch_but_not_worktree_or_logs():
     from alloy.monitor.render import format_detail
 
     run = _nerd_detail_run()
@@ -562,9 +562,9 @@ def test_format_detail_nerd_right_column_labels_worktree_branch_logs():
     text = format_detail(run, 100, log_dir, mode="nerd")
 
     rights = _right_column_segments(text)
-    assert any(segment.startswith("worktree") for segment in rights)
     assert any(segment.startswith("branch") for segment in rights)
-    assert any(segment.startswith("logs") for segment in rights)
+    assert not any(segment.startswith("worktree") for segment in rights)
+    assert not any(segment.startswith("logs") for segment in rights)
 
 
 def test_format_detail_nerd_at_width_80_uses_two_columns():

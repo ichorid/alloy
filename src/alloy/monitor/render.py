@@ -740,7 +740,7 @@ def _judge(judge: dict[str, Any] | None) -> str:
     return _text(effective if effective is not None else raw)
 
 
-_METADATA_PREFIXES = ("bead:", "worktree:", "branch:", "logs:")
+_METADATA_PREFIXES = ("bead:", "branch:")
 
 _DETAIL_TOKEN_BAR_WIDTH = 8
 
@@ -970,10 +970,7 @@ def _detail_right_column(run: dict[str, Any], log_dir: str | None, mode: str) ->
         estimated = run.get("complexity_estimated")
         suffix = " (est.)" if estimated else ""
         lines.append(f"cx  {bar} {complexity}{suffix}")
-    lines.append(f"worktree {_text(run.get('worktree'))}")
     lines.append(f"branch {_text(run.get('branch'))}")
-    if log_dir is not None:
-        lines.append(f"logs {log_dir}")
     parent = run.get("parent_id") or run.get("epic_id")
     if parent:
         lines.append(f"parent {_text(parent)}")
@@ -1019,10 +1016,7 @@ def detail_lines(
         lines.append("models used:")
         lines.extend(_models_table(models, indent="  ", usage_style=usage_style))
     lines.append(f"bead: {_text(run.get('bead_id'))}")
-    lines.append(f"worktree: {_text(run.get('worktree'))}")
     lines.append(f"branch: {_text(run.get('branch'))}")
-    if log_dir is not None:
-        lines.append(f"logs: {log_dir}")
     lines.append(f"title: {_text(run.get('title'))}")
     return lines
 
