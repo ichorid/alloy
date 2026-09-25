@@ -21,6 +21,7 @@ from textual.widgets import DataTable, Footer, Header, Static
 
 from alloy.monitor.icons import icon, resolve_mode
 from alloy.monitor.render import (
+    activity_line,
     column_align,
     detail_panel_border_subtitle,
     detail_panel_border_subtitle_epic,
@@ -103,6 +104,9 @@ class MonitorApp(App[None]):
         stats = Static("loading…", id="stats")
         stats.border_title = "STATS"
         yield stats
+        activity = Static("active model | action: none: idle", id="activity")
+        activity.border_title = "NOW"
+        yield activity
         limits = Static("", id="limits", markup=True)
         limits.border_title = f"LIMITS ({self.limits_style})"
         limits.display = False
@@ -203,6 +207,7 @@ class MonitorApp(App[None]):
         self.call_after_refresh(table.scroll_to, scroll_x, scroll_y, animate=False)
         self.title = title_line(snapshot, table_width, mode)
         self.query_one("#stats", Static).update(header_line(snapshot, mode))
+        self.query_one("#activity", Static).update(activity_line(snapshot))
         self._sync_panel_chrome(snapshot, mode)
         self._refresh_limits_widget()
         self._refresh_detail(width=table_width)

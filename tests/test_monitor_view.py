@@ -232,6 +232,21 @@ async def test_table_shows_one_row_per_run_after_first_refresh():
         assert _runs_table(app).row_count == 2
 
 
+async def test_activity_line_is_visible_in_live_view():
+    snapshot = _snapshot(runs=[_run("run-1")])
+    snapshot["auxiliary_calls"] = [
+        {"role": "memory_reviewer", "effective_model": "gpt-6-sol"}
+    ]
+    app = MonitorApp(snapshot_source=lambda: snapshot, interval=DISABLED_INTERVAL)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        activity = app.query_one("#activity", Static)
+        assert activity.display
+        assert "gpt-6-sol: reviewing repository memory" in str(
+            activity._Static__content
+        )
+
+
 async def test_zero_runs_renders_without_raising():
     app = MonitorApp(snapshot_source=lambda: ZERO_RUNS, interval=DISABLED_INTERVAL)
     async with app.run_test() as pilot:
@@ -632,6 +647,7 @@ def test_cli_monitor_once_plain_text_prints_header_and_one_row_per_run(
 
     assert result.exit_code == 0
     assert result.stdout.strip() != ""
+    assert "active model | action:" in result.stdout
 
 
 def test_cli_monitor_once_plain_text_with_no_runs_prints_header_without_raising(

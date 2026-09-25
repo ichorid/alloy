@@ -38,7 +38,7 @@ from alloy.limits import probe_all
 from alloy.monitor import build_snapshot
 from alloy.monitor.app import MonitorApp
 from alloy.monitor.icons import resolve_mode
-from alloy.monitor.render import COLUMNS, header_line, limits_lines, run_rows
+from alloy.monitor.render import COLUMNS, activity_line, header_line, limits_lines, run_rows
 from alloy.paths import AlloyPaths
 from alloy.runners import BUILTIN, RunnerRegistry, RunnerUnavailable
 from alloy.events import ATTENTION_EVENTS, EventLog, format_line, parse_since
@@ -535,6 +535,7 @@ def monitor(
             console.print(f"limits ({limits_style})")
         for line in rendered_limits:
             console.print(line)
+        console.print(activity_line(snapshot))
         table = Table(show_header=True, header_style="bold")
         for column in COLUMNS:
             table.add_column(column)

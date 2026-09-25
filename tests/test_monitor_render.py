@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from alloy.monitor.icons import icon
-from alloy.monitor.render import COLUMNS, header_line, run_rows
+from alloy.monitor.render import COLUMNS, activity_line, header_line, run_rows
 
 EMPTY_TOKENS = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
 WIDE_WIDTH = 100
@@ -299,6 +299,25 @@ def test_row_tokens_column_reflects_total_tokens_when_no_split_is_available():
 
 
 # -- header_line ----------------------------------------------------------
+
+
+def test_activity_line_shows_memory_review_and_run_stage():
+    snapshot = {
+        "auxiliary_calls": [{"role": "memory_reviewer", "effective_model": "gpt-6-sol"}],
+        "runs": [{"status": "running", "stage": "verify", "bead_id": "alloy-123",
+                  "current_calls": []}],
+    }
+    line = activity_line(snapshot)
+    assert "gpt-6-sol: reviewing repository memory" in line
+    assert "none: verify (alloy-123)" in line
+    assert activity_line({"runs": []}).endswith("none: idle")
+
+
+def test_activity_line_shows_model_on_running_bead():
+    line = activity_line({"runs": [{"status": "running", "stage": "implement",
+                                    "bead_id": "alloy-123", "current_calls": [
+                                        {"role": "implement", "effective_model": "sonnet"}]}]})
+    assert "sonnet: implement (alloy-123)" in line
 
 
 def test_header_line_reports_scheduler_not_running():

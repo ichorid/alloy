@@ -42,7 +42,7 @@ from support import make_harness
 
 TOP_LEVEL_KEYS = {
     "root", "repo", "scheduler", "ready_count", "ready_capped_at", "lifetime", "runs",
-    "limits", "session", "session_totals", "queue", "epics",
+    "limits", "session", "session_totals", "queue", "epics", "auxiliary_calls",
 }
 EPIC_ENTRY_KEYS = {
     "epic_id", "title", "total", "done", "done_ids", "running", "judge",
@@ -336,6 +336,17 @@ def test_run_with_an_in_flight_call_reports_requested_vs_effective(project, allo
     assert call["effective_runner"] == "codex"
     assert isinstance(call["elapsed_seconds"], (int, float))
     assert call["elapsed_seconds"] >= 0
+
+
+def test_repository_memory_review_call_is_visible_without_a_bead_run(project, alloy_home):
+    engine = _engine(project, alloy_home)
+    engine.store.start_call(
+        "memory-call", run_id="memory-review-test", bead_id="memory-review",
+        role="memory_reviewer", runner="codex", model="gpt-6-sol",
+    )
+    snapshot = build_snapshot(engine)
+    assert snapshot["auxiliary_calls"][0]["effective_model"] == "gpt-6-sol"
+    assert snapshot["auxiliary_calls"][0]["role"] == "memory_reviewer"
 
 
 async def test_judge_mismatch_when_the_guard_overrides_a_done_decision(

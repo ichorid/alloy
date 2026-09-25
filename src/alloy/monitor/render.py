@@ -79,6 +79,32 @@ def header_line(snapshot: dict[str, Any], mode: str | None = None) -> str:
     return _header_line_styled(snapshot, "unicode")
 
 
+def activity_line(snapshot: dict[str, Any]) -> str:
+    """Current model and action, including calls outside bead runs."""
+    activities: list[str] = []
+    for call in snapshot.get("auxiliary_calls") or []:
+        model = call.get("effective_model") or call.get("effective_runner") or "unknown"
+        action = (
+            "reviewing repository memory"
+            if call.get("role") == "memory_reviewer"
+            else str(call.get("role") or "working").replace("_", " ")
+        )
+        activities.append(f"{model}: {action}")
+    for run in snapshot.get("runs") or []:
+        if run.get("status") != "running":
+            continue
+        calls = run.get("current_calls") or []
+        if calls:
+            for call in calls:
+                model = call.get("effective_model") or call.get("effective_runner") or "unknown"
+                action = str(call.get("role") or run.get("stage") or "working").replace("_", " ")
+                activities.append(f"{model}: {action} ({run.get('bead_id')})")
+        else:
+            action = str(run.get("stage") or "working").replace("_", " ")
+            activities.append(f"none: {action} ({run.get('bead_id')})")
+    return "active model | action: " + ("; ".join(activities) if activities else "none: idle")
+
+
 def _header_line_ascii(snapshot: dict[str, Any]) -> str:
     scheduler = snapshot.get("scheduler") or {}
     if scheduler.get("running"):

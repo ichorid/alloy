@@ -7,6 +7,12 @@ Screen {
     border: round #2a3038;
     border-title-color: #79c0ff;
 }
+#activity {
+    background: #12161d;
+    border: round #2a3038;
+    border-title-color: #79c0ff;
+    height: 3;
+}
 
 #limits {
     background: #12161d;

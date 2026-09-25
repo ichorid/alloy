@@ -21,6 +21,7 @@ from alloy import beads as bd
 from alloy.config import ConfigError, RecipeConfig
 from alloy.engine import Engine
 from alloy.limits import installed_harnesses, read_cache, unavailable
+from alloy.memory_schedule import MEMORY_REVIEW_BEAD
 from alloy.models import DEFAULT_RECIPE_KEY
 from alloy.runners import RunnerRegistry
 from alloy.scheduler import read_pid, read_session
@@ -155,6 +156,11 @@ def build_snapshot(engine: Engine) -> dict[str, Any]:
     runs = [
         _run_entry(engine, record, limits, index) for record in active_records
     ] + [_run_entry(engine, record, limits, index) for record in finished_records]
+    auxiliary_calls = [
+        _call_entry(None, call, datetime.now(timezone.utc))
+        for call in engine.store.active_calls()
+        if call["bead_id"] == MEMORY_REVIEW_BEAD
+    ]
     return {
         "root": str(engine.paths.root),
         "repo": str(engine.repo),
@@ -167,6 +173,7 @@ def build_snapshot(engine: Engine) -> dict[str, Any]:
         "session_totals": _session_totals(finished_records),
         "queue": _queue(prefetch, index),
         "runs": runs,
+        "auxiliary_calls": auxiliary_calls,
         "epics": _epics(index, runs, active_ids),
     }
 
