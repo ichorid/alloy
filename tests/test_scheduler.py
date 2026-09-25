@@ -671,6 +671,31 @@ def test_next_task_never_dispatches_epic_itself_while_child_run_is_parked(
     assert picked is None or picked.id != epic_id
 
 
+def test_next_task_never_dispatches_epic_with_open_children_and_no_runs_yet(
+    scheduler, beads_project,
+):
+    epic_id = _create_epic(beads_project, "epic with idle children")
+    subprocess.run(
+        ["bd", "update", epic_id, "--set-metadata", "alloy_recipe=tdd-loop"],
+        cwd=str(beads_project), check=True, capture_output=True, text=True,
+    )
+    child = _create_epic_child(
+        beads_project, "idle child", epic_id, priority=1, alloy_recipe="tdd-loop",
+    )
+    # The children wait on another epic's bead, so the epic alone is "ready".
+    gate = subprocess.run(
+        ["bd", "create", "cross-epic gate", "--silent"],
+        cwd=str(beads_project), check=True, capture_output=True, text=True,
+    ).stdout.strip().splitlines()[-1].strip()
+    subprocess.run(
+        ["bd", "dep", "add", child, gate],
+        cwd=str(beads_project), check=True, capture_output=True, text=True,
+    )
+
+    picked = scheduler.next_task()
+    assert picked is None or picked.id not in (epic_id, child)
+
+
 def test_next_task_returns_next_epic_child_after_blocking_sibling_run_is_done(
     scheduler, beads_project,
 ):

@@ -359,11 +359,12 @@ class Scheduler:
         """True when an epic child must wait for a sibling or its own prior run."""
         epic_id = self.engine.beads.epic_root(bead_id)
         if epic_id is None:
-            # An epic is not a child of itself, but must still not run while
-            # one of its descendants holds a run (e.g. a paused child).
-            if self.engine.beads.open_descendants(bead_id):
-                return self._epic_blocking_sibling(bead_id) is not None
-            return False
+            # An epic is not a child of itself: while any descendant is open the
+            # children do the work and the epic lands when they are all closed.
+            # Sorting puts the epic ahead of its children in `ready`, so without
+            # this an idle epic with no run yet was picked for an empty
+            # epic-level run.
+            return bool(self.engine.beads.open_descendants(bead_id))
         blocker = self._epic_blocking_sibling(epic_id)
         if blocker is not None:
             if blocker not in self._epic_block_logged:
