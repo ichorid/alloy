@@ -895,13 +895,14 @@ def format_detail(
     if mode in ("nerd", "unicode"):
         return _format_detail_styled(run, width, log_dir, mode, usage_style)
     lines = detail_lines(run, log_dir, mode=mode, usage_style=usage_style)
+    title_line, lines = lines[0], lines[1:]
     if width < COMFORTABLE_WIDTH:
-        return "\n".join(lines)
+        return "\n".join([title_line, *lines])
     activity = [line for line in lines if not line.startswith(_METADATA_PREFIXES)]
     metadata = [line for line in lines if line.startswith(_METADATA_PREFIXES)]
     left_width = max((len(line) for line in activity), default=0)
     row_count = max(len(activity), len(metadata))
-    rows: list[str] = []
+    rows: list[str] = [title_line]
     for index in range(row_count):
         left = activity[index] if index < len(activity) else ""
         right = metadata[index] if index < len(metadata) else ""
@@ -919,13 +920,14 @@ def _format_detail_styled(
     mode: str,
     usage_style: str = "remaining",
 ) -> str:
+    title_line = f"{icon('folder', mode)} title  {_text(run.get('title'))}"
     left = _detail_left_column(run, mode, usage_style)
     right = _detail_right_column(run, log_dir, mode)
     if width < COMFORTABLE_WIDTH:
-        return "\n".join(left + right)
+        return "\n".join([title_line, *left, *right])
     left_width = max((len(line) for line in left), default=0)
     row_count = max(len(left), len(right))
-    rows: list[str] = []
+    rows: list[str] = [title_line]
     for index in range(row_count):
         left_line = left[index] if index < len(left) else ""
         right_line = right[index] if index < len(right) else ""
@@ -963,7 +965,7 @@ def _detail_left_column(
 
 
 def _detail_right_column(run: dict[str, Any], log_dir: str | None, mode: str) -> list[str]:
-    lines: list[str] = [f"title {_text(run.get('title'))}"]
+    lines: list[str] = []
     complexity = run.get("complexity")
     if complexity is not None:
         bar = _complexity(complexity, mode)
