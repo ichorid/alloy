@@ -29,6 +29,7 @@ ALLOWED_ACTIONS = {
     "cursor_down",
     "cursor_up",
     "toggle_detail",
+    "show_detail",
     "refresh",
     "quit",
     "collapse_tree",

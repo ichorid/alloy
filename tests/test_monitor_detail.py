@@ -86,8 +86,8 @@ def test_two_inflight_calls_with_differing_requested_and_effective_runner():
     ]
     lines = detail_lines(_run(current_calls=calls))
 
-    implement_lines = [line for line in lines if line.startswith("implement:")]
-    critic_lines = [line for line in lines if line.startswith("critic:")]
+    implement_lines = [line for line in lines if line.strip().startswith("implement")]
+    critic_lines = [line for line in lines if line.strip().startswith("critic")]
     assert len(implement_lines) == 1
     assert len(critic_lines) == 1
 
@@ -109,7 +109,7 @@ def test_current_call_includes_requested_and_effective_model_when_present():
 
     lines = detail_lines(_run(current_calls=calls))
 
-    line = next(line for line in lines if line.startswith("implement:"))
+    line = next(line for line in lines if line.strip().startswith("implement"))
     assert "astra:o3" in line
     assert "codex:gpt-5" in line
 
@@ -178,12 +178,12 @@ def test_tokens_by_role_has_one_line_per_role_with_total_and_in_out_split():
 
     lines = detail_lines(_run(tokens_by_role=tokens_by_role))
 
-    implement_line = next(line for line in lines if line.startswith("implement:"))
+    implement_line = next(line for line in lines if line.strip().startswith("implement"))
     assert "150" in implement_line
     assert "100" in implement_line
     assert "50" in implement_line
 
-    critic_line = next(line for line in lines if line.startswith("critic:"))
+    critic_line = next(line for line in lines if line.strip().startswith("critic"))
     assert "30" in critic_line
     assert "20" in critic_line
     assert "10" in critic_line
@@ -219,7 +219,7 @@ def test_detail_lines_models_used_includes_runner_model_calls_tokens_and_windows
     lines = detail_lines(_run(models_used=models_used))
 
     model_line = next(line for line in lines if "claude-write:fable" in line)
-    assert "calls 3" in model_line
+    assert " 3 " in model_line
     assert "12000" in model_line
     assert "5h 42%" in model_line
     assert "weekly fable 12%" in model_line
@@ -501,8 +501,10 @@ _ASCII_DETAIL_FIXTURES: dict[str, tuple[dict, list[str]]] = {
             },
         ),
         [
-            "implement: 150 (100/50)",
-            "critic: 30 (20/10)",
+            "tokens per role (total = in + out):",
+            "  role       total     in    out  share",
+            "  implement    150    100     50  " + "█" * 8,
+            "  critic        30     20     10  " + "█" * 2,
             "bead: alloy-a1b2",
             "worktree: /home/vader/.alloy/worktrees/alloy-a1b2",
             "branch: alloy/alloy-a1b2",
@@ -513,7 +515,9 @@ _ASCII_DETAIL_FIXTURES: dict[str, tuple[dict, list[str]]] = {
         [
             "implement: astra -> codex (42s)",
             "judge: retry (confidence 0.61)",
-            "implement: 150 (100/50)",
+            "tokens per role (total = in + out):",
+            "  role       total     in    out  share",
+            "  implement    150    100     50  " + "█" * 8,
             "bead: alloy-a1b2",
             "worktree: /home/vader/.alloy/worktrees/alloy-detail-layout",
             "branch: alloy/alloy-detail-layout",
@@ -527,7 +531,7 @@ def test_detail_lines_ascii_matches_existing_fixture_output():
     for name, (run, expected_prefix) in _ASCII_DETAIL_FIXTURES.items():
         lines = detail_lines(run, log_dir, mode="ascii")
         assert lines[: len(expected_prefix)] == expected_prefix, name
-        assert lines[-1] == f"logs: {log_dir}", name
+        assert lines[-2] == f"logs: {log_dir}", name
 
 
 def test_format_detail_nerd_per_role_token_bars_scale_to_largest_role():

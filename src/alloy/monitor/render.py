@@ -317,16 +317,13 @@ def _queue_bead_label(toggle: str, mode: str | None) -> str | Text:
 
 def _epic_bead_label(epic: dict[str, Any], toggle: str, mode: str | None) -> str | Text:
     epic_id = epic["epic_id"]
-    title = epic.get("title", "")
     if mode != "nerd":
-        return f"{toggle} {epic_id}  {title}"
+        return f"{toggle} {epic_id}"
     label = Text()
     label.append(f"{toggle} ")
     label.append(icon("folder", "nerd"), style=_COLOR_CYAN)
     label.append(" ")
     label.append(epic_id, style=f"bold {_COLOR_CYAN}")
-    if title:
-        label.append(f"  {title}", style=_COLOR_DIM)
     return label
 
 
@@ -687,11 +684,7 @@ _DETAIL_TOKEN_BAR_WIDTH = 8
 
 def detail_panel_border_title(run: dict[str, Any]) -> str:
     """Detail panel top-border title: ``<bead id> · <title>`` for the selected run."""
-    bead_id = _text(run.get("bead_id"))
-    title = run.get("title")
-    if title:
-        return f"{bead_id} · {title}"
-    return bead_id
+    return _text(run.get("bead_id"))
 
 
 def detail_panel_border_title_queue() -> str:
@@ -699,11 +692,7 @@ def detail_panel_border_title_queue() -> str:
 
 
 def detail_panel_border_title_epic(epic: dict[str, Any]) -> str:
-    epic_id = _text(epic.get("epic_id"))
-    title = epic.get("title")
-    if title:
-        return f"{epic_id} · {title}"
-    return epic_id
+    return _text(epic.get("epic_id"))
 
 
 def detail_panel_border_subtitle(run: dict[str, Any]) -> str:
@@ -743,7 +732,7 @@ def queue_detail(snapshot: dict[str, Any], *, mode: str | None = None) -> list[s
 
 
 def epic_detail(epic: dict[str, Any], *, mode: str | None = None) -> list[str]:
-    """Detail pane for an epic row: title, progress, running/judge counts, done ids."""
+    """Detail pane for an epic row: progress, running/judge counts, done ids, title last."""
     title = epic.get("title") or epic.get("epic_id") or ""
     done = int(epic.get("done") or 0)
     total = int(epic.get("total") or 0)
@@ -751,21 +740,81 @@ def epic_detail(epic: dict[str, Any], *, mode: str | None = None) -> list[str]:
     judge = int(epic.get("judge") or 0)
     if mode in ("nerd", "unicode"):
         lines = [
-            f"{icon('folder', mode)} title  {title}",
             f"{icon('done', mode)} progress  {done}/{total} done",
-            (
-                f"{icon('running', mode)} active  {running} running"
-                f" · {judge} judge"
-            ),
+            f"{icon('running', mode)} active  {running} running · {judge} judge",
         ]
         lines.extend(epic.get("done_ids") or [])
+        lines.append(f"{icon('folder', mode)} title  {title}")
         return lines
     lines = [
-        title,
         f"{done}/{total} done",
         f"{running} running · {judge} judge",
     ]
     lines.extend(epic.get("done_ids") or [])
+    lines.append(f"title: {title}")
+    return lines
+
+
+def queued_detail(bead: dict[str, Any], *, mode: str | None = None) -> list[str]:
+    """Detail pane for a ready/blocked bead that has no run yet: metadata, title last."""
+    lines = [f"bead: {_text(bead.get('bead_id'))}"]
+    if bead.get("blocked_by"):
+        lines.append(f"blocked by: {', '.join(bead['blocked_by'])}")
+    else:
+        lines.append("status: ready")
+    for key in ("recipe", "complexity", "epic_id"):
+        if bead.get(key):
+            lines.append(f"{key.replace('_', ' ')}: {bead[key]}")
+    lines.append(f"title: {_text(bead.get('title'))}")
+    return lines
+
+
+def _token_table(tokens_by_role: dict[str, Any], indent: str = "") -> list[str]:
+    """Aligned per-role token table with a header row (total = in + out)."""
+    rows = [
+        (
+            role,
+            entry.get("total_tokens") or 0,
+            entry.get("input_tokens") or 0,
+            entry.get("output_tokens") or 0,
+        )
+        for role, entry in tokens_by_role.items()
+    ]
+    name_w = max([4] + [len(r[0]) for r in rows])
+    num_w = max([5] + [len(str(v)) for r in rows for v in r[1:]])
+    max_total = max((r[1] for r in rows), default=0)
+    lines = [
+        f"{indent}{'role':<{name_w}}  {'total':>{num_w}}  {'in':>{num_w}}  {'out':>{num_w}}  share"
+    ]
+    for role, total, inp, out in rows:
+        bar = _detail_role_token_bar(total, max_total)
+        lines.append(
+            f"{indent}{role:<{name_w}}  {total:>{num_w}}  {inp:>{num_w}}  {out:>{num_w}}  {bar}".rstrip()
+        )
+    return lines
+
+
+def _models_table(entries: list[dict[str, Any]], indent: str = "") -> list[str]:
+    """Aligned models-used table: model, calls, tokens, then limit windows."""
+    rows = []
+    for entry in entries:
+        runner, model = entry.get("runner"), entry.get("model")
+        label = f"{runner}:{model}" if model else _text(runner)
+        windows = "  ".join(
+            f"{win['label']} {int(win['used_percent'])}%"
+            for win in (entry.get("windows") or {}).values()
+        )
+        rows.append((label, str(entry.get("calls", 0)), _text(entry.get("total_tokens")), windows))
+    if not rows:
+        return []
+    model_w = max([5] + [len(r[0]) for r in rows])
+    calls_w = max([5] + [len(r[1]) for r in rows])
+    tok_w = max([6] + [len(r[2]) for r in rows])
+    lines = [f"{indent}{'model':<{model_w}}  {'calls':>{calls_w}}  {'tokens':>{tok_w}}  limits"]
+    for label, calls, tokens, windows in rows:
+        lines.append(
+            f"{indent}{label:<{model_w}}  {calls:>{calls_w}}  {tokens:>{tok_w}}  {windows}".rstrip()
+        )
     return lines
 
 
@@ -835,18 +884,12 @@ def _detail_left_column(run: dict[str, Any], mode: str) -> list[str]:
         lines.append(f"{icon('judge', mode)} {judge_line.replace('judge:', 'judge  ', 1)}")
     tokens_by_role = run.get("tokens_by_role") or {}
     if tokens_by_role:
-        total_in = sum(entry.get("input_tokens") or 0 for entry in tokens_by_role.values())
-        total_out = sum(entry.get("output_tokens") or 0 for entry in tokens_by_role.values())
-        lines.append(
-            f"{icon('tokens', mode)} tokens  in {total_in}  out {total_out}"
-        )
-        max_tokens = max((entry.get("total_tokens") or 0 for entry in tokens_by_role.values()), default=0)
-        for role, entry in tokens_by_role.items():
-            total = entry.get("total_tokens") or 0
-            bar = _detail_role_token_bar(total, max_tokens)
-            lines.append(f"   {role}  {total}  {bar}".rstrip())
-    for entry in run.get("models_used") or []:
-        lines.append(f"{icon('complexity', mode)} {_models_used_line(entry)}")
+        lines.append(f"{icon('tokens', mode)} tokens per role (total = in + out)")
+        lines.extend(_token_table(tokens_by_role, indent="   "))
+    models = run.get("models_used") or []
+    if models:
+        lines.append(f"{icon('complexity', mode)} models used")
+        lines.extend(_models_table(models, indent="   "))
     return lines
 
 
@@ -865,6 +908,7 @@ def _detail_right_column(run: dict[str, Any], log_dir: str | None, mode: str) ->
     parent = run.get("parent_id") or run.get("epic_id")
     if parent:
         lines.append(f"parent {_text(parent)}")
+    lines.append(f"title {_text(run.get('title'))}")
     return lines
 
 
@@ -896,16 +940,20 @@ def detail_lines(
     judge_line = _judge_detail(run.get("judge"))
     if judge_line is not None:
         lines.append(judge_line)
-    for role, tokens in (run.get("tokens_by_role") or {}).items():
-        lines.append(f"{role}: {_text(tokens.get('total_tokens'))} "
-                     f"({_text(tokens.get('input_tokens'))}/{_text(tokens.get('output_tokens'))})")
-    for entry in run.get("models_used") or []:
-        lines.append(_models_used_line(entry))
+    tokens_by_role = run.get("tokens_by_role") or {}
+    if tokens_by_role:
+        lines.append("tokens per role (total = in + out):")
+        lines.extend(_token_table(tokens_by_role, indent="  "))
+    models = run.get("models_used") or []
+    if models:
+        lines.append("models used:")
+        lines.extend(_models_table(models, indent="  "))
     lines.append(f"bead: {_text(run.get('bead_id'))}")
     lines.append(f"worktree: {_text(run.get('worktree'))}")
     lines.append(f"branch: {_text(run.get('branch'))}")
     if log_dir is not None:
         lines.append(f"logs: {log_dir}")
+    lines.append(f"title: {_text(run.get('title'))}")
     return lines
 
 

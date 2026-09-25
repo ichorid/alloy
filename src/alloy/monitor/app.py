@@ -35,29 +35,12 @@ from alloy.monitor.render import (
     panel_border_subtitle,
     panel_border_title,
     queue_detail,
+    queued_detail,
     status_badge,
     task_tree_rows,
     title_line,
     visible_columns,
 )
-
-_SELECTED_MARKER = "\u258c"
-
-
-def _with_selected_marker(value: Text | str) -> Text:
-    marked = Text(_SELECTED_MARKER)
-    if isinstance(value, Text):
-        marked.append_text(value)
-    else:
-        marked.append(str(value))
-    return marked
-
-
-def _without_selected_marker(value: Text | str) -> Text | str:
-    if isinstance(value, Text) and value.plain.startswith(_SELECTED_MARKER):
-        return value[1:]
-    return value
-
 
 class MonitorFooter(Footer):
     """Footer with key chips and a right-aligned ``icons: <mode>`` marker."""
@@ -85,6 +68,7 @@ class MonitorApp(App[None]):
         ("j,down", "cursor_down", "move"),
         ("k,up", "cursor_up", ""),
         ("enter", "toggle_detail", "Detail"),
+        ("e", "show_detail", "Detail"),
         ("h", "collapse_tree", "Collapse"),
         ("l", "expand_tree", "Expand"),
         ("E", "toggle_expand_all", "All"),
@@ -417,7 +401,19 @@ class MonitorApp(App[None]):
         mode = resolve_mode(interactive=True)
         table_width = width if width is not None else self.size.width
         if row_key.startswith("queue/") or "/queued/" in row_key:
-            detail.display = False
+            bead_id = row_key.rsplit("/", 1)[-1]
+            queue = snapshot.get("queue") or {}
+            bead = next(
+                (b for b in (queue.get("ready") or []) + (queue.get("blocked") or [])
+                 if b.get("bead_id") == bead_id),
+                None,
+            )
+            if bead is None:
+                detail.display = False
+                return
+            detail.update("\n".join(queued_detail(bead, mode=mode)))
+            detail.border_title = bead_id
+            detail.border_subtitle = "blocked" if bead.get("blocked_by") else "ready"
             return
         if row_key == "queue":
             detail.update("\n".join(queue_detail(snapshot, mode=mode)))
@@ -461,17 +457,7 @@ class MonitorApp(App[None]):
         self._sync_selected_marker(event.data_table, event.cursor_row)
 
     def _sync_selected_marker(self, table: DataTable, row: int) -> None:
-        prev = self._marked_row
-        if prev is not None and prev != row and prev < table.row_count:
-            coord = Coordinate(prev, 0)
-            cell = table.get_cell_at(coord)
-            table.update_cell_at(coord, _without_selected_marker(cell))
-        if row < table.row_count:
-            coord = Coordinate(row, 0)
-            cell = table.get_cell_at(coord)
-            plain = cell.plain if isinstance(cell, Text) else str(cell)
-            if not plain.startswith(_SELECTED_MARKER):
-                table.update_cell_at(coord, _with_selected_marker(cell))
+        """No row marker: the cursor row is already highlighted bold."""
         self._marked_row = row
 
     def on_data_table_row_selected(self, _event: DataTable.RowSelected) -> None:
@@ -487,11 +473,13 @@ class MonitorApp(App[None]):
         if row_key is not None and self._is_expandable_row_key(row_key):
             self._toggle_expansion(row_key)
             return
+        self.action_show_detail()
+
+    def action_show_detail(self) -> None:
+        """Toggle the detail pane for any row (epics, queue, queued beads, runs)."""
         detail = self.query_one("#detail", Static)
         if detail.display:
             detail.display = False
-            return
-        if self._selected_run() is None:
             return
         detail.display = True
         self._refresh_detail()

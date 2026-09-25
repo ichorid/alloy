@@ -1433,7 +1433,7 @@ def test_task_tree_ascii_mode_matches_byo4_expectations():
     assert queue.cells["status"] == "7 ready · 1 blocked · next: alloy-x"
 
     epic = _tree_row_by_key(rows, "epic/E")
-    assert epic.cells["bead"] == "▾ E  Epic E"
+    assert epic.cells["bead"] == "▾ E"
     assert epic.cells["status"] == "1 running · 0 judge · 1/4 done"
 
     queue_children = _children_after(rows, "queue")
