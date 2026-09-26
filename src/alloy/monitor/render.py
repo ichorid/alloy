@@ -27,7 +27,6 @@ COLUMNS = (
     "cons",
     "tests",
     "elapsed",
-    "now",
     "tokens",
     "judge",
     "complexity",
@@ -38,7 +37,7 @@ RIGHT_ALIGNED = frozenset({"iter", "cons", "tests", "elapsed", "tokens"})
 COMFORTABLE_WIDTH = 80
 WIDE_WIDTH = 100
 
-_WIDE_ONLY_COLUMNS = frozenset({"stage", "cons", "complexity", "now"})
+_WIDE_ONLY_COLUMNS = frozenset({"stage", "cons", "complexity"})
 _COLUMN_TIERS: dict[str, str] = {name: "wide" for name in _WIDE_ONLY_COLUMNS}
 
 _USAGE_BAR_WIDTH = 16
@@ -670,7 +669,6 @@ def _row(run: dict[str, Any], mode: str | None = None) -> tuple[str, ...]:
         f"{_text(run.get('consiliums'))}/{_text(run.get('max_consiliums'))}",
         _tests(run, mode),
         _elapsed(run.get("elapsed_minutes")),
-        _now(run.get("current_calls") or []),
         _tokens(run.get("tokens") or {}),
         _judge(run.get("judge")),
         _complexity(run.get("complexity"), mode),
@@ -725,21 +723,6 @@ def _tests(run: dict[str, Any], mode: str | None = None) -> str:
 
 def _elapsed(minutes: Any) -> str:
     return "-" if minutes is None else f"{minutes}m"
-
-
-def _now(calls: list[dict[str, Any]]) -> str:
-    if not calls:
-        return "-"
-    return " + ".join(_call(call) for call in calls)
-
-
-def _call(call: dict[str, Any]) -> str:
-    label = f"{_text(call.get('role'))}:{_text(call.get('effective_runner'))}"
-    model = call.get("effective_model")
-    if model:
-        label += f":{model}"
-    seconds = call.get("elapsed_seconds")
-    return label if seconds is None else f"{label} {int(seconds)}s"
 
 
 def _tokens(tokens: dict[str, Any]) -> str:
@@ -851,8 +834,16 @@ def queued_detail(bead: dict[str, Any], *, mode: str | None = None) -> list[str]
     return lines
 
 
-def _token_table(tokens_by_role: dict[str, Any], indent: str = "") -> list[str]:
-    """Aligned per-role token table with a header row (total = in + out)."""
+def _token_table(
+    tokens_by_role: dict[str, Any],
+    indent: str = "",
+    models_by_role: dict[str, list[dict[str, Any]]] | None = None,
+) -> list[str]:
+    """Aligned per-role token table with a header row (total = in + out).
+
+    Each role row is followed by one sub-row per distinct model that role used.
+    """
+    models_by_role = models_by_role or {}
     rows = [
         (
             role,
@@ -869,36 +860,17 @@ def _token_table(tokens_by_role: dict[str, Any], indent: str = "") -> list[str]:
     for role, total, inp, out in rows:
         bar = _detail_role_token_bar(total, max_total)
         lines.append(f"{indent}{role:<{name_w}}  {total:>{num_w}}  {inp:>{num_w}}  {out:>{num_w}}  {bar}".rstrip())
+        for model_entry in models_by_role.get(role, []):
+            lines.append(_model_sub_row(model_entry, indent=indent + "  "))
     return lines
 
 
-def _models_table(entries: list[dict[str, Any]], indent: str = "", usage_style: str = "remaining") -> list[str]:
-    """Aligned models-used table: model, calls, tokens, then limit windows."""
-    rows = []
-    for entry in entries:
-        runner, model = entry.get("runner"), entry.get("model")
-        label = f"{runner}:{model}" if model else _text(runner)
-        windows = "  ".join(
-            f"{win['label']} {_display_usage_percent(win, usage_style)}%"
-            for win in (entry.get("windows") or {}).values()
-        )
-        rows.append(
-            (
-                label,
-                str(entry.get("calls", 0)),
-                _text(entry.get("total_tokens")),
-                windows,
-            )
-        )
-    if not rows:
-        return []
-    model_w = max([5] + [len(r[0]) for r in rows])
-    calls_w = max([5] + [len(r[1]) for r in rows])
-    tok_w = max([6] + [len(r[2]) for r in rows])
-    lines = [f"{indent}{'model':<{model_w}}  {'calls':>{calls_w}}  {'tokens':>{tok_w}}  limits"]
-    for label, calls, tokens, windows in rows:
-        lines.append(f"{indent}{label:<{model_w}}  {calls:>{calls_w}}  {tokens:>{tok_w}}  {windows}".rstrip())
-    return lines
+def _model_sub_row(entry: dict[str, Any], indent: str) -> str:
+    runner, model = entry.get("runner"), entry.get("model")
+    label = f"{runner}:{model}" if model else _text(runner)
+    calls = entry.get("calls", 0)
+    tokens = _text(entry.get("total_tokens"))
+    return f"{indent}{label}  {calls} calls  {tokens} tokens"
 
 
 def format_detail(
@@ -970,11 +942,7 @@ def _detail_left_column(run: dict[str, Any], mode: str, usage_style: str = "rema
     tokens_by_role = run.get("tokens_by_role") or {}
     if tokens_by_role:
         lines.append(f"{icon('tokens', mode)} tokens per role (total = in + out)")
-        lines.extend(_token_table(tokens_by_role, indent="   "))
-    models = run.get("models_used") or []
-    if models:
-        lines.append(f"{icon('complexity', mode)} models used")
-        lines.extend(_models_table(models, indent="   ", usage_style=usage_style))
+        lines.extend(_token_table(tokens_by_role, indent="   ", models_by_role=run.get("models_used_by_role")))
     return lines
 
 
@@ -1025,11 +993,7 @@ def detail_lines(
     tokens_by_role = run.get("tokens_by_role") or {}
     if tokens_by_role:
         lines.append("tokens per role (total = in + out):")
-        lines.extend(_token_table(tokens_by_role, indent="  "))
-    models = run.get("models_used") or []
-    if models:
-        lines.append("models used:")
-        lines.extend(_models_table(models, indent="  ", usage_style=usage_style))
+        lines.extend(_token_table(tokens_by_role, indent="  ", models_by_role=run.get("models_used_by_role")))
     lines.append(f"bead: {_text(run.get('bead_id'))}")
     lines.append(f"branch: {_text(run.get('branch'))}")
     return lines
@@ -1037,24 +1001,6 @@ def detail_lines(
 
 def _runner(runner: Any, model: Any) -> str:
     return f"{_text(runner)}:{model}" if model else _text(runner)
-
-
-def _models_used_line(entry: dict[str, Any], usage_style: str = "remaining") -> str:
-    runner = entry.get("runner")
-    model = entry.get("model")
-    label = f"{runner}:{model}" if model else _text(runner)
-    parts = [
-        f"model {label}",
-        f"calls {entry.get('calls', 0)}",
-        f"tokens {_text(entry.get('total_tokens'))}",
-    ]
-    window_parts = [
-        f"{win['label']} {_display_usage_percent(win, usage_style)}%" for win in (entry.get("windows") or {}).values()
-    ]
-    line = "  ".join(parts)
-    if window_parts:
-        line += "  |  " + "  ".join(window_parts)
-    return line
 
 
 def _parse_iso(value: str | None) -> datetime | None:

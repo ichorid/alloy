@@ -32,6 +32,7 @@ def _run(
     current_calls=(),
     tokens_by_role=None,
     models_used=None,
+    models_used_by_role=None,
     judge=None,
     worktree="/home/vader/.alloy/worktrees/alloy-a1b2",
     branch="alloy/alloy-a1b2",
@@ -52,6 +53,7 @@ def _run(
         "tokens": dict(EMPTY_TOKENS),
         "tokens_by_role": tokens_by_role or {},
         "models_used": models_used or [],
+        "models_used_by_role": models_used_by_role or {},
         "judge": judge,
         "worktree": worktree,
         "branch": branch,
@@ -253,47 +255,37 @@ def test_empty_tokens_by_role_yields_no_token_lines_and_does_not_raise():
 # -- worktree / branch --------------------------------------------------------
 
 
-# -- models_used (alloy-w9d.10) -----------------------------------------------
+# -- models_used_by_role (alloy-w9d.10) ---------------------------------------
 
 
-def test_detail_lines_models_used_includes_runner_model_calls_tokens_and_windows():
-    from alloy.limits import window
+def test_detail_lines_nests_models_used_under_their_role_in_the_token_table():
+    tokens_by_role = {
+        "implement": {"input_tokens": 8000, "output_tokens": 4000, "total_tokens": 12000, "cost_usd": None},
+    }
+    models_used_by_role = {
+        "implement": [
+            {"runner": "claude-write", "model": "fable", "calls": 3, "total_tokens": 12000},
+        ],
+    }
 
-    models_used = [
-        {
-            "runner": "claude-write",
-            "model": "fable",
-            "calls": 3,
-            "total_tokens": 12000,
-            "windows": {
-                "five_hour": window("five_hour", "5h", 42.0, None),
-                "seven_day": window("seven_day", "weekly", 61.0, None),
-                "seven_day_fable": window("seven_day_fable", "weekly fable", 12.0, None, model="fable"),
-            },
-        }
-    ]
+    lines = detail_lines(_run(tokens_by_role=tokens_by_role, models_used_by_role=models_used_by_role))
 
-    lines = detail_lines(_run(models_used=models_used), usage_style="used")
-
-    model_line = next(line for line in lines if "claude-write:fable" in line)
-    assert " 3 " in model_line
+    role_index = next(i for i, line in enumerate(lines) if line.strip().startswith("implement "))
+    model_line = lines[role_index + 1]
+    assert "claude-write:fable" in model_line
+    assert "3 calls" in model_line
     assert "12000" in model_line
-    assert "5h 42%" in model_line
-    assert "weekly fable 12%" in model_line
 
 
-def test_detail_lines_models_used_with_empty_windows_has_no_percent():
-    models_used = [
-        {
-            "runner": "codex",
-            "model": "gpt-5",
-            "calls": 1,
-            "total_tokens": 100,
-            "windows": {},
-        }
-    ]
+def test_detail_lines_never_shows_usage_limit_percent_for_models_used():
+    tokens_by_role = {
+        "implement": {"input_tokens": 100, "output_tokens": 0, "total_tokens": 100, "cost_usd": None},
+    }
+    models_used_by_role = {
+        "implement": [{"runner": "codex", "model": "gpt-5", "calls": 1, "total_tokens": 100}],
+    }
 
-    lines = detail_lines(_run(models_used=models_used))
+    lines = detail_lines(_run(tokens_by_role=tokens_by_role, models_used_by_role=models_used_by_role))
 
     model_line = next(line for line in lines if "codex:gpt-5" in line)
     assert "%" not in model_line

@@ -585,6 +585,45 @@ class Store:
             entries.append(entry)
         return entries
 
+    def models_used_by_role(self, run_id: str) -> dict[str, list[dict[str, Any]]]:
+        """Per-role breakdown: one entry per distinct (runner, model) used by that role."""
+        groups: dict[tuple[str, str, str | None], dict[str, Any]] = {}
+        with self.connect() as conn:
+            finished = conn.execute(
+                "SELECT role, runner, model, started_at, usage_json FROM agent_calls WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+            inflight = conn.execute(
+                "SELECT role, runner, model, started_at FROM inflight_calls WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+
+        for row in finished:
+            key = (row["role"], row["runner"], row["model"])
+            group = groups.setdefault(key, {"first_at": row["started_at"], "usages": [], "calls": 0})
+            if row["started_at"] < group["first_at"]:
+                group["first_at"] = row["started_at"]
+            group["calls"] += 1
+            group["usages"].append(normalize(json.loads(row["usage_json"])))
+
+        for row in inflight:
+            key = (row["role"], row["runner"], row["model"])
+            group = groups.setdefault(key, {"first_at": row["started_at"], "usages": [], "calls": 0})
+            if row["started_at"] < group["first_at"]:
+                group["first_at"] = row["started_at"]
+
+        by_role: dict[str, list[dict[str, Any]]] = {}
+        for (role, runner, model), group in sorted(groups.items(), key=lambda item: item[1]["first_at"]):
+            entry = {
+                "runner": runner,
+                "model": model,
+                "harness": harness_for_runner(runner),
+                "calls": group["calls"],
+                **_sum_usage(group["usages"]),
+            }
+            by_role.setdefault(role, []).append(entry)
+        return by_role
+
     def finished_runs_since(self, since: str, repo: Path | str) -> list[dict[str, Any]]:
         """Terminal runs for `repo` whose `ended_at` is at or after `since`, ascending."""
         statuses = tuple(TERMINAL_RUN_STATUSES)

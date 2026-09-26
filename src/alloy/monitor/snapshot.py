@@ -356,6 +356,7 @@ def _run_entry(engine: Engine, record: dict[str, Any], limits: dict[str, Any], i
         "tokens_by_role": engine.store.token_totals_by_role(run_id),
         "judge": _judge(engine, run_id, state),
         "models_used": _models_used(engine, run_id, limits),
+        "models_used_by_role": engine.store.models_used_by_role(run_id),
         "worktree": record["worktree"],
         "branch": record["branch"],
         "epic_id": index.epic_for(record["bead_id"]),

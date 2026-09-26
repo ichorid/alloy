@@ -189,7 +189,7 @@ def _judge(
     }
 
 
-COLUMN_COUNT = 11  # bead, status, stage, i/max, c/max, tests, elapsed, now, tokens, judge, complexity
+COLUMN_COUNT = 10  # bead, status, stage, i/max, c/max, tests, elapsed, tokens, judge, complexity
 
 
 # -- run_rows -----------------------------------------------------------------
@@ -238,36 +238,12 @@ def test_row_formats_iteration_and_consilium_progress_as_i_over_max():
     assert row[4] == "1/3"
 
 
-def test_row_with_no_current_calls_shows_a_dash_in_the_now_column():
-    snapshot = _snapshot(runs=[_run(current_calls=[])])
-
-    row = run_rows(snapshot)[0]
-
-    assert row[7] == "-"
-
-
-def test_row_with_two_current_calls_joins_them_with_a_plus_in_the_now_column():
-    calls = [
-        _call(role="implement", effective_runner="codex", elapsed_seconds=42.1),
-        _call(role="critic", effective_runner="claude", elapsed_seconds=3.4),
-    ]
-    snapshot = _snapshot(runs=[_run(current_calls=calls)])
-
-    row = run_rows(snapshot)[0]
-
-    assert " + " in row[7]
-    assert "implement" in row[7]
-    assert "codex" in row[7]
-    assert "critic" in row[7]
-    assert "claude" in row[7]
-
-
 def test_row_with_null_judge_shows_a_dash_in_the_judge_column():
     snapshot = _snapshot(runs=[_run(judge=None)])
 
     row = run_rows(snapshot)[0]
 
-    assert row[9] == "-"
+    assert row[8] == "-"
 
 
 def test_row_with_matching_judge_shows_only_the_single_decision():
@@ -285,8 +261,8 @@ def test_row_with_matching_judge_shows_only_the_single_decision():
 
     row = run_rows(snapshot)[0]
 
-    assert "done" in row[9]
-    assert "→" not in row[9]
+    assert "done" in row[8]
+    assert "→" not in row[8]
 
 
 def test_row_with_differing_raw_and_effective_judge_shows_both_decisions():
@@ -304,10 +280,10 @@ def test_row_with_differing_raw_and_effective_judge_shows_both_decisions():
 
     row = run_rows(snapshot)[0]
 
-    assert "done" in row[9]
-    assert "retry" in row[9]
-    assert row[9] != "done"
-    assert row[9] != "retry"
+    assert "done" in row[8]
+    assert "retry" in row[8]
+    assert row[8] != "done"
+    assert row[8] != "retry"
 
 
 def test_row_carries_the_tests_summary_verbatim():
@@ -342,7 +318,7 @@ def test_row_tokens_column_reflects_total_tokens_when_no_split_is_available():
 
     row = run_rows(snapshot)[0]
 
-    assert "8635" in row[8]
+    assert "8635" in row[7]
 
 
 # -- header_line ----------------------------------------------------------
@@ -1167,7 +1143,7 @@ def test_breakpoint_constants_are_named_and_exported():
 def test_column_tiers_label_wide_only_columns():
     from alloy.monitor.render import column_tier
 
-    for name in ("stage", "cons", "complexity", "now"):
+    for name in ("stage", "cons", "complexity"):
         assert column_tier(name) == "wide"
 
 
@@ -1188,7 +1164,7 @@ def test_visible_columns_at_wide_width_includes_every_column():
 def test_visible_columns_at_comfortable_width_omits_wide_only_columns():
     from alloy.monitor.render import COLUMNS, COMFORTABLE_WIDTH, visible_columns
 
-    expected = tuple(name for name in COLUMNS if name not in {"stage", "cons", "complexity", "now"})
+    expected = tuple(name for name in COLUMNS if name not in {"stage", "cons", "complexity"})
     assert visible_columns(COMFORTABLE_WIDTH) == expected
     assert visible_columns(99) == expected
 
@@ -1196,7 +1172,7 @@ def test_visible_columns_at_comfortable_width_omits_wide_only_columns():
 def test_visible_columns_below_comfortable_width_still_omits_only_wide_only_columns():
     from alloy.monitor.render import COLUMNS, visible_columns
 
-    expected = tuple(name for name in COLUMNS if name not in {"stage", "cons", "complexity", "now"})
+    expected = tuple(name for name in COLUMNS if name not in {"stage", "cons", "complexity"})
     assert visible_columns(79) == expected
 
 
@@ -1270,7 +1246,7 @@ def test_column_align_right_for_numeric_columns():
 def test_column_align_left_for_text_columns():
     from alloy.monitor.render import column_align
 
-    for name in ("bead", "status", "stage", "now"):
+    for name in ("bead", "status", "stage"):
         assert column_align(name) == "left"
 
 
@@ -1344,32 +1320,32 @@ def test_run_rows_ascii_mode_keeps_tests_summary_verbatim():
 def test_run_rows_nerd_simple_complexity_shows_one_block_glyph():
     row = run_rows(_snapshot(runs=[_run(complexity="simple")]), mode="nerd")[0]
 
-    assert row[10] == "▂"
+    assert row[9] == "▂"
 
 
 def test_run_rows_nerd_medium_complexity_shows_two_block_glyph():
     row = run_rows(_snapshot(runs=[_run(complexity="medium")]), mode="nerd")[0]
 
-    assert row[10] == "▂▄"
+    assert row[9] == "▂▄"
 
 
 def test_run_rows_nerd_complex_complexity_shows_three_block_glyph():
     row = run_rows(_snapshot(runs=[_run(complexity="complex")]), mode="nerd")[0]
 
-    assert row[10] == "▂▄▆"
+    assert row[9] == "▂▄▆"
 
 
 def test_run_rows_nerd_none_complexity_shows_dash():
     row = run_rows(_snapshot(runs=[_run(complexity=None)]), mode="nerd")[0]
 
-    assert row[10] == "-"
+    assert row[9] == "-"
 
 
 def test_run_rows_ascii_mode_keeps_complexity_as_word():
     for level in ("simple", "medium", "complex"):
         row = run_rows(_snapshot(runs=[_run(complexity=level)]), mode="ascii")[0]
 
-        assert row[10] == level
+        assert row[9] == level
 
 
 # -- alloy-3g0.7: status pills -------------------------------------------------
@@ -1460,21 +1436,21 @@ def test_parent_column_removed_from_columns():
     assert "parent" not in COLUMNS
 
 
-def test_visible_columns_at_wide_width_includes_now_without_parent():
+def test_visible_columns_at_wide_width_includes_complexity_without_parent():
     from alloy.monitor.render import visible_columns
 
     cols = visible_columns(WIDE_WIDTH)
 
-    assert "now" in cols
+    assert "complexity" in cols
     assert "parent" not in cols
 
 
-def test_visible_columns_below_wide_width_hides_now_stage_and_cons():
+def test_visible_columns_below_wide_width_hides_complexity_stage_and_cons():
     from alloy.monitor.render import visible_columns
 
     cols_99 = visible_columns(WIDE_WIDTH - 1)
 
-    assert "now" not in cols_99
+    assert "complexity" not in cols_99
     assert "stage" not in cols_99
     assert "cons" not in cols_99
 

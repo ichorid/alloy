@@ -90,6 +90,7 @@ RUN_ENTRY_KEYS = {
     "parent_bead_id",
     "complexity",
     "models_used",
+    "models_used_by_role",
     "epic_id",
     "title",
 }
