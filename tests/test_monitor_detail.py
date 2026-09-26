@@ -19,7 +19,12 @@ DISABLED_INTERVAL = 1000.0
 
 _METADATA_PREFIXES = ("bead:", "branch:")
 
-EMPTY_TOKENS = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
+EMPTY_TOKENS = {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "total_tokens": 0,
+    "cost_usd": None,
+}
 
 
 def _run(
@@ -53,8 +58,14 @@ def _run(
     }
 
 
-def _call(role="implement", requested_runner="astra", effective_runner="codex",
-          requested_model=None, effective_model=None, elapsed_seconds=42.1) -> dict:
+def _call(
+    role="implement",
+    requested_runner="astra",
+    effective_runner="codex",
+    requested_model=None,
+    effective_model=None,
+    elapsed_seconds=42.1,
+) -> dict:
     return {
         "role": role,
         "requested_runner": requested_runner,
@@ -65,8 +76,13 @@ def _call(role="implement", requested_runner="astra", effective_runner="codex",
     }
 
 
-def _judge(raw_decision="retry", raw_confidence=0.61, effective_decision="retry",
-           effective_reason="a specific fix remains", matches=True) -> dict:
+def _judge(
+    raw_decision="retry",
+    raw_confidence=0.61,
+    effective_decision="retry",
+    effective_reason="a specific fix remains",
+    matches=True,
+) -> dict:
     return {
         "raw": {"decision": raw_decision, "confidence": raw_confidence},
         "effective": {"decision": effective_decision, "reason": effective_reason},
@@ -79,10 +95,18 @@ def _judge(raw_decision="retry", raw_confidence=0.61, effective_decision="retry"
 
 def test_two_inflight_calls_with_differing_requested_and_effective_runner():
     calls = [
-        _call(role="implement", requested_runner="astra", effective_runner="codex",
-              elapsed_seconds=42.1),
-        _call(role="critic", requested_runner="claude", effective_runner="cursor",
-              elapsed_seconds=3.9),
+        _call(
+            role="implement",
+            requested_runner="astra",
+            effective_runner="codex",
+            elapsed_seconds=42.1,
+        ),
+        _call(
+            role="critic",
+            requested_runner="claude",
+            effective_runner="cursor",
+            elapsed_seconds=3.9,
+        ),
     ]
     lines = detail_lines(_run(current_calls=calls))
 
@@ -104,8 +128,16 @@ def test_two_inflight_calls_with_differing_requested_and_effective_runner():
 
 
 def test_current_call_includes_requested_and_effective_model_when_present():
-    calls = [_call(role="implement", requested_runner="astra", requested_model="o3",
-                    effective_runner="codex", effective_model="gpt-5", elapsed_seconds=10.0)]
+    calls = [
+        _call(
+            role="implement",
+            requested_runner="astra",
+            requested_model="o3",
+            effective_runner="codex",
+            effective_model="gpt-5",
+            elapsed_seconds=10.0,
+        )
+    ]
 
     lines = detail_lines(_run(current_calls=calls))
 
@@ -124,9 +156,15 @@ def test_no_current_calls_yields_no_call_lines():
 
 
 def test_matching_raw_and_effective_judge_is_a_single_line():
-    lines = detail_lines(_run(judge=_judge(
-        raw_decision="done", effective_decision="done", matches=True,
-    )))
+    lines = detail_lines(
+        _run(
+            judge=_judge(
+                raw_decision="done",
+                effective_decision="done",
+                matches=True,
+            )
+        )
+    )
 
     judge_lines = [line for line in lines if "done" in line]
     assert len(judge_lines) == 1
@@ -135,10 +173,17 @@ def test_matching_raw_and_effective_judge_is_a_single_line():
 
 
 def test_differing_raw_and_effective_judge_shows_both_with_confidence_and_reason():
-    lines = detail_lines(_run(judge=_judge(
-        raw_decision="done", raw_confidence=0.61, effective_decision="retry",
-        effective_reason="tests are red", matches=False,
-    )))
+    lines = detail_lines(
+        _run(
+            judge=_judge(
+                raw_decision="done",
+                raw_confidence=0.61,
+                effective_decision="retry",
+                effective_reason="tests are red",
+                matches=False,
+            )
+        )
+    )
 
     judge_line = next(line for line in lines if "judge said" in line)
     assert "done" in judge_line
@@ -172,8 +217,18 @@ def test_judge_none_does_not_mention_judge_said_or_no_parseable_verdict():
 
 def test_tokens_by_role_has_one_line_per_role_with_total_and_in_out_split():
     tokens_by_role = {
-        "implement": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150, "cost_usd": 0.01},
-        "critic": {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30, "cost_usd": 0.002},
+        "implement": {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "total_tokens": 150,
+            "cost_usd": 0.01,
+        },
+        "critic": {
+            "input_tokens": 20,
+            "output_tokens": 10,
+            "total_tokens": 30,
+            "cost_usd": 0.002,
+        },
     }
 
     lines = detail_lines(_run(tokens_by_role=tokens_by_role))
@@ -204,19 +259,21 @@ def test_empty_tokens_by_role_yields_no_token_lines_and_does_not_raise():
 def test_detail_lines_models_used_includes_runner_model_calls_tokens_and_windows():
     from alloy.limits import window
 
-    models_used = [{
-        "runner": "claude-write",
-        "model": "fable",
-        "calls": 3,
-        "total_tokens": 12000,
-        "windows": {
-            "five_hour": window("five_hour", "5h", 42.0, None),
-            "seven_day": window("seven_day", "weekly", 61.0, None),
-            "seven_day_fable": window("seven_day_fable", "weekly fable", 12.0, None, model="fable"),
-        },
-    }]
+    models_used = [
+        {
+            "runner": "claude-write",
+            "model": "fable",
+            "calls": 3,
+            "total_tokens": 12000,
+            "windows": {
+                "five_hour": window("five_hour", "5h", 42.0, None),
+                "seven_day": window("seven_day", "weekly", 61.0, None),
+                "seven_day_fable": window("seven_day_fable", "weekly fable", 12.0, None, model="fable"),
+            },
+        }
+    ]
 
-    lines = detail_lines(_run(models_used=models_used))
+    lines = detail_lines(_run(models_used=models_used), usage_style="used")
 
     model_line = next(line for line in lines if "claude-write:fable" in line)
     assert " 3 " in model_line
@@ -226,13 +283,15 @@ def test_detail_lines_models_used_includes_runner_model_calls_tokens_and_windows
 
 
 def test_detail_lines_models_used_with_empty_windows_has_no_percent():
-    models_used = [{
-        "runner": "codex",
-        "model": "gpt-5",
-        "calls": 1,
-        "total_tokens": 100,
-        "windows": {},
-    }]
+    models_used = [
+        {
+            "runner": "codex",
+            "model": "gpt-5",
+            "calls": 1,
+            "total_tokens": 100,
+            "windows": {},
+        }
+    ]
 
     lines = detail_lines(_run(models_used=models_used))
 
@@ -546,8 +605,7 @@ def test_format_detail_nerd_per_role_token_bars_scale_to_largest_role():
     text = format_detail(run, 100, log_dir, mode="nerd")
 
     role_lines = {
-        role: next(line for line in text.split("\n") if role in line)
-        for role in ("implement", "critic", "context")
+        role: next(line for line in text.split("\n") if role in line) for role in ("implement", "critic", "context")
     }
     implement_bar = _token_bar_length(role_lines["implement"])
     critic_bar = _token_bar_length(role_lines["critic"])

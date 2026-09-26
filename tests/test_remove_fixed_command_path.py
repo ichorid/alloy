@@ -12,9 +12,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
-from alloy.models import ContextPacket
-from alloy.recipes.tdd_loop import verifier_prompt
 from conftest import (
     critic_entry,
     implement_entry,
@@ -25,6 +22,9 @@ from conftest import (
     write_tests_entry,
 )
 from support import make_harness
+
+from alloy.models import ContextPacket
+from alloy.recipes.tdd_loop import verifier_prompt
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ALLOY = REPO_ROOT / "src" / "alloy"
@@ -126,7 +126,9 @@ def test_verifier_prompt_lists_repository_hints_section():
 
 
 async def test_verifier_prompt_includes_autodetected_cargo_hint_when_context_has_none(
-    project, alloy_home, fake_harnesses,
+    project,
+    alloy_home,
+    fake_harnesses,
 ):
     (project / "Cargo.toml").write_text(
         '[package]\nname = "demo"\nversion = "0.1.0"\n',

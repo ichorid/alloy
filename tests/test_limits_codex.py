@@ -88,7 +88,9 @@ def codex_home(tmp_path: Path) -> Path:
     return tmp_path / "home"
 
 
-def test_probe_cross_file_windows_from_codex_status_from_newest_token_count(codex_home: Path):
+def test_probe_cross_file_windows_from_codex_status_from_newest_token_count(
+    codex_home: Path,
+):
     older_mtime = 1_700_000_000.0
     newer_mtime = 1_800_000_000.0
     write_rollout(

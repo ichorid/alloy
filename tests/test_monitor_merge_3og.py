@@ -43,9 +43,7 @@ def _snapshot(
         "ready_capped_at": 1000,
         "lifetime": {"done": 0, "failed": 0, "cancelled": 0},
         "runs": list(runs),
-        "queue": queue
-        if queue is not None
-        else {"ready": [], "ready_total": 0, "blocked": []},
+        "queue": queue if queue is not None else {"ready": [], "ready_total": 0, "blocked": []},
         "epics": list(epics),
     }
 

@@ -31,8 +31,16 @@ def store(tmp_path: Path) -> Store:
 
 
 def _run(store: Store, run_id: str = "r1", bead: str = "b-1") -> str:
-    store.create_run(run_id=run_id, bead_id=bead, thread_id=run_id, recipe="tdd-loop",
-                     repo=Path("/repo"), worktree=None, branch=None, log_dir=None)
+    store.create_run(
+        run_id=run_id,
+        bead_id=bead,
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=Path("/repo"),
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
     return run_id
 
 
@@ -118,8 +126,15 @@ def test_concurrent_writers_never_interleave_lines(tmp_path):
 
 
 def test_format_line_is_a_single_greppable_line():
-    line = format_line({"ts": "2026-01-01T00:00:00.5+00:00", "event": "needs-human",
-                        "bead": "b-1", "run": "r1", "reason": "two\nlines"})
+    line = format_line(
+        {
+            "ts": "2026-01-01T00:00:00.5+00:00",
+            "event": "needs-human",
+            "bead": "b-1",
+            "run": "r1",
+            "reason": "two\nlines",
+        }
+    )
     assert line == "2026-01-01T00:00:00 needs-human b-1 run=r1 two lines"
 
 

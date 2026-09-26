@@ -37,6 +37,8 @@ from alloy.recipes.tdd_loop import (
     tests_prompt,
     verifier_prompt,
 )
+
+
 def _load_fake_module():
     path = Path(__file__).parent / "fakebin" / "_fake.py"
     spec = importlib.util.spec_from_file_location("alloy_test_fake", path)
@@ -73,11 +75,7 @@ BASELINE_CHECKS = [
         "purpose": "Confirm slugify tests fail before implementation",
     }
 ]
-DIFF = (
-    "diff --git a/mypkg/__init__.py b/mypkg/__init__.py\n"
-    "+++ b/mypkg/__init__.py\n"
-    "+def slugify(t): return t\n"
-)
+DIFF = "diff --git a/mypkg/__init__.py b/mypkg/__init__.py\n+++ b/mypkg/__init__.py\n+def slugify(t): return t\n"
 CHECK_RESULT = {
     "command": "python -m pytest -q tests/test_slugify.py",
     "exit_code": 1,
@@ -125,11 +123,7 @@ HARVEST_EXISTING_LESSONS = {
     "alloy:lesson:prior-a": "Run targeted tests before the full suite.",
 }
 
-TDD_LOOP_ROLE_MARKERS = tuple(
-    (role, marker)
-    for role, marker in ROLE_MARKERS
-    if role in PROMPT_ROLES
-)
+TDD_LOOP_ROLE_MARKERS = tuple((role, marker) for role, marker in ROLE_MARKERS if role in PROMPT_ROLES)
 
 # Distinctive rule sentences that must survive the refactor (grep list).
 RULE_SENTENCES = [
@@ -137,8 +131,8 @@ RULE_SENTENCES = [
     "Never claim to have",
     "run anything yourself",
     "you never run anything yourself",
-    "Do not answer \"done\" if tests are failing",
-    "Do not answer \"done\" if the diff is empty",
+    'Do not answer "done" if tests are failing',
+    'Do not answer "done" if the diff is empty',
     "The tests must fail right now, because the behavior does not exist yet",
     "do not run the whole test suite -- run only the tests you wrote",
     "do not run the whole test suite -- run the tests relevant to your change",
@@ -157,9 +151,7 @@ def _join_layers(
     task: str = "",
     volatile: str = "",
 ) -> str:
-    return LAYER_SEPARATOR.join(
-        layer for layer in (static, project, run, task, volatile) if layer
-    )
+    return LAYER_SEPARATOR.join(layer for layer in (static, project, run, task, volatile) if layer)
 
 
 def _common_prefix(left: str, right: str) -> str:
@@ -236,13 +228,16 @@ _TESTS_TASK = f"""{BRIEF}
 _IMPLEMENT_STATIC = f"""Implement the smallest change that makes the failing tests pass.
 
 Rules:
-- Change implementation code, not the tests, unless a test is provably wrong about the stated acceptance criteria -- and say so explicitly if you do.
+- Change implementation code, not the tests, unless a test is provably wrong about the stated acceptance \
+criteria -- and say so explicitly if you do.
 - A bug in tests written for THIS task is in scope: use the tests provably wrong permission above, not a <bug> block.
 - Do not disable, skip or loosen assertions to get green.
 - Keep the change minimal and consistent with the repo's conventions.
-- Alloy owns task tracking, verification and git: do not run `bd`, do not commit, and do not run the whole test suite -- run the tests relevant to your change; Alloy runs the full suite when you finish.
+- Alloy owns task tracking, verification and git: do not run `bd`, do not commit, and do not run the whole \
+test suite -- run the tests relevant to your change; Alloy runs the full suite when you finish.
 
-Finish with one paragraph inside <summary> and </summary> tags describing what you changed and why, including 'tests edited: <paths or none>'.
+Finish with one paragraph inside <summary> and </summary> tags describing what you changed and why, including \
+'tests edited: <paths or none>'.
 
 {BUG_PROTOCOL}"""
 
@@ -459,14 +454,11 @@ def expected_golden(role: str) -> str:
 
 
 def _fixture_prompt(role: str) -> str:
-    if role == "context":
-        return context_prompt(BRIEF, ACCEPTANCE)
-    if role == "estimate":
-        return estimate_prompt(BRIEF, ACCEPTANCE, CONTEXT)
-    if role == "tests":
-        return tests_prompt(BRIEF, ACCEPTANCE, CONTEXT)
-    if role == "implement":
-        return implement_prompt(
+    factories = {
+        "context": lambda: context_prompt(BRIEF, ACCEPTANCE),
+        "estimate": lambda: estimate_prompt(BRIEF, ACCEPTANCE, CONTEXT),
+        "tests": lambda: tests_prompt(BRIEF, ACCEPTANCE, CONTEXT),
+        "implement": lambda: implement_prompt(
             BRIEF,
             ACCEPTANCE,
             CONTEXT,
@@ -474,9 +466,8 @@ def _fixture_prompt(role: str) -> str:
             [],
             None,
             BASELINE_CHECKS,
-        )
-    if role == "verifier":
-        return verifier_prompt(
+        ),
+        "verifier": lambda: verifier_prompt(
             brief=BRIEF,
             acceptance=ACCEPTANCE,
             context=CONTEXT,
@@ -488,17 +479,15 @@ def _fixture_prompt(role: str) -> str:
             checks_left_run=5,
             history=ATTEMPT_HISTORY,
             baseline_checks=BASELINE_CHECKS,
-        )
-    if role == "acceptance":
-        return acceptance_prompt(
+        ),
+        "acceptance": lambda: acceptance_prompt(
             ACCEPTANCE,
             DIFF,
             ["tests/test_slugify.py"],
             [CHECK_RESULT],
             None,
-        )
-    if role == "judge":
-        return judge_prompt(
+        ),
+        "judge": lambda: judge_prompt(
             BRIEF,
             ACCEPTANCE,
             CONTEXT,
@@ -507,18 +496,16 @@ def _fixture_prompt(role: str) -> str:
             ATTEMPT_HISTORY,
             1,
             LIMITS_NOTE,
-        )
-    if role == "critic":
-        return critic_prompt(EVIDENCE)
-    if role == "synthesize":
-        return synthesize_prompt(EVIDENCE, CRITIQUES)
-    if role == "harvest":
-        return harvest_prompt(
+        ),
+        "critic": lambda: critic_prompt(EVIDENCE),
+        "synthesize": lambda: synthesize_prompt(EVIDENCE, CRITIQUES),
+        "harvest": lambda: harvest_prompt(
             _HARVEST_EVIDENCE,
             human_note="",
             existing_lessons=HARVEST_EXISTING_LESSONS,
-        )
-    raise KeyError(role)
+        ),
+    }
+    return factories[role]()
 
 
 def _implement_prompt_iteration_two() -> str:
@@ -668,9 +655,7 @@ def test_verifier_prompt_consecutive_checks_share_prefix_through_task_layer():
 
 
 def test_rule_sentences_preserved_in_golden_files():
-    golden_text = "\n".join(
-        (GOLDEN_DIR / f"{role}.txt").read_text(encoding="utf-8") for role in PROMPT_ROLES
-    )
+    golden_text = "\n".join((GOLDEN_DIR / f"{role}.txt").read_text(encoding="utf-8") for role in PROMPT_ROLES)
     missing = [sentence for sentence in RULE_SENTENCES if sentence not in golden_text]
     assert missing == []
 
@@ -722,9 +707,7 @@ def test_judge_prompt_excludes_volatile_markers_from_stable_layers():
         "log_path": f"/logs/{MARKER_RUN_ID}/check-1.log",
         "output_tail": f"failure rooted at {MARKER_WORKTREE}",
     }
-    stable = assemble(
-        JUDGE_STATIC, "", _run_layer(CONTEXT), _task_layer(BRIEF, ACCEPTANCE), ""
-    ).text
+    stable = assemble(JUDGE_STATIC, "", _run_layer(CONTEXT), _task_layer(BRIEF, ACCEPTANCE), "").text
     prompt = judge_prompt(
         BRIEF,
         ACCEPTANCE,
@@ -766,7 +749,7 @@ def test_verifier_prompt_excludes_volatile_markers_from_stable_layers():
         acceptance=ACCEPTANCE,
         context=CONTEXT,
         diff=DIFF,
-        changed_files=[f"mypkg/__init__.py", MARKER_WORKTREE],
+        changed_files=["mypkg/__init__.py", MARKER_WORKTREE],
         checks_this_run=[check_with_markers],
         iteration=MARKER_ITERATION,
         checks_left_iteration=2,

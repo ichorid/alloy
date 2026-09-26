@@ -10,6 +10,7 @@ the harvest path reads lessons from state.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import shutil
@@ -18,13 +19,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-from alloy.beads import BeadsClient
-from alloy.models import LESSON_KEY_PREFIX, with_provenance
-from alloy.recipes import tdd_loop
-from alloy.runtime import RunContext
-from alloy.runners import RunnerRegistry
-from alloy.store import Store
 from conftest import (
     FAKE_BD_SOURCE,
     FAKE_RUNNERS,
@@ -39,6 +33,13 @@ from conftest import (
     write_tests_entry,
 )
 from support import await_role, load_config, make_bead, make_harness
+
+from alloy.beads import BeadsClient
+from alloy.models import LESSON_KEY_PREFIX, with_provenance
+from alloy.recipes import tdd_loop
+from alloy.runners import RunnerRegistry
+from alloy.runtime import RunContext
+from alloy.store import Store
 
 RUN_ID = "harvest-snapshot-run"
 BEAD_ID = "alloy-muh"
@@ -210,8 +211,9 @@ def _make_run_context(
 
 
 def _harvest_function_body() -> str:
-    text = Path(tdd_loop.__file__).read_text(encoding="utf-8")
-    return text.split("async def harvest")[1].split("\n    def remember_lesson")[0]
+    from alloy.recipes import workflow_nodes
+
+    return inspect.getsource(workflow_nodes._make_node_harvest)
 
 
 def test_harvest_wires_existing_lessons_from_state_memory_lessons():
@@ -221,10 +223,10 @@ def test_harvest_wires_existing_lessons_from_state_memory_lessons():
     assert "ctx.project_memory()" not in body
 
 
-
-
 def test_initial_state_snapshots_lesson_bodies_in_memory_lessons(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """initial_state must stash provenance-stripped alloy:lesson:* bodies on state."""
     beads = _memory_beads(project, fake_workflow)
@@ -242,7 +244,9 @@ def test_initial_state_snapshots_lesson_bodies_in_memory_lessons(
 
 
 async def test_harvest_uses_run_start_lessons_when_bd_lessons_change_before_harvest(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """Harvest prompt must list run-start lessons even if bd memories change late."""
     fake_workflow.configure(
@@ -269,7 +273,9 @@ async def test_harvest_uses_run_start_lessons_when_bd_lessons_change_before_harv
 
 
 async def test_harvest_respects_empty_memory_lessons_override_over_live_bd(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """Harvest must read memory_lessons from state, not live bd, when they differ."""
     fake_workflow.configure(
@@ -296,7 +302,9 @@ async def test_harvest_respects_empty_memory_lessons_override_over_live_bd(
 
 
 async def test_bd_memories_invoked_once_when_harvest_reads_existing_lessons(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """A DONE run through harvest with stored lessons must hit bd memories once."""
     fake_workflow.configure(

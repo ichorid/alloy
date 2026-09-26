@@ -55,7 +55,13 @@ class EventLog:
     path: Path
 
     def emit(
-        self, event: str, *, bead: str, run: str | None = None, reason: str = "", **extra: Any
+        self,
+        event: str,
+        *,
+        bead: str,
+        run: str | None = None,
+        reason: str = "",
+        **extra: Any,
     ) -> dict[str, Any]:
         record: dict[str, Any] = {
             "ts": utcnow().isoformat(),
@@ -77,9 +83,7 @@ class EventLog:
             pass  # the feed is a courtesy; it must never fail a run
         return record
 
-    def read(
-        self, *, since: datetime | None = None, only: frozenset[str] | None = None
-    ) -> list[dict[str, Any]]:
+    def read(self, *, since: datetime | None = None, only: frozenset[str] | None = None) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
         events = []
@@ -148,7 +152,11 @@ def _keep(record: dict[str, Any], since: datetime | None, only: frozenset[str] |
 
 def format_line(record: dict[str, Any]) -> str:
     """One greppable line: `<ts> <event> <bead> run=<id> <reason>`."""
-    parts = [str(record.get("ts", ""))[:19], str(record["event"]), str(record.get("bead", ""))]
+    parts = [
+        str(record.get("ts", ""))[:19],
+        str(record["event"]),
+        str(record.get("bead", "")),
+    ]
     if record.get("run"):
         parts.append(f"run={record['run']}")
     if record.get("reason"):

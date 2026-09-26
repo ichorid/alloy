@@ -5,12 +5,8 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from langgraph.types import Command
-
-from alloy import beads as bd
-from alloy.config import Limits
-from alloy.models import Outcome
 from conftest import IMPLEMENTATION, implement_entry, judge_entry
+from langgraph.types import Command
 from support import RemediationStep, bind_fake_remediator, make_bead, make_harness
 from test_triage import (
     RecordingBeadsClient,
@@ -19,6 +15,9 @@ from test_triage import (
     triage_config,
     triage_entry,
 )
+
+from alloy.config import Limits
+from alloy.models import Outcome
 
 
 def _agent_roles(fake_harnesses) -> list[str]:
@@ -29,9 +28,7 @@ def _interrupt_reason(paused: dict) -> str:
     return paused["__interrupt__"][0].value["reason"]
 
 
-async def test_blocking_bug_remediated_then_parent_resumes_at_implement(
-    project, alloy_home, fake_harnesses
-):
+async def test_blocking_bug_remediated_then_parent_resumes_at_implement(project, alloy_home, fake_harnesses):
     """Successful remediation merges a fix and the parent continues without an early implement."""
     beads = RecordingBeadsClient(bug_ids=["bug-fixed"])
     bead = make_bead(id="parent-remed", metadata={"alloy_recipe": "tdd-loop"})
@@ -45,9 +42,7 @@ async def test_blocking_bug_remediated_then_parent_resumes_at_implement(
             judge=[judge_entry("done")],
         )
     )
-    harness = make_harness(
-        project, alloy_home, config=triage_config(), bead=bead, beads=beads
-    )
+    harness = make_harness(project, alloy_home, config=triage_config(), bead=bead, beads=beads)
     remediator = bind_fake_remediator(
         harness,
         steps=[
@@ -85,9 +80,7 @@ async def test_blocking_bug_remediated_then_parent_resumes_at_implement(
     assert "do not undo it" in post_remediate_prompt.lower()
 
 
-async def test_remediation_waiting_human_parks_parent_then_resumes_at_implement(
-    project, alloy_home, fake_harnesses
-):
+async def test_remediation_waiting_human_parks_parent_then_resumes_at_implement(project, alloy_home, fake_harnesses):
     reason = "child needs architect sign-off"
     beads = RecordingBeadsClient(bug_ids=["bug-wait"])
     fake_harnesses.configure(
@@ -100,9 +93,7 @@ async def test_remediation_waiting_human_parks_parent_then_resumes_at_implement(
             judge=[judge_entry("done")],
         )
     )
-    harness = make_harness(
-        project, alloy_home, config=triage_config(), beads=beads
-    )
+    harness = make_harness(project, alloy_home, config=triage_config(), beads=beads)
     remediator = bind_fake_remediator(
         harness,
         steps=[RemediationStep(outcome=Outcome.WAITING_HUMAN.value, reason=reason)],
@@ -140,9 +131,7 @@ async def test_remediation_failed_merge_conflict_parks_parent_then_resumes_at_im
             judge=[judge_entry("done")],
         )
     )
-    harness = make_harness(
-        project, alloy_home, config=triage_config(), beads=beads
-    )
+    harness = make_harness(project, alloy_home, config=triage_config(), beads=beads)
     bind_fake_remediator(
         harness,
         steps=[RemediationStep(outcome=Outcome.FAILED.value, reason=reason)],
@@ -179,9 +168,7 @@ async def test_remediation_failed_scope_too_broad_parks_parent_then_resumes_at_i
             judge=[judge_entry("done")],
         )
     )
-    harness = make_harness(
-        project, alloy_home, config=triage_config(), beads=beads
-    )
+    harness = make_harness(project, alloy_home, config=triage_config(), beads=beads)
     bind_fake_remediator(
         harness,
         steps=[RemediationStep(outcome=Outcome.FAILED.value, reason=reason)],
@@ -221,9 +208,7 @@ async def test_two_blocking_bugs_remediate_sequentially_and_second_triage_sees_f
             judge=[judge_entry("done")],
         )
     )
-    harness = make_harness(
-        project, alloy_home, config=triage_config(), beads=beads
-    )
+    harness = make_harness(project, alloy_home, config=triage_config(), beads=beads)
     remediator = bind_fake_remediator(
         harness,
         steps=[
@@ -250,9 +235,7 @@ async def test_two_blocking_bugs_remediate_sequentially_and_second_triage_sees_f
     assert Outcome.DONE.value in second_prompt
 
 
-async def test_child_remediation_wall_time_counts_toward_parent_budget(
-    project, alloy_home, fake_harnesses
-):
+async def test_child_remediation_wall_time_counts_toward_parent_budget(project, alloy_home, fake_harnesses):
     config = replace(
         triage_config(),
         limits=Limits(
@@ -273,9 +256,7 @@ async def test_child_remediation_wall_time_counts_toward_parent_budget(
             judge=[judge_entry("retry", "still broken")],
         )
     )
-    harness = make_harness(
-        project, alloy_home, config=config, beads=beads
-    )
+    harness = make_harness(project, alloy_home, config=config, beads=beads)
     bind_fake_remediator(
         harness,
         steps=[RemediationStep(outcome=Outcome.DONE.value, sleep_s=2.0)],
@@ -291,9 +272,7 @@ async def test_child_remediation_wall_time_counts_toward_parent_budget(
     assert "max_wall_time" in reason
 
 
-async def test_child_run_blocking_bug_skips_remediator_and_files_unclaimed(
-    project, alloy_home, fake_harnesses
-):
+async def test_child_run_blocking_bug_skips_remediator_and_files_unclaimed(project, alloy_home, fake_harnesses):
     beads = RecordingBeadsClient(bug_ids=["bug-depth"])
     bead = make_bead(id="child-task", metadata={"alloy_recipe": "tdd-loop"})
     fake_harnesses.configure(

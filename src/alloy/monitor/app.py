@@ -8,14 +8,12 @@ docs/plans/execution-monitor.md.
 from __future__ import annotations
 
 import threading
-
 from typing import Any, Callable
 
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.coordinate import Coordinate
 from textual.events import Resize
 from textual.widgets import DataTable, Footer, Header, Static
 
@@ -42,6 +40,7 @@ from alloy.monitor.render import (
     title_line,
     visible_columns,
 )
+
 
 class MonitorFooter(Footer):
     """Footer with key chips and a right-aligned ``icons: <mode>`` marker."""
@@ -164,30 +163,10 @@ class MonitorApp(App[None]):
             self._refresh_lock.release()
         self.call_from_thread(self.apply_snapshot, snapshot)
 
-    def apply_snapshot(self, snapshot: dict[str, Any], *, width: int | None = None) -> None:
-        """Rebuild the runs table from the task tree, preserving cursor and expansion."""
-        self._snapshot = snapshot
-        table_width = width if width is not None else self.size.width
-        table = self.query_one("#runs", DataTable)
-        selected_key = self._selected_row_key(table)
-        scroll_x, scroll_y = table.scroll_x, table.scroll_y
-        self._marked_row = None
-        # Clearing rows only (not columns) leaves each Column's auto-width
-        # pinned to the widest value it has ever shown -- Textual's DataTable
-        # never shrinks it back down. Rebuild the columns fresh every refresh
-        # so a column goes narrow again once its long-lived content does.
-        table.clear(columns=True)
-        visible = visible_columns(table_width)
-        for column in visible:
-            label: str | Text = column
-            if column_align(column) == "right":
-                label = Text(column, justify="right")
-            table.add_column(label, key=column)
-        mode = resolve_mode(interactive=True)
-        tree_rows = task_tree_rows(snapshot, self._expanded, table_width, mode=mode)
+    @staticmethod
+    def _populate_rows(table, visible, tree_rows, mode) -> list[str]:
         row_keys: list[str] = []
         seen_keys: set[str] = set()
-        target: int | None = None
         for tree_row in tree_rows:
             if tree_row.key in seen_keys:
                 continue
@@ -210,6 +189,31 @@ class MonitorApp(App[None]):
                 row.append(value)
             row_height = 2 if tree_row.kind in ("queue", "epic") else 1
             table.add_row(*row, key=tree_row.key, height=row_height)
+        return row_keys
+
+    def apply_snapshot(self, snapshot: dict[str, Any], *, width: int | None = None) -> None:
+        """Rebuild the runs table from the task tree, preserving cursor and expansion."""
+        self._snapshot = snapshot
+        table_width = width if width is not None else self.size.width
+        table = self.query_one("#runs", DataTable)
+        selected_key = self._selected_row_key(table)
+        scroll_x, scroll_y = table.scroll_x, table.scroll_y
+        self._marked_row = None
+        # Clearing rows only (not columns) leaves each Column's auto-width
+        # pinned to the widest value it has ever shown -- Textual's DataTable
+        # never shrinks it back down. Rebuild the columns fresh every refresh
+        # so a column goes narrow again once its long-lived content does.
+        table.clear(columns=True)
+        visible = visible_columns(table_width)
+        for column in visible:
+            label: str | Text = column
+            if column_align(column) == "right":
+                label = Text(column, justify="right")
+            table.add_column(label, key=column)
+        mode = resolve_mode(interactive=True)
+        tree_rows = task_tree_rows(snapshot, self._expanded, table_width, mode=mode)
+        row_keys = self._populate_rows(table, visible, tree_rows, mode)
+        target: int | None = None
         if row_keys:
             if selected_key is None:
                 target = 0
@@ -280,7 +284,9 @@ class MonitorApp(App[None]):
             effective.update(self._probed_limits)
         mode = resolve_mode(interactive=True)
         lines = limits_lines(
-            {"limits": effective}, mode=mode, width=self.size.width,
+            {"limits": effective},
+            mode=mode,
+            width=self.size.width,
             usage_style=self.limits_style,
         )
         if not lines:
@@ -350,8 +356,7 @@ class MonitorApp(App[None]):
                 return None
             run_id = row_key.removeprefix("run/")
             run = next(
-                (entry for entry in self._snapshot.get("runs") or []
-                 if entry["run_id"] == run_id),
+                (entry for entry in self._snapshot.get("runs") or [] if entry["run_id"] == run_id),
                 None,
             )
             if run is None:
@@ -439,8 +444,7 @@ class MonitorApp(App[None]):
             bead_id = row_key.rsplit("/", 1)[-1]
             queue = snapshot.get("queue") or {}
             bead = next(
-                (b for b in (queue.get("ready") or []) + (queue.get("blocked") or [])
-                 if b.get("bead_id") == bead_id),
+                (b for b in (queue.get("ready") or []) + (queue.get("blocked") or []) if b.get("bead_id") == bead_id),
                 None,
             )
             if bead is None:
@@ -459,8 +463,7 @@ class MonitorApp(App[None]):
             epic_id = row_key.removeprefix("epic/")
             if "/" not in epic_id:
                 epic = next(
-                    (entry for entry in snapshot.get("epics") or []
-                     if entry.get("epic_id") == epic_id),
+                    (entry for entry in snapshot.get("epics") or [] if entry.get("epic_id") == epic_id),
                     None,
                 )
                 if epic is not None:
@@ -474,9 +477,7 @@ class MonitorApp(App[None]):
             return
         root = snapshot.get("root")
         log_dir = None if root is None else f"{root}/logs/{run['run_id']}"
-        detail.update(format_detail(
-            run, table_width, log_dir, mode=mode, usage_style=self.limits_style
-        ))
+        detail.update(format_detail(run, table_width, log_dir, mode=mode, usage_style=self.limits_style))
         detail.border_title = detail_panel_border_title(run)
         detail.border_subtitle = detail_panel_border_subtitle(run)
 

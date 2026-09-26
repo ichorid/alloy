@@ -11,10 +11,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+from conftest import (
+    acceptance_entry,
+    judge_entry,
+    verifier_run_entry,
+    verifier_stop_entry,
+)
+from support import LAND_RECIPE_NAME, load_land_config, make_bead, make_harness
+
 from alloy import recipes
 from alloy.config import load_recipe
-from conftest import acceptance_entry, judge_entry, verifier_run_entry, verifier_stop_entry
-from support import LAND_RECIPE_NAME, load_land_config, make_bead, make_harness
 
 FULL_SUITE = f"{sys.executable} -m pytest -q"
 FAILING_CHECK = 'sh -c "exit 1"'
@@ -22,7 +28,11 @@ FAILING_CHECK = 'sh -c "exit 1"'
 
 def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False,
+        ["git", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if check and proc.returncode != 0:
         raise AssertionError(f"git {' '.join(args)}: {proc.stderr.strip()}")
@@ -107,13 +117,18 @@ def test_load_land_recipe_yaml_and_registry():
 
 
 async def test_land_clean_merge_green_checks_ends_done_with_merge_commit(
-    project, alloy_home, fake_harnesses,
+    project,
+    alloy_home,
+    fake_harnesses,
 ):
     """Clean trial merge + green verifier check ends done; bead branch has merge commit."""
     fake_harnesses.configure(_land_script())
     bead = make_bead(id="land-done", status="review-ready")
     harness = make_harness(
-        project, alloy_home, bead=bead, recipe_name=LAND_RECIPE_NAME,
+        project,
+        alloy_home,
+        bead=bead,
+        recipe_name=LAND_RECIPE_NAME,
     )
     worktree, primary_head_before = _prepare_clean_merge(project, harness)
     bead_head_before = _head(worktree.path)
@@ -130,17 +145,24 @@ async def test_land_clean_merge_green_checks_ends_done_with_merge_commit(
 
 
 async def test_land_merge_conflict_ends_conflict_lists_file_without_merge_commit(
-    project, alloy_home, fake_harnesses,
+    project,
+    alloy_home,
+    fake_harnesses,
 ):
     """A conflicting target ends conflict with the file listed; no merge commit."""
     conflict_path = "mypkg/__init__.py"
     fake_harnesses.configure(_land_script())
     bead = make_bead(id="land-conflict", status="review-ready")
     harness = make_harness(
-        project, alloy_home, bead=bead, recipe_name=LAND_RECIPE_NAME,
+        project,
+        alloy_home,
+        bead=bead,
+        recipe_name=LAND_RECIPE_NAME,
     )
     worktree, bead_head_before, primary_head_before = _prepare_merge_conflict(
-        project, harness, conflict_path,
+        project,
+        harness,
+        conflict_path,
     )
 
     try:
@@ -157,7 +179,9 @@ async def test_land_merge_conflict_ends_conflict_lists_file_without_merge_commit
 
 
 async def test_land_red_required_check_ends_red_naming_command(
-    project, alloy_home, fake_harnesses,
+    project,
+    alloy_home,
+    fake_harnesses,
 ):
     """A required check that exits 1 ends red naming the command; primary untouched."""
     fake_harnesses.configure(
@@ -170,7 +194,10 @@ async def test_land_red_required_check_ends_red_naming_command(
     )
     bead = make_bead(id="land-red", status="review-ready")
     harness = make_harness(
-        project, alloy_home, bead=bead, recipe_name=LAND_RECIPE_NAME,
+        project,
+        alloy_home,
+        bead=bead,
+        recipe_name=LAND_RECIPE_NAME,
     )
     _prepare_clean_merge(project, harness)
     primary_head_before = _head(project)

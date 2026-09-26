@@ -7,10 +7,10 @@ its exit codes and JSON, not a mock of them.
 from __future__ import annotations
 
 import pytest
+from conftest import bd_create
 
 from alloy import beads as bd
 from alloy.beads import BeadsClient, BeadsError
-from conftest import bd_create
 
 
 def _show_json(client: BeadsClient, bead_id: str) -> dict:
@@ -95,12 +95,15 @@ def test_status_guard_refuses_a_stale_transition(client, beads_project):
 
 def test_alloy_metadata_points_back_at_the_run(client, beads_project):
     bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop")
-    client.set_metadata(bead_id, {
-        bd.META_RUN_ID: "abc123",
-        bd.META_WORKTREE: "/tmp/wt",
-        bd.META_BRANCH: "alloy/t-1",
-        bd.META_STAGE: "implement",
-    })
+    client.set_metadata(
+        bead_id,
+        {
+            bd.META_RUN_ID: "abc123",
+            bd.META_WORKTREE: "/tmp/wt",
+            bd.META_BRANCH: "alloy/t-1",
+            bd.META_STAGE: "implement",
+        },
+    )
 
     metadata = client.show(bead_id).metadata
     assert metadata[bd.META_RUN_ID] == "abc123"
@@ -109,8 +112,18 @@ def test_alloy_metadata_points_back_at_the_run(client, beads_project):
 
 def test_task_brief_carries_the_human_authored_fields(client, beads_project):
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
-    client._run(["update", bead_id, "-d", "Add slugify() to mypkg",
-                 "--design", "use a regex", "--acceptance", "handles unicode"])
+    client._run(
+        [
+            "update",
+            bead_id,
+            "-d",
+            "Add slugify() to mypkg",
+            "--design",
+            "use a regex",
+            "--acceptance",
+            "handles unicode",
+        ]
+    )
 
     bead = client.show(bead_id)
     brief = bead.task_brief()
@@ -130,8 +143,7 @@ def test_a_blocked_bead_is_not_ready(client, beads_project):
 
 
 def test_check_hint_is_read_from_the_bead(client, beads_project):
-    bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop",
-                        alloy_test_cmd="make check")
+    bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop", alloy_test_cmd="make check")
     assert client.show(bead_id).check_hint == "make check"
 
 
@@ -172,10 +184,7 @@ def test_create_bug_returns_a_properly_filed_bug_bead(client, beads_project):
     assert bug.metadata[bd.META_DISCOVERED_IN_RUN] == run_id
 
     deps = _show_json(client, bug_id).get("dependencies") or []
-    assert any(
-        dep.get("id") == parent_id and dep.get("dependency_type") == "discovered-from"
-        for dep in deps
-    )
+    assert any(dep.get("id") == parent_id and dep.get("dependency_type") == "discovered-from" for dep in deps)
 
     ready_ids = [bead.id for bead in client.ready()]
     assert parent_id in ready_ids
@@ -306,7 +315,8 @@ def snapshot_graph(client, beads_project):
 
 
 def test_project_snapshot_lists_epic_open_implementing_and_filed_bugs(
-    client, snapshot_graph,
+    client,
+    snapshot_graph,
 ):
     snapshot = client.project_snapshot(snapshot_graph["child_id"])
 
@@ -367,16 +377,18 @@ def read_client(fake_bd):
 
 
 def test_blocked_returns_beads_with_blocked_by(read_client, fake_bd):
-    fake_bd.configure({
-        "blocked": [
-            {
-                "id": "beads-1",
-                "title": "blocked task",
-                "status": "open",
-                "blocked_by": ["a", "b"],
-            },
-        ],
-    })
+    fake_bd.configure(
+        {
+            "blocked": [
+                {
+                    "id": "beads-1",
+                    "title": "blocked task",
+                    "status": "open",
+                    "blocked_by": ["a", "b"],
+                },
+            ],
+        }
+    )
 
     beads = read_client.blocked()
 
@@ -386,55 +398,71 @@ def test_blocked_returns_beads_with_blocked_by(read_client, fake_bd):
 
 
 def test_children_passes_parent_and_all_and_returns_open_and_closed(read_client, fake_bd):
-    fake_bd.configure({
-        "beads": [
-            {"id": "child-open", "title": "open child", "status": "open", "parent": "E"},
-            {"id": "child-closed", "title": "closed child", "status": "closed", "parent": "E"},
-            {"id": "other", "title": "other parent", "status": "open", "parent": "F"},
-        ],
-    })
+    fake_bd.configure(
+        {
+            "beads": [
+                {
+                    "id": "child-open",
+                    "title": "open child",
+                    "status": "open",
+                    "parent": "E",
+                },
+                {
+                    "id": "child-closed",
+                    "title": "closed child",
+                    "status": "closed",
+                    "parent": "E",
+                },
+                {
+                    "id": "other",
+                    "title": "other parent",
+                    "status": "open",
+                    "parent": "F",
+                },
+            ],
+        }
+    )
 
     children = read_client.children("E")
 
     assert {bead.id for bead in children} == {"child-open", "child-closed"}
     list_calls = [call for call in fake_bd.calls if call["command"] == "list"]
     assert list_calls, "children() should invoke bd list"
-    assert any(
-        "--parent" in call["argv"]
-        and "E" in call["argv"]
-        and "--all" in call["argv"]
-        for call in list_calls
-    )
+    assert any("--parent" in call["argv"] and "E" in call["argv"] and "--all" in call["argv"] for call in list_calls)
 
 
 def test_epic_for_returns_none_for_bead_without_parent(read_client, fake_bd):
-    fake_bd.configure({
-        "shows": {
-            "orphan": {"id": "orphan", "title": "root task", "issue_type": "task"},
-        },
-    })
+    fake_bd.configure(
+        {
+            "shows": {
+                "orphan": {"id": "orphan", "title": "root task", "issue_type": "task"},
+            },
+        }
+    )
 
     assert read_client.epic_for("orphan") is None
 
 
 def test_epic_for_returns_epic_id_for_grandchild(read_client, fake_bd):
-    fake_bd.configure({
-        "shows": {
-            "epic-1": {"id": "epic-1", "title": "Big Epic", "issue_type": "epic"},
-            "child-1": {
-                "id": "child-1",
-                "title": "Child",
-                "issue_type": "task",
-                "parent": "epic-1",
+    fake_bd.configure(
+        {
+            "shows": {
+                "epic-1": {"id": "epic-1", "title": "Big Epic", "issue_type": "epic"},
+                "child-1": {
+                    "id": "child-1",
+                    "title": "Child",
+                    "issue_type": "task",
+                    "parent": "epic-1",
+                },
+                "grand-1": {
+                    "id": "grand-1",
+                    "title": "Grandchild",
+                    "issue_type": "task",
+                    "parent": "child-1",
+                },
             },
-            "grand-1": {
-                "id": "grand-1",
-                "title": "Grandchild",
-                "issue_type": "task",
-                "parent": "child-1",
-            },
-        },
-    })
+        }
+    )
 
     assert read_client.epic_for("grand-1") == "epic-1"
 
@@ -443,33 +471,41 @@ def test_epic_for_returns_epic_id_for_grandchild(read_client, fake_bd):
 
 
 def test_epic_root_returns_top_epic_for_grandchild_under_sub_epic(read_client, fake_bd):
-    fake_bd.configure({
-        "shows": {
-            "epic-a": {"id": "epic-a", "title": "Top Epic", "issue_type": "epic"},
-            "sub-epic-b": {
-                "id": "sub-epic-b",
-                "title": "Sub Epic",
-                "issue_type": "epic",
-                "parent": "epic-a",
+    fake_bd.configure(
+        {
+            "shows": {
+                "epic-a": {"id": "epic-a", "title": "Top Epic", "issue_type": "epic"},
+                "sub-epic-b": {
+                    "id": "sub-epic-b",
+                    "title": "Sub Epic",
+                    "issue_type": "epic",
+                    "parent": "epic-a",
+                },
+                "grand-1": {
+                    "id": "grand-1",
+                    "title": "Grandchild task",
+                    "issue_type": "task",
+                    "parent": "sub-epic-b",
+                },
             },
-            "grand-1": {
-                "id": "grand-1",
-                "title": "Grandchild task",
-                "issue_type": "task",
-                "parent": "sub-epic-b",
-            },
-        },
-    })
+        }
+    )
 
     assert read_client.epic_root("grand-1") == "epic-a"
 
 
 def test_epic_root_returns_none_for_standalone_bead(read_client, fake_bd):
-    fake_bd.configure({
-        "shows": {
-            "standalone": {"id": "standalone", "title": "Lonely task", "issue_type": "task"},
-        },
-    })
+    fake_bd.configure(
+        {
+            "shows": {
+                "standalone": {
+                    "id": "standalone",
+                    "title": "Lonely task",
+                    "issue_type": "task",
+                },
+            },
+        }
+    )
 
     assert read_client.epic_root("standalone") is None
 
@@ -481,45 +517,47 @@ def test_epic_root_returns_none_on_bd_failure(read_client, fake_bd):
 
 
 def test_open_descendants_lists_open_non_epic_descendants(read_client, fake_bd):
-    fake_bd.configure({
-        "beads": [
-            {
-                "id": "sub-epic-b",
-                "title": "Sub Epic",
-                "issue_type": "epic",
-                "status": "open",
-                "parent": "epic-a",
-            },
-            {
-                "id": "task-open-1",
-                "title": "Open under sub",
-                "issue_type": "task",
-                "status": "open",
-                "parent": "sub-epic-b",
-            },
-            {
-                "id": "task-closed",
-                "title": "Closed under sub",
-                "issue_type": "task",
-                "status": "closed",
-                "parent": "sub-epic-b",
-            },
-            {
-                "id": "task-open-2",
-                "title": "Open under epic",
-                "issue_type": "task",
-                "status": "open",
-                "parent": "epic-a",
-            },
-            {
-                "id": "other-root",
-                "title": "Unrelated",
-                "issue_type": "task",
-                "status": "open",
-                "parent": "other-epic",
-            },
-        ],
-    })
+    fake_bd.configure(
+        {
+            "beads": [
+                {
+                    "id": "sub-epic-b",
+                    "title": "Sub Epic",
+                    "issue_type": "epic",
+                    "status": "open",
+                    "parent": "epic-a",
+                },
+                {
+                    "id": "task-open-1",
+                    "title": "Open under sub",
+                    "issue_type": "task",
+                    "status": "open",
+                    "parent": "sub-epic-b",
+                },
+                {
+                    "id": "task-closed",
+                    "title": "Closed under sub",
+                    "issue_type": "task",
+                    "status": "closed",
+                    "parent": "sub-epic-b",
+                },
+                {
+                    "id": "task-open-2",
+                    "title": "Open under epic",
+                    "issue_type": "task",
+                    "status": "open",
+                    "parent": "epic-a",
+                },
+                {
+                    "id": "other-root",
+                    "title": "Unrelated",
+                    "issue_type": "task",
+                    "status": "open",
+                    "parent": "other-epic",
+                },
+            ],
+        }
+    )
 
     descendants = read_client.open_descendants("epic-a")
 
@@ -527,17 +565,19 @@ def test_open_descendants_lists_open_non_epic_descendants(read_client, fake_bd):
 
 
 def test_open_descendants_returns_empty_on_bd_failure(read_client, fake_bd):
-    fake_bd.configure({
-        "beads": [
-            {
-                "id": "child-1",
-                "title": "Child",
-                "issue_type": "task",
-                "status": "open",
-                "parent": "epic-a",
-            },
-        ],
-    })
+    fake_bd.configure(
+        {
+            "beads": [
+                {
+                    "id": "child-1",
+                    "title": "Child",
+                    "issue_type": "task",
+                    "status": "open",
+                    "parent": "epic-a",
+                },
+            ],
+        }
+    )
     original_json = read_client._json
 
     def failing_json(args):

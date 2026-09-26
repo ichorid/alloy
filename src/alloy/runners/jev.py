@@ -104,14 +104,10 @@ class JevRunner:
         resume_session: str | None = None,  # stateless HTTP call: nothing to resume
     ) -> AgentResult:
         if self._fake_harness_mode():
-            raise RunnerUnavailable(
-                "jev: disabled under fake harness tests (use role fallback)"
-            )
+            raise RunnerUnavailable("jev: disabled under fake harness tests (use role fallback)")
         api_key = self._resolve_api_key()
         if not api_key:
-            raise RunnerUnavailable(
-                "jev: no API key (set TYPESAFE_API_KEY, or configure api_key/api_key_file)"
-            )
+            raise RunnerUnavailable("jev: no API key (set TYPESAFE_API_KEY, or configure api_key/api_key_file)")
         if not structured_schema:
             raise RunnerUnavailable("jev: requires a structured_schema with an enum property")
         enum_field, labels = _enum_field(structured_schema)
@@ -129,9 +125,7 @@ class JevRunner:
             "questions": {
                 enum_field: {
                     "type": "choice",
-                    "instructions": (
-                        f"Choose the single correct value of '{enum_field}' for this state."
-                    ),
+                    "instructions": (f"Choose the single correct value of '{enum_field}' for this state."),
                     "criteria": {label: label for label in labels},
                 }
             },
@@ -147,9 +141,17 @@ class JevRunner:
                 )
         except httpx.HTTPError as exc:
             return AgentResult(
-                runner=self.name, model=effective_model, ok=False, exit_code=-1,
-                text="", structured=None, started_at=started, ended_at=utcnow(),
-                duration_s=time.monotonic() - clock, prompt_hash=digest, prefix_hash=prefix,
+                runner=self.name,
+                model=effective_model,
+                ok=False,
+                exit_code=-1,
+                text="",
+                structured=None,
+                started_at=started,
+                ended_at=utcnow(),
+                duration_s=time.monotonic() - clock,
+                prompt_hash=digest,
+                prefix_hash=prefix,
                 error=f"jev request failed: {exc}",
             )
 
@@ -176,12 +178,15 @@ class JevRunner:
                 # Jev writes no prose; the distribution is the reason. It ends
                 # up in the bead note and `alloy run`'s outcome line.
                 ranked = sorted(probabilities.items(), key=lambda item: -item[1])
-                structured["reason"] = "jev p: " + ", ".join(
-                    f"{label} {value:.2f}" for label, value in ranked
-                )
+                structured["reason"] = "jev p: " + ", ".join(f"{label} {value:.2f}" for label, value in ranked)
 
         log_path = self._write_log(
-            digest, payload, body_text, response.status_code, probabilities, started=started
+            digest,
+            payload,
+            body_text,
+            response.status_code,
+            probabilities,
+            started=started,
         )
         return AgentResult(
             runner=self.name,
@@ -195,7 +200,8 @@ class JevRunner:
             duration_s=duration,
             usage=usage,
             log_path=log_path,
-            prompt_hash=digest, prefix_hash=prefix,
+            prompt_hash=digest,
+            prefix_hash=prefix,
             error=None if ok else f"jev http {response.status_code}: {body_text[:500]}",
         )
 

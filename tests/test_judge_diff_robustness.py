@@ -26,6 +26,7 @@ TDD_LOOP = REPO_ROOT / "src" / "alloy" / "recipes" / "tdd_loop.py"
 SMALL_MARKER = "SMALL_UNIQUE_MARKER_5wb1"
 PER_FILE_CLIP = 4000
 
+
 @pytest.fixture
 def manager(project, tmp_path):
     return WorktreeManager(repo=project, root=tmp_path / "worktrees")
@@ -49,11 +50,7 @@ EXPECTED_JUNK_PATTERNS = {
 def _file_diff(path: str, body: str) -> str:
     lines = body.splitlines() or [""]
     header = (
-        f"diff --git a/{path} b/{path}\n"
-        "new file mode 100644\n"
-        "index 0000000..1111111\n"
-        f"--- /dev/null\n"
-        f"+++ b/{path}\n"
+        f"diff --git a/{path} b/{path}\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/{path}\n"
     )
     hunk = f"@@ -0,0 +1,{len(lines)} @@\n"
     content = "\n".join(f"+{line}" for line in lines)
@@ -138,7 +135,9 @@ def two_file_diff() -> str:
     return _two_file_diff()
 
 
-def test_judge_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(two_file_diff):
+def test_judge_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(
+    two_file_diff,
+):
     prompt = judge_prompt(
         "brief",
         "acceptance",
@@ -154,7 +153,9 @@ def test_judge_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(two_fi
     assert SMALL_MARKER in prompt
 
 
-def test_acceptance_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(two_file_diff):
+def test_acceptance_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(
+    two_file_diff,
+):
     prompt = acceptance_prompt(
         "acceptance",
         two_file_diff,
@@ -167,7 +168,9 @@ def test_acceptance_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(t
     assert SMALL_MARKER in prompt
 
 
-def test_verifier_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(two_file_diff):
+def test_verifier_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(
+    two_file_diff,
+):
     prompt = verifier_prompt(
         brief="brief",
         acceptance="acceptance",

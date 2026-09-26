@@ -7,12 +7,12 @@ import os
 from datetime import datetime
 
 import pytest
+from conftest import bd_create
 
 from alloy import scheduler as scheduler_module
 from alloy.engine import Engine, RunResult
 from alloy.paths import AlloyPaths
 from alloy.scheduler import Scheduler, read_pid
-from conftest import bd_create
 
 
 def read_session(paths: AlloyPaths) -> dict | None:
@@ -39,7 +39,9 @@ async def test_serve_writes_scheduler_session_with_timestamps(scheduler):
 
 
 async def test_serve_scheduler_session_has_null_ended_at_while_running(
-    scheduler, beads_project, monkeypatch,
+    scheduler,
+    beads_project,
+    monkeypatch,
 ):
     """While serve() is active, scheduler.json has ended_at null."""
     bd_create(beads_project, "task", alloy_recipe="tdd-loop")

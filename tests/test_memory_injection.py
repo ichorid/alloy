@@ -18,14 +18,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-from alloy.beads import BeadsClient
-from alloy.config import MemorySpec
-from alloy.models import ProjectMemory
-from alloy.recipes import tdd_loop
-from alloy.runtime import RunContext
-from alloy.runners import RunnerRegistry
-from alloy.store import Store
 from conftest import (
     FAKE_BD_SOURCE,
     FAKE_RUNNERS,
@@ -39,6 +31,14 @@ from conftest import (
     write_tests_entry,
 )
 from support import await_role, load_config, make_bead, make_harness
+
+from alloy.beads import BeadsClient
+from alloy.config import MemorySpec
+from alloy.models import ProjectMemory
+from alloy.recipes import tdd_loop
+from alloy.runners import RunnerRegistry
+from alloy.runtime import RunContext
+from alloy.store import Store
 
 # Contract pinned by these tests (stable for golden prompts downstream).
 BEAD_DESIGN_OUTRANKS_MEMORY = "Bead design notes outrank project memory."
@@ -164,9 +164,7 @@ def _memory_beads(project: Path, fake_workflow: FakeWorkflow) -> CountingBeadsCl
 # ---------------------------------------------------------------------------
 
 
-async def test_memory_layer_reaches_context_estimate_tests_implement_verifier_judge(
-    project, alloy_home, fake_workflow
-):
+async def test_memory_layer_reaches_context_estimate_tests_implement_verifier_judge(project, alloy_home, fake_workflow):
     """Every listed role receives the rendered memory block and the outrank sentence."""
     # An accept verdict bypasses the judge; escalate so the judge role is consulted too.
     fake_workflow.configure(
@@ -188,9 +186,7 @@ async def test_memory_layer_reaches_context_estimate_tests_implement_verifier_ju
             _assert_prompt_includes_memory_layer(call["prompt"], DEFAULT_MEMORIES)
 
 
-async def test_acceptance_prompt_omits_project_memory_layer(
-    project, alloy_home, fake_workflow
-):
+async def test_acceptance_prompt_omits_project_memory_layer(project, alloy_home, fake_workflow):
     """The acceptance classifier must not receive project memory."""
     fake_workflow.configure(_workflow_script(), memories=DEFAULT_MEMORIES)
     beads = _memory_beads(project, fake_workflow)
@@ -245,9 +241,7 @@ async def test_memory_block_snapshot_stable_when_bd_memories_change_between_iter
     assert beads.memories_calls == 1
 
 
-async def test_bd_memories_invoked_exactly_once_per_run(
-    project, alloy_home, fake_workflow
-):
+async def test_bd_memories_invoked_exactly_once_per_run(project, alloy_home, fake_workflow):
     fake_workflow.configure(_workflow_script(), memories=DEFAULT_MEMORIES)
     beads = _memory_beads(project, fake_workflow)
     harness = make_harness(project, alloy_home, beads=beads)
@@ -259,9 +253,7 @@ async def test_bd_memories_invoked_exactly_once_per_run(
     assert beads.memories_calls == 1
 
 
-async def test_memory_disabled_yields_empty_project_layer_in_runner_prompts(
-    project, alloy_home, fake_workflow
-):
+async def test_memory_disabled_yields_empty_project_layer_in_runner_prompts(project, alloy_home, fake_workflow):
     """memory.enabled=false must not inject the rendered block into any runner prompt."""
     fake_workflow.configure(_workflow_script(), memories=DEFAULT_MEMORIES)
     beads = _memory_beads(project, fake_workflow)
@@ -290,9 +282,7 @@ async def test_memory_disabled_yields_empty_project_layer_in_runner_prompts(
 # ---------------------------------------------------------------------------
 
 
-async def test_memory_max_iterations_hint_does_not_affect_check_limits(
-    project, alloy_home, fake_workflow, tmp_path
-):
+async def test_memory_max_iterations_hint_does_not_affect_check_limits(project, alloy_home, fake_workflow, tmp_path):
     """A memory mentioning max_iterations must not change ctx.check_limits()."""
     fake_workflow.configure({}, memories={"limits-hack": "max_iterations=99"})
     beads = _memory_beads(project, fake_workflow)

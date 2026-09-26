@@ -30,16 +30,27 @@ def store(tmp_path: Path) -> Store:
 
 def _make_run(store: Store, run_id: str, *, repo: Path | str = "/repo", pid: int | None = None) -> None:
     store.create_run(
-        run_id=run_id, bead_id=f"bead-{run_id}", thread_id=run_id, recipe="tdd-loop",
-        repo=Path(repo), worktree=None, branch=None, log_dir=None,
+        run_id=run_id,
+        bead_id=f"bead-{run_id}",
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=Path(repo),
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )
     if pid is not None:
         store.update_run(run_id, pid=pid)
 
 
 def _insert_inflight(
-    store: Store, call_id: str, run_id: str, *,
-    bead_id: str | None = None, role: str = "implement", runner: str = "codex",
+    store: Store,
+    call_id: str,
+    run_id: str,
+    *,
+    bead_id: str | None = None,
+    role: str = "implement",
+    runner: str = "codex",
     model: str | None = None,
 ) -> None:
     """Directly populates the `inflight_calls` table -- the schema this bead adds --
@@ -49,24 +60,45 @@ def _insert_inflight(
         conn.execute(
             "INSERT INTO inflight_calls (call_id, run_id, bead_id, role, runner, model, started_at)"
             " VALUES (?,?,?,?,?,?,?)",
-            (call_id, run_id, bead_id or f"bead-{run_id}", role, runner, model, utcnow().isoformat()),
+            (
+                call_id,
+                run_id,
+                bead_id or f"bead-{run_id}",
+                role,
+                runner,
+                model,
+                utcnow().isoformat(),
+            ),
         )
 
 
 def _agent_result(*, structured: dict | None = None, usage: dict | None = None) -> AgentResult:
     now = utcnow()
     return AgentResult(
-        runner="codex", model=None, ok=True, exit_code=0, text="done",
-        structured=structured, started_at=now, ended_at=now, duration_s=1.0,
-        usage=usage or {}, log_path="/tmp/log", prompt_hash="deadbeef",
+        runner="codex",
+        model=None,
+        ok=True,
+        exit_code=0,
+        text="done",
+        structured=structured,
+        started_at=now,
+        ended_at=now,
+        duration_s=1.0,
+        usage=usage or {},
+        log_path="/tmp/log",
+        prompt_hash="deadbeef",
     )
 
 
 def _finish(store: Store, run_id: str, call_id: str, *, role: str, usage: dict) -> None:
     _insert_inflight(store, call_id, run_id, role=role)
     store.finish_call(
-        call_id, run_id=run_id, bead_id=f"bead-{run_id}", role=role,
-        iteration=0, result=_agent_result(usage=usage),
+        call_id,
+        run_id=run_id,
+        bead_id=f"bead-{run_id}",
+        role=role,
+        iteration=0,
+        result=_agent_result(usage=usage),
     )
 
 
@@ -80,16 +112,22 @@ def dead_pid() -> int:
 # -- schema -------------------------------------------------------------
 
 
-def test_inflight_calls_table_exists_with_call_id_primary_key_and_run_id_index(store: Store):
+def test_inflight_calls_table_exists_with_call_id_primary_key_and_run_id_index(
+    store: Store,
+):
     with store.connect() as conn:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(inflight_calls)")}
-        pk_columns = {
-            row["name"] for row in conn.execute("PRAGMA table_info(inflight_calls)") if row["pk"]
-        }
-        indexes = {
-            row["name"] for row in conn.execute("PRAGMA index_list(inflight_calls)")
-        }
-    assert {"call_id", "run_id", "bead_id", "role", "runner", "model", "started_at"} <= columns
+        pk_columns = {row["name"] for row in conn.execute("PRAGMA table_info(inflight_calls)") if row["pk"]}
+        indexes = {row["name"] for row in conn.execute("PRAGMA index_list(inflight_calls)")}
+    assert {
+        "call_id",
+        "run_id",
+        "bead_id",
+        "role",
+        "runner",
+        "model",
+        "started_at",
+    } <= columns
     assert pk_columns == {"call_id"}
     assert indexes  # at least the run_id index from the plan doc
 
@@ -143,13 +181,19 @@ def test_active_calls_is_empty_when_nothing_is_in_flight(store: Store):
 # -- finish_call ------------------------------------------------------------
 
 
-def test_finish_call_deletes_the_inflight_row_and_inserts_an_agent_calls_row(store: Store):
+def test_finish_call_deletes_the_inflight_row_and_inserts_an_agent_calls_row(
+    store: Store,
+):
     _make_run(store, "run-1")
     _insert_inflight(store, "call-1", "run-1", role="implement", runner="codex")
 
     store.finish_call(
-        "call-1", run_id="run-1", bead_id="bead-run-1", role="implement",
-        iteration=2, result=_agent_result(),
+        "call-1",
+        run_id="run-1",
+        bead_id="bead-run-1",
+        role="implement",
+        iteration=2,
+        result=_agent_result(),
     )
 
     assert store.active_calls("run-1") == []
@@ -180,8 +224,12 @@ def test_finish_call_writes_both_statements_over_a_single_connection(store: Stor
     monkeypatch.setattr(store, "connect", counting_connect)
 
     store.finish_call(
-        "call-1", run_id="run-1", bead_id="bead-run-1", role="implement",
-        iteration=0, result=_agent_result(),
+        "call-1",
+        run_id="run-1",
+        bead_id="bead-run-1",
+        role="implement",
+        iteration=0,
+        result=_agent_result(),
     )
 
     assert len(connect_invocations) == 1
@@ -190,11 +238,20 @@ def test_finish_call_writes_both_statements_over_a_single_connection(store: Stor
 def test_structured_json_round_trips_a_judges_confidence(store: Store):
     _make_run(store, "run-1")
     _insert_inflight(store, "call-1", "run-1", role="judge")
-    decision = {"decision": "retry", "reason": "flaky test", "next_instructions": "", "confidence": 0.42}
+    decision = {
+        "decision": "retry",
+        "reason": "flaky test",
+        "next_instructions": "",
+        "confidence": 0.42,
+    }
 
     store.finish_call(
-        "call-1", run_id="run-1", bead_id="bead-run-1", role="judge",
-        iteration=0, result=_agent_result(structured=decision),
+        "call-1",
+        run_id="run-1",
+        bead_id="bead-run-1",
+        role="judge",
+        iteration=0,
+        result=_agent_result(structured=decision),
     )
 
     row = store.agent_calls("run-1")[0]
@@ -206,8 +263,12 @@ def test_structured_json_is_null_when_the_call_had_no_structured_output(store: S
     _insert_inflight(store, "call-1", "run-1")
 
     store.finish_call(
-        "call-1", run_id="run-1", bead_id="bead-run-1", role="implement",
-        iteration=0, result=_agent_result(structured=None),
+        "call-1",
+        run_id="run-1",
+        bead_id="bead-run-1",
+        role="implement",
+        iteration=0,
+        result=_agent_result(structured=None),
     )
 
     row = store.agent_calls("run-1")[0]
@@ -236,7 +297,9 @@ def test_a_freshly_inserted_inflight_row_has_no_pid_until_set(store: Store):
 # -- reconcile_inflight -------------------------------------------------
 
 
-def test_reconcile_inflight_removes_rows_for_dead_pid_runs_and_keeps_live_ones(store: Store):
+def test_reconcile_inflight_removes_rows_for_dead_pid_runs_and_keeps_live_ones(
+    store: Store,
+):
     _make_run(store, "dead-run", pid=dead_pid())
     _make_run(store, "live-run")  # create_run defaults pid to this test process, which is alive
     _insert_inflight(store, "call-dead", "dead-run")
@@ -269,9 +332,7 @@ def test_reconcile_inflight_kills_the_process_group_of_a_dead_runs_recorded_harn
     from alloy.procs import pid_alive
 
     _make_run(store, "dead-run", pid=dead_pid())
-    harness = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
-    )
+    harness = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
     try:
         _insert_inflight(store, "call-dead", "dead-run")
         store.set_call_pid("call-dead", harness.pid)
@@ -299,9 +360,7 @@ def test_reconcile_inflight_does_not_touch_the_harness_pid_of_a_live_run(store: 
     from alloy.procs import pid_alive
 
     _make_run(store, "live-run")  # create_run defaults pid to this test process, which is alive
-    harness = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
-    )
+    harness = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
     try:
         _insert_inflight(store, "call-live", "live-run")
         store.set_call_pid("call-live", harness.pid)
@@ -321,21 +380,45 @@ def test_reconcile_inflight_does_not_touch_the_harness_pid_of_a_live_run(store: 
 
 def test_token_totals_sums_normalized_usage_including_a_totals_only_shape(store: Store):
     _make_run(store, "run-1")
-    _finish(store, "run-1", "call-1", role="implement", usage={"input_tokens": 100, "output_tokens": 20})
-    _finish(store, "run-1", "call-2", role="implement", usage={"inputTokens": 50, "outputTokens": 5})
+    _finish(
+        store,
+        "run-1",
+        "call-1",
+        role="implement",
+        usage={"input_tokens": 100, "output_tokens": 20},
+    )
+    _finish(
+        store,
+        "run-1",
+        "call-2",
+        role="implement",
+        usage={"inputTokens": 50, "outputTokens": 5},
+    )
     _finish(store, "run-1", "call-3", role="judge", usage={"input_tokens": 200})  # totals-only shape
 
     totals = store.token_totals("run-1")
 
-    assert totals["input_tokens"] == 150   # totals-only record contributes 0, not None, to the sum
+    assert totals["input_tokens"] == 150  # totals-only record contributes 0, not None, to the sum
     assert totals["output_tokens"] == 25
     assert totals["total_tokens"] == 120 + 55 + 200
 
 
 def test_token_totals_by_role_keeps_roles_separate(store: Store):
     _make_run(store, "run-1")
-    _finish(store, "run-1", "call-1", role="implement", usage={"input_tokens": 100, "output_tokens": 20})
-    _finish(store, "run-1", "call-2", role="implement", usage={"inputTokens": 50, "outputTokens": 5})
+    _finish(
+        store,
+        "run-1",
+        "call-1",
+        role="implement",
+        usage={"input_tokens": 100, "output_tokens": 20},
+    )
+    _finish(
+        store,
+        "run-1",
+        "call-2",
+        role="implement",
+        usage={"inputTokens": 50, "outputTokens": 5},
+    )
     _finish(store, "run-1", "call-3", role="judge", usage={"input_tokens": 200})
 
     by_role = store.token_totals_by_role("run-1")
@@ -360,7 +443,13 @@ def test_token_totals_for_a_run_with_no_calls_is_all_zero(store: Store):
 
 def test_token_totals_cost_usd_is_none_when_no_call_reported_a_cost(store: Store):
     _make_run(store, "run-1")
-    _finish(store, "run-1", "call-1", role="implement", usage={"input_tokens": 100, "output_tokens": 20})
+    _finish(
+        store,
+        "run-1",
+        "call-1",
+        role="implement",
+        usage={"input_tokens": 100, "output_tokens": 20},
+    )
     _finish(store, "run-1", "call-2", role="judge", usage={"input_tokens": 200})
 
     assert store.token_totals("run-1")["cost_usd"] is None
@@ -369,11 +458,27 @@ def test_token_totals_cost_usd_is_none_when_no_call_reported_a_cost(store: Store
 
 def test_token_totals_cost_usd_sums_only_the_reported_costs(store: Store):
     _make_run(store, "run-1")
-    _finish(store, "run-1", "call-1", role="implement",
-            usage={"input_tokens": 100, "output_tokens": 20, "total_cost_usd": 0.25})
-    _finish(store, "run-1", "call-2", role="implement", usage={"input_tokens": 50, "output_tokens": 5})
-    _finish(store, "run-1", "call-3", role="judge",
-            usage={"input_tokens": 10, "output_tokens": 1, "total_cost_usd": 0.5})
+    _finish(
+        store,
+        "run-1",
+        "call-1",
+        role="implement",
+        usage={"input_tokens": 100, "output_tokens": 20, "total_cost_usd": 0.25},
+    )
+    _finish(
+        store,
+        "run-1",
+        "call-2",
+        role="implement",
+        usage={"input_tokens": 50, "output_tokens": 5},
+    )
+    _finish(
+        store,
+        "run-1",
+        "call-3",
+        role="judge",
+        usage={"input_tokens": 10, "output_tokens": 1, "total_cost_usd": 0.5},
+    )
 
     by_role = store.token_totals_by_role("run-1")
 
@@ -448,7 +553,9 @@ def test_run_status_totals_is_scoped_to_the_given_repo(store: Store, tmp_path: P
 # -- schema evolution -------------------------------------------------------
 
 
-def test_opening_store_against_a_pre_existing_db_without_the_new_schema_does_not_fail(tmp_path: Path):
+def test_opening_store_against_a_pre_existing_db_without_the_new_schema_does_not_fail(
+    tmp_path: Path,
+):
     """Simulates an `alloy.db` created before this bead: `agent_calls` exists but
     has no `structured_json` column, and `inflight_calls` does not exist at all.
     Opening it with the upgraded `Store` must not raise, and the new columns/
@@ -508,8 +615,12 @@ def test_opening_store_against_a_pre_existing_db_without_the_new_schema_does_not
     _make_run(store, "r1", repo=tmp_path)
     _insert_inflight(store, "call-1", "r1")
     store.finish_call(
-        "call-1", run_id="r1", bead_id="bead-r1", role="implement",
-        iteration=0, result=_agent_result(structured={"decision": "done"}),
+        "call-1",
+        run_id="r1",
+        bead_id="bead-r1",
+        role="implement",
+        iteration=0,
+        result=_agent_result(structured={"decision": "done"}),
     )
 
     row = store.agent_calls("r1")[0]
@@ -714,15 +825,24 @@ def test_opening_store_migrates_legacy_db_and_records_prefix_hash_on_new_calls(
 
 
 async def test_logs_json_includes_prefix_hash_for_agent_calls(
-    beads_project, alloy_home, fake_harnesses, monkeypatch,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
+    monkeypatch,
 ):
     """`alloy logs --json` surfaces prefix_hash recorded in the ledger."""
+    from conftest import (
+        bd_create,
+        context_entry,
+        implement_entry,
+        judge_entry,
+        write_tests_entry,
+    )
+    from support import load_config
     from typer.testing import CliRunner
 
     from alloy.cli import app
     from alloy.engine import Engine
-    from conftest import bd_create, context_entry, implement_entry, judge_entry, write_tests_entry
-    from support import load_config
 
     def script():
         return {
@@ -741,7 +861,15 @@ async def test_logs_json_includes_prefix_hash_for_agent_calls(
     runner = CliRunner()
     result = runner.invoke(
         app,
-        ["logs", bead_id, "--json", "--repo", str(beads_project), "--root", str(alloy_home)],
+        [
+            "logs",
+            bead_id,
+            "--json",
+            "--repo",
+            str(beads_project),
+            "--root",
+            str(alloy_home),
+        ],
     )
     assert result.exit_code == 0
     payload = json.loads(result.stdout)

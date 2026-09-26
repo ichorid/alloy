@@ -81,18 +81,14 @@ def test_icon_done_nerd_is_check_glyph() -> None:
         ("ASCII", "ascii"),
     ],
 )
-def test_resolve_mode_honours_valid_env(
-    monkeypatch: pytest.MonkeyPatch, env_value: str, expected: str
-) -> None:
+def test_resolve_mode_honours_valid_env(monkeypatch: pytest.MonkeyPatch, env_value: str, expected: str) -> None:
     monkeypatch.setenv("ALLOY_MONITOR_ICONS", env_value)
     assert resolve_mode(interactive=True) == expected
     assert resolve_mode(interactive=False) == expected
 
 
 @pytest.mark.parametrize("interactive", [True, False])
-def test_resolve_mode_invalid_env_returns_unicode(
-    monkeypatch: pytest.MonkeyPatch, interactive: bool
-) -> None:
+def test_resolve_mode_invalid_env_returns_unicode(monkeypatch: pytest.MonkeyPatch, interactive: bool) -> None:
     monkeypatch.setenv("ALLOY_MONITOR_ICONS", "bogus")
     assert resolve_mode(interactive=interactive) == "unicode"
 

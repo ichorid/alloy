@@ -21,7 +21,13 @@ from alloy import recipes
 from alloy.beads import Bead, BeadsClient
 from alloy.checkpoints import has_pending_interrupt, open_checkpointer, read_checkpoint
 from alloy.config import ConfigError, RecipeConfig, load_recipe
-from alloy.models import Outcome, parse_bug_where, regression_key, utcnow, with_provenance
+from alloy.models import (
+    Outcome,
+    parse_bug_where,
+    regression_key,
+    utcnow,
+    with_provenance,
+)
 from alloy.paths import AlloyPaths
 from alloy.procs import pid_alive, terminate_group, terminate_pid
 from alloy.runners import RunnerRegistry
@@ -34,7 +40,13 @@ from alloy.store import (
     RUN_WAITING_HUMAN,
     Store,
 )
-from alloy.worktree import Worktree, WorktreeError, WorktreeManager, branch_name, is_test_path
+from alloy.worktree import (
+    Worktree,
+    WorktreeError,
+    WorktreeManager,
+    branch_name,
+    is_test_path,
+)
 
 RECURSION_LIMIT = 200
 
@@ -97,24 +109,24 @@ class Engine:
             if not existing.get("paused_at"):
                 self.store.update_run(existing["run_id"], paused_at=existing["updated_at"])
             return await self._execute(
-                bead, existing["recipe"], run_id=existing["run_id"],
-                thread_id=existing["thread_id"], resume_payload=None,
+                bead,
+                existing["recipe"],
+                run_id=existing["run_id"],
+                thread_id=existing["thread_id"],
+                resume_payload=None,
             )
 
         name = recipe_name or bead.recipe
         if not name:
             raise EngineError(
-                f"{bead_id} has no recipe; set one with "
-                f"`bd update {bead_id} --set-metadata {bd.META_RECIPE}=tdd-loop`"
+                f"{bead_id} has no recipe; set one with `bd update {bead_id} --set-metadata {bd.META_RECIPE}=tdd-loop`"
             )
         # Everything that can be checked without touching the bead is checked
         # first: a claim followed by a crash used to strand the bead in
         # `implementing` with no run record for recovery to find.
         self.validate_recipe(name)
         if bead.status not in (bd.STATUS_READY, bd.STATUS_IMPLEMENTING):
-            raise EngineError(
-                f"{bead_id} is '{bead.status}'; only '{bd.STATUS_READY}' beads can start"
-            )
+            raise EngineError(f"{bead_id} is '{bead.status}'; only '{bd.STATUS_READY}' beads can start")
         claimed = False
         if bead.status == bd.STATUS_READY:
             if not self.beads.claim(bead_id):
@@ -168,12 +180,16 @@ class Engine:
                 terminate_group(int(harness_pid), grace_s=grace_s)
             self.store.discard_call(call["call_id"])
         self.store.finish_run(
-            record["run_id"], status=RUN_CANCELLED,
-            outcome=Outcome.CANCELLED.value, reason="cancelled by operator",
+            record["run_id"],
+            status=RUN_CANCELLED,
+            outcome=Outcome.CANCELLED.value,
+            reason="cancelled by operator",
         )
         self.beads.set_status(bead_id, bd.STATUS_READY)
-        self.beads.note(bead_id, f"alloy: run {record['run_id']} cancelled; "
-                                 f"worktree left at {record['worktree']}")
+        self.beads.note(
+            bead_id,
+            f"alloy: run {record['run_id']} cancelled; worktree left at {record['worktree']}",
+        )
         return True
 
     def validate_recipe(self, name: str) -> RecipeConfig:
@@ -202,19 +218,13 @@ class Engine:
             open_descendants = self.beads.open_descendants(bead_id)
             if open_descendants:
                 names = ", ".join(b.id for b in open_descendants)
-                raise EngineError(
-                    f"{bead_id} cannot land: it still has open descendants: {names}"
-                )
+                raise EngineError(f"{bead_id} cannot land: it still has open descendants: {names}")
         elif bead.status != bd.STATUS_REVIEW_READY:
-            raise EngineError(
-                f"{bead_id} is '{bead.status}'; only '{bd.STATUS_REVIEW_READY}' "
-                "beads can land"
-            )
+            raise EngineError(f"{bead_id} is '{bead.status}'; only '{bd.STATUS_REVIEW_READY}' beads can land")
         config = self.validate_recipe("land")
         if not self._commit_before_land(bead):
             raise EngineError(
-                f"landing {bead_id} refused: uncommitted work remains on "
-                f"{self._worktree_owner(bead)}'s worktree"
+                f"landing {bead_id} refused: uncommitted work remains on {self._worktree_owner(bead)}'s worktree"
             )
 
         original_recipe = bead.recipe
@@ -254,9 +264,7 @@ class Engine:
                 bead_id,
                 f"alloy: landing did not complete ({result.outcome}): {result.reason}",
             )
-            raise EngineError(
-                f"landing {bead_id} did not complete ({result.outcome}): {result.reason}"
-            )
+            raise EngineError(f"landing {bead_id} did not complete ({result.outcome}): {result.reason}")
 
         # The land run is done; `_settle` has parked the bead at
         # on_success_status (review-ready). Now move the target branch.
@@ -271,33 +279,28 @@ class Engine:
             self.beads.note(bead_id, f"alloy: landing parked -- {merged.reason}")
             raise EngineError(f"landing {bead_id} parked: {merged.reason}")
 
-        self.beads.set_metadata(bead_id, {
-            bd.META_LAND_STATE: "landed",
-            bd.META_LAND_SHA: merged.sha,
-        })
-        self.beads.note(
-            bead_id, f"alloy: landed {branch} into {target} as {merged.sha}"
+        self.beads.set_metadata(
+            bead_id,
+            {
+                bd.META_LAND_STATE: "landed",
+                bd.META_LAND_SHA: merged.sha,
+            },
         )
+        self.beads.note(bead_id, f"alloy: landed {branch} into {target} as {merged.sha}")
         self.beads.close(bead_id)
         worktrees.remove(owner_id, force=True, delete_branch=True)
         log.info("%s: landed %s into %s as %s", bead_id, branch, target, merged.sha)
-        return RunResult(bead_id, result.run_id, "landed",
-                         reason=result.reason, worktree=result.worktree)
+        return RunResult(
+            bead_id,
+            result.run_id,
+            "landed",
+            reason=result.reason,
+            worktree=result.worktree,
+        )
 
     # -- remediation ------------------------------------------------------
 
-    async def run_child(
-        self, bead_id: str, *, parent: RunContext, merge_gate: MergeGate | None = None
-    ) -> RunResult:
-        """Fix a bug bead from inside a parent run and merge the fix into it.
-
-        The parent's uncommitted work is parked in a WIP commit; the child is
-        cut from the parent's *base* (the defect predates the parent's work, so
-        it reproduces there against a green suite); when the child is done its
-        diff passes a deterministic guard and the merge gate before being
-        merged into the parent's worktree. Any failure leaves the parent tree
-        clean at the WIP commit.
-        """
+    def _claim_child(self, bead_id: str, parent: RunContext) -> tuple[bd.Bead, str]:
         parent_record = self.store.get_run(parent.run_id)
         if parent_record is None:
             raise EngineError(f"no run recorded for parent {parent.run_id}")
@@ -310,27 +313,40 @@ class Engine:
         recipe_name = bug.recipe or parent.recipe.name
         self.validate_recipe(recipe_name)
         if bug.status not in (bd.STATUS_READY, bd.STATUS_IMPLEMENTING):
-            raise EngineError(
-                f"{bead_id} is '{bug.status}'; only '{bd.STATUS_READY}' beads can start"
-            )
+            raise EngineError(f"{bead_id} is '{bug.status}'; only '{bd.STATUS_READY}' beads can start")
         if bug.status == bd.STATUS_READY and not self.beads.claim(bead_id):
             raise EngineError(f"{bead_id} was claimed by someone else")
+        return bug, recipe_name
+
+    async def run_child(self, bead_id: str, *, parent: RunContext, merge_gate: MergeGate | None = None) -> RunResult:
+        """Fix a bug bead from inside a parent run and merge the fix into it.
+
+        The parent's uncommitted work is parked in a WIP commit; the child is
+        cut from the parent's *base* (the defect predates the parent's work, so
+        it reproduces there against a green suite); when the child is done its
+        diff passes a deterministic guard and the merge gate before being
+        merged into the parent's worktree. Any failure leaves the parent tree
+        clean at the WIP commit.
+        """
+        bug, recipe_name = self._claim_child(bead_id, parent)
 
         worktrees = parent.worktrees
         # Read before the WIP commit: the parent's base is where its work
         # started, and the child must never see what came after.
         base = parent.worktree.base_commit
-        wip_sha = worktrees.commit_wip(
-            parent.worktree, f"alloy: wip before remediating {bead_id}"
-        )
+        wip_sha = worktrees.commit_wip(parent.worktree, f"alloy: wip before remediating {bead_id}")
         try:
             child_wt = worktrees.ensure_from(bead_id, base)
         except WorktreeError as exc:
             raise EngineError(str(exc)) from exc
 
         result = await self._execute(
-            bug, recipe_name, run_id=None, resume_payload=None,
-            thread_id=f"{parent.run_id}/{bead_id}", worktree=child_wt,
+            bug,
+            recipe_name,
+            run_id=None,
+            resume_payload=None,
+            thread_id=f"{parent.run_id}/{bead_id}",
+            worktree=child_wt,
             parent_run_id=parent.run_id,
         )
         if result.outcome != Outcome.DONE.value:
@@ -341,7 +357,9 @@ class Engine:
         touched = self._guarded_test_paths(worktrees, child_wt, base, wip_sha)
         if touched:
             return self._fail_child(
-                bug, result, parent,
+                bug,
+                result,
+                parent,
                 "test-file guard: the fix modifies test file(s) added by the parent's "
                 f"work in progress: {', '.join(touched)}",
             )
@@ -356,20 +374,33 @@ class Engine:
         merged = worktrees.merge_branch(parent.worktree, child_wt.branch)
         if not merged.ok:
             return self._fail_child(
-                bug, result, parent,
+                bug,
+                result,
+                parent,
                 f"merge conflict merging {child_wt.branch} into {parent.worktree.branch}: "
                 f"{', '.join(merged.conflict_files) or 'unknown files'}",
             )
 
-        note = (f"alloy: remediation of {bead_id} merged into {parent.worktree.branch} "
-                f"for {parent.bead.id} (parent run {parent.run_id})")
+        note = (
+            f"alloy: remediation of {bead_id} merged into {parent.worktree.branch} "
+            f"for {parent.bead.id} (parent run {parent.run_id})"
+        )
         self.beads.note(bead_id, note)
         self.beads.note(parent.bead.id, note)
-        log.info("%s: child %s merged into %s", parent.bead.id, bead_id, parent.worktree.branch)
+        log.info(
+            "%s: child %s merged into %s",
+            parent.bead.id,
+            bead_id,
+            parent.worktree.branch,
+        )
         return result
 
     def _guarded_test_paths(
-        self, worktrees: WorktreeManager, child_wt: Worktree, base: str, wip_sha: str | None
+        self,
+        worktrees: WorktreeManager,
+        child_wt: Worktree,
+        base: str,
+        wip_sha: str | None,
     ) -> list[str]:
         """Test files the parent's WIP commit added that the child changed.
 
@@ -385,31 +416,40 @@ class Engine:
             return []
         return worktrees.changed_paths(child_wt, wip_sha, until="HEAD", paths=touched)
 
-    def _fail_child(
-        self, bug: Bead, result: RunResult, parent: RunContext, reason: str
-    ) -> RunResult:
+    def _fail_child(self, bug: Bead, result: RunResult, parent: RunContext, reason: str) -> RunResult:
         """The child finished but its fix cannot land: record why on both sides.
         The parent tree is already clean at its WIP commit; the child branch
         stays for a human to inspect."""
-        self.store.finish_run(result.run_id, status=RUN_FAILED,
-                              outcome=Outcome.FAILED.value, reason=reason)
+        self.store.finish_run(
+            result.run_id,
+            status=RUN_FAILED,
+            outcome=Outcome.FAILED.value,
+            reason=reason,
+        )
         self.beads.set_status(bug.id, bd.STATUS_FAILED)
         self.beads.set_metadata(bug.id, {bd.META_STAGE: Outcome.FAILED.value})
-        self.beads.note(bug.id, f"alloy: remediation for {parent.bead.id} not merged -- {reason}. "
-                                f"Branch kept at {result.worktree}")
-        self.beads.note(parent.bead.id,
-                        f"alloy: remediation of {bug.id} not merged -- {reason}")
+        self.beads.note(
+            bug.id,
+            f"alloy: remediation for {parent.bead.id} not merged -- {reason}. Branch kept at {result.worktree}",
+        )
+        self.beads.note(parent.bead.id, f"alloy: remediation of {bug.id} not merged -- {reason}")
         key = regression_key(parse_bug_where(bug.description))
         if key and parent.recipe.memory.enabled:
             try:
                 self.beads.remember(
-                    key, with_provenance(bug.title, result.run_id, bug.id, utcnow().date()),
+                    key,
+                    with_provenance(bug.title, result.run_id, bug.id, utcnow().date()),
                 )
             except Exception:
                 log.warning("could not remember %s", key, exc_info=True)
         log.warning("%s: child %s not merged: %s", parent.bead.id, bug.id, reason)
-        return RunResult(bug.id, result.run_id, Outcome.FAILED.value, reason=reason,
-                         worktree=result.worktree)
+        return RunResult(
+            bug.id,
+            result.run_id,
+            Outcome.FAILED.value,
+            reason=reason,
+            worktree=result.worktree,
+        )
 
     def _refuse_if_live(self, bead_id: str, record: dict[str, Any] | None) -> None:
         if (
@@ -429,7 +469,12 @@ class Engine:
         return load_recipe(name, alloy_root=self.paths.shared_root, project=self.repo)
 
     def build_context(
-        self, bead: Bead, recipe_name: str, *, run_id: str, checkpointer: Any,
+        self,
+        bead: Bead,
+        recipe_name: str,
+        *,
+        run_id: str,
+        checkpointer: Any,
         worktree: Worktree | None = None,
         base_commit: str | None = None,
     ) -> RunContext:
@@ -446,7 +491,9 @@ class Engine:
                 # A shared (epic or owner) worktree: this bead's diff starts at
                 # the owner branch's HEAD right now, after any siblings' commits.
                 worktree = Worktree(
-                    worktree.bead_id, worktree.path, worktree.branch,
+                    worktree.bead_id,
+                    worktree.path,
+                    worktree.branch,
                     worktrees.head(worktree.path),
                 )
         log_dir = self.paths.run_logs(run_id)
@@ -479,11 +526,7 @@ class Engine:
 
     def _worktree_owner(self, bead: Bead) -> str:
         """The bead whose worktree/branch this bead's work lands on."""
-        return (
-            bead.metadata.get(bd.META_WORKTREE_OWNER)
-            or self.beads.epic_root(bead.id)
-            or bead.id
-        )
+        return bead.metadata.get(bd.META_WORKTREE_OWNER) or self.beads.epic_root(bead.id) or bead.id
 
     def _commit_before_land(self, bead: Bead) -> bool:
         """Commit any dirty work on the owner worktree before the land recipe runs.
@@ -589,33 +632,51 @@ class Engine:
                 recorded_base = prior.get("base_commit") if prior else None
             try:
                 ctx = self.build_context(
-                    bead, recipe_name, run_id=run_id, checkpointer=checkpointer,
-                    worktree=worktree, base_commit=recorded_base,
+                    bead,
+                    recipe_name,
+                    run_id=run_id,
+                    checkpointer=checkpointer,
+                    worktree=worktree,
+                    base_commit=recorded_base,
                 )
             except (ConfigError, KeyError, WorktreeError) as exc:
                 raise EngineError(str(exc)) from exc
 
             if fresh:
                 self.store.create_run(
-                    run_id=run_id, bead_id=bead.id, thread_id=thread_id, recipe=recipe_name,
-                    repo=self.repo, worktree=ctx.worktree.path, branch=ctx.worktree.branch,
-                    log_dir=ctx.log_dir, parent_run_id=parent_run_id,
+                    run_id=run_id,
+                    bead_id=bead.id,
+                    thread_id=thread_id,
+                    recipe=recipe_name,
+                    repo=self.repo,
+                    worktree=ctx.worktree.path,
+                    branch=ctx.worktree.branch,
+                    log_dir=ctx.log_dir,
+                    parent_run_id=parent_run_id,
                     base_commit=ctx.worktree.base_commit,
                 )
-                log.info("%s: run %s started (%s) in %s",
-                         bead.id, run_id, recipe_name, ctx.worktree.path)
+                log.info(
+                    "%s: run %s started (%s) in %s",
+                    bead.id,
+                    run_id,
+                    recipe_name,
+                    ctx.worktree.path,
+                )
             else:
                 self.store.reconcile_inflight()
                 self.store.mark_resumed(run_id)
                 self.store.update_run(run_id, status=RUN_RUNNING, pid=os.getpid())
                 log.info("%s: run %s resumed (%s)", bead.id, run_id, recipe_name)
 
-            self.beads.set_metadata(bead.id, {
-                bd.META_RUN_ID: run_id,
-                bd.META_WORKTREE: str(ctx.worktree.path),
-                bd.META_BRANCH: ctx.worktree.branch,
-                bd.META_RECIPE: recipe_name,
-            })
+            self.beads.set_metadata(
+                bead.id,
+                {
+                    bd.META_RUN_ID: run_id,
+                    bd.META_WORKTREE: str(ctx.worktree.path),
+                    bd.META_BRANCH: ctx.worktree.branch,
+                    bd.META_RECIPE: recipe_name,
+                },
+            )
             if bead.status != bd.STATUS_IMPLEMENTING:
                 self.beads.set_status(bead.id, bd.STATUS_IMPLEMENTING)
 
@@ -641,11 +702,17 @@ class Engine:
                 # leaves the run marked running -- which is what makes it
                 # recoverable later. Only a genuine error fails the task here.
                 log.exception("%s: run %s crashed", bead.id, run_id)
-                self.store.finish_run(run_id, status=RUN_FAILED,
-                                      outcome=Outcome.FAILED.value, reason=str(exc))
+                self.store.finish_run(
+                    run_id,
+                    status=RUN_FAILED,
+                    outcome=Outcome.FAILED.value,
+                    reason=str(exc),
+                )
                 self.beads.set_status(bead.id, bd.STATUS_FAILED)
-                self.beads.note(bead.id, f"alloy: run {run_id} crashed: {exc}. "
-                                         f"Worktree kept at {ctx.worktree.path}")
+                self.beads.note(
+                    bead.id,
+                    f"alloy: run {run_id} crashed: {exc}. Worktree kept at {ctx.worktree.path}",
+                )
                 raise
             except BaseException:
                 log.warning("%s: run %s interrupted; it stays resumable", bead.id, run_id)
@@ -656,16 +723,26 @@ class Engine:
             return result
 
     def _settle(
-        self, ctx: RunContext, bead: Bead, recipe_name: str, run_id: str, final: dict[str, Any]
+        self,
+        ctx: RunContext,
+        bead: Bead,
+        recipe_name: str,
+        run_id: str,
+        final: dict[str, Any],
     ) -> RunResult:
         config = ctx.recipe
         pending = final.get("__interrupt__")
         if pending:
             payload = _interrupt_payload(pending)
             retry_at = payload.get("retry_at") or None
-            self.store.update_run(run_id, status=RUN_WAITING_HUMAN, stage="waiting-human",
-                                  pid=None, retry_at=retry_at,
-                                  event_reason=str(payload.get("reason", "")))
+            self.store.update_run(
+                run_id,
+                status=RUN_WAITING_HUMAN,
+                stage="waiting-human",
+                pid=None,
+                retry_at=retry_at,
+                event_reason=str(payload.get("reason", "")),
+            )
             self.store.mark_paused(run_id)
             self.beads.set_status(bead.id, bd.STATUS_WAITING_HUMAN)
             self.beads.set_metadata(bead.id, {bd.META_STAGE: "waiting-human"})
@@ -675,9 +752,14 @@ class Engine:
                 f"alloy: waiting for human -- {payload.get('reason', '')} "
                 f"(resume with `alloy resume {bead.id}`{scheduled})",
             )
-            return RunResult(bead.id, run_id, Outcome.WAITING_HUMAN.value,
-                             reason=str(payload.get("reason", "")), interrupt=payload,
-                             worktree=str(ctx.worktree.path))
+            return RunResult(
+                bead.id,
+                run_id,
+                Outcome.WAITING_HUMAN.value,
+                reason=str(payload.get("reason", "")),
+                interrupt=payload,
+                worktree=str(ctx.worktree.path),
+            )
 
         outcome = final.get("outcome") or Outcome.FAILED.value
         reason = final.get("outcome_reason", "")
@@ -709,8 +791,7 @@ class Engine:
                 f"alloy: {recipe_name} failed after {final.get('iteration', 0)} iteration(s): "
                 f"{reason}. Worktree kept at {ctx.worktree.path}",
             )
-        return RunResult(bead.id, run_id, outcome, reason=reason,
-                         worktree=str(ctx.worktree.path))
+        return RunResult(bead.id, run_id, outcome, reason=reason, worktree=str(ctx.worktree.path))
 
     def _resumable_run(self, bead_id: str) -> dict[str, Any] | None:
         """A run left behind by a crash: marked running, but nobody is running it."""

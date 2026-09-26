@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from alloy.models import CheckRequest, VerifierAction
 from conftest import verifier_run_entry, verifier_run_many_entry, verifier_stop_entry
 from support import make_harness
 from test_workflow import verification_script
+
+from alloy.models import CheckRequest, VerifierAction
 
 CMD_A = 'sh -c "echo batch-a"'
 CMD_B = 'sh -c "echo batch-b"'
@@ -54,7 +55,9 @@ def test_verifier_check_requests_legacy_single_run_response_is_one_request():
 
 
 async def test_verifier_batch_response_records_three_subprocess_runs_in_one_agent_call(
-    project, alloy_home, fake_harnesses,
+    project,
+    alloy_home,
+    fake_harnesses,
 ):
     """One verifier LLM call naming three checks must execute all three before the next."""
     fake_harnesses.configure(
@@ -86,7 +89,5 @@ async def test_verifier_batch_response_records_three_subprocess_runs_in_one_agen
     assert {c["command"] for c in recorded} == batch_commands
     assert all(c["exit_code"] == 0 for c in recorded)
 
-    verifier_rows = [
-        row for row in harness.store.agent_calls(harness.run_id) if row["role"] == "verifier"
-    ]
+    verifier_rows = [row for row in harness.store.agent_calls(harness.run_id) if row["role"] == "verifier"]
     assert len(verifier_rows) == 2

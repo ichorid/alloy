@@ -15,10 +15,6 @@ import shutil
 from pathlib import Path
 
 import pytest
-
-from alloy.beads import BeadsClient
-from alloy.models import ContextPacket, parse_provenance
-from alloy.recipes.tdd_loop import CONTEXT_SCHEMA, context_prompt
 from conftest import (
     FAKE_BD_SOURCE,
     FAKE_RUNNERS,
@@ -31,6 +27,10 @@ from conftest import (
     write_tests_entry,
 )
 from support import make_harness
+
+from alloy.beads import BeadsClient
+from alloy.models import ContextPacket, parse_provenance
+from alloy.recipes.tdd_loop import CONTEXT_SCHEMA, context_prompt
 
 HUMAN_MEMORY_KEY = "conv"
 HUMAN_MEMORY_VALUE = "repo uses pathlib"
@@ -146,8 +146,7 @@ def _contradiction_note_calls(fake_workflow: FakeWorkflow) -> list[dict]:
     return [
         call
         for call in _bd_note_calls(fake_workflow)
-        if "contradiction" in call["argv"][2].lower()
-        or HUMAN_MEMORY_KEY in call["argv"][2]
+        if "contradiction" in call["argv"][2].lower() or HUMAN_MEMORY_KEY in call["argv"][2]
     ]
 
 
@@ -186,7 +185,9 @@ def test_context_packet_compact_caps_contradictions_at_five():
 
 
 async def test_context_flags_memory_contradiction_for_existing_key_only(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """One existing-key contradiction -> one review remember, one note, conv untouched."""
     fake_workflow.configure(

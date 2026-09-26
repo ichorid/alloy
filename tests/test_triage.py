@@ -5,10 +5,6 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from langgraph.types import Command
-
-from alloy import beads as bd
-from alloy.config import RoleSpec
 from conftest import (
     context_entry,
     critic_entry,
@@ -18,7 +14,11 @@ from conftest import (
     triage_entry,
     write_tests_entry,
 )
+from langgraph.types import Command
 from support import load_config, make_bead, make_harness
+
+from alloy import beads as bd
+from alloy.config import RoleSpec
 
 
 def script(**overrides):
@@ -40,7 +40,8 @@ def triage_config(**overrides) -> object:
     config = load_config()
     roles = dict(config.roles)
     fallback = overrides.pop(
-        "fallback", RoleSpec(runner="cursor", model="composer-2.5", timeout_minutes=5),
+        "fallback",
+        RoleSpec(runner="cursor", model="composer-2.5", timeout_minutes=5),
     )
     roles["triage"] = RoleSpec(
         runner=overrides.pop("runner", "jev"),
@@ -119,9 +120,7 @@ def _agent_roles(fake_harnesses) -> list[str]:
 # -- non-blocking: file at P3, continue to verify, run ends done ----------------
 
 
-async def test_non_blocking_bug_is_filed_and_run_completes(
-    project, alloy_home, fake_harnesses
-):
+async def test_non_blocking_bug_is_filed_and_run_completes(project, alloy_home, fake_harnesses):
     beads = RecordingBeadsClient()
     bead = make_bead(
         id="parent-1",
@@ -135,9 +134,7 @@ async def test_non_blocking_bug_is_filed_and_run_completes(
             triage=[triage_entry("non-blocking", "pre-existing defect")],
         )
     )
-    harness = make_harness(
-        project, alloy_home, config=triage_config(), bead=bead, beads=beads
-    )
+    harness = make_harness(project, alloy_home, config=triage_config(), bead=bead, beads=beads)
     try:
         final = await harness.start()
     finally:
@@ -163,9 +160,7 @@ async def test_non_blocking_bug_is_filed_and_run_completes(
 # -- blocking: file at P1 claimed, route to remediate; no remediator -> human gate --
 
 
-async def test_blocking_bug_routes_to_remediate_and_parks_without_remediator(
-    project, alloy_home, fake_harnesses
-):
+async def test_blocking_bug_routes_to_remediate_and_parks_without_remediator(project, alloy_home, fake_harnesses):
     beads = RecordingBeadsClient(bug_ids=["bug-blocking"])
     bead = make_bead(id="parent-2", metadata={"alloy_recipe": "tdd-loop"})
     fake_harnesses.configure(
@@ -174,9 +169,7 @@ async def test_blocking_bug_routes_to_remediate_and_parks_without_remediator(
             triage=[triage_entry("blocking", "reproduces on CI")],
         )
     )
-    harness = make_harness(
-        project, alloy_home, config=triage_config(), bead=bead, beads=beads
-    )
+    harness = make_harness(project, alloy_home, config=triage_config(), bead=bead, beads=beads)
     try:
         paused = await harness.start()
     finally:
@@ -202,9 +195,7 @@ async def test_blocking_bug_routes_to_remediate_and_parks_without_remediator(
 # -- needs-human: file with human label, block parent, resume -> implement --------
 
 
-async def test_needs_human_blocks_parent_and_resume_returns_to_implement(
-    project, alloy_home, fake_harnesses
-):
+async def test_needs_human_blocks_parent_and_resume_returns_to_implement(project, alloy_home, fake_harnesses):
     beads = RecordingBeadsClient(bug_ids=["bug-human"])
     bead = make_bead(id="parent-3", metadata={"alloy_recipe": "tdd-loop"})
     fake_harnesses.configure(
@@ -217,9 +208,7 @@ async def test_needs_human_blocks_parent_and_resume_returns_to_implement(
             judge=[judge_entry("done")],
         )
     )
-    harness = make_harness(
-        project, alloy_home, config=triage_config(), bead=bead, beads=beads
-    )
+    harness = make_harness(project, alloy_home, config=triage_config(), bead=bead, beads=beads)
     try:
         paused = await harness.start()
         assert "__interrupt__" in paused
@@ -245,9 +234,7 @@ async def test_needs_human_blocks_parent_and_resume_returns_to_implement(
 # -- not-a-bug: implementer stopped, re-run implement with rejection text ---------
 
 
-async def test_not_a_bug_re_runs_implement_with_rejection_instruction(
-    project, alloy_home, fake_harnesses
-):
+async def test_not_a_bug_re_runs_implement_with_rejection_instruction(project, alloy_home, fake_harnesses):
     beads = RecordingBeadsClient()
     fake_harnesses.configure(
         script(
@@ -259,9 +246,7 @@ async def test_not_a_bug_re_runs_implement_with_rejection_instruction(
             judge=[judge_entry("done")],
         )
     )
-    harness = make_harness(
-        project, alloy_home, config=triage_config(), beads=beads
-    )
+    harness = make_harness(project, alloy_home, config=triage_config(), beads=beads)
     try:
         final = await harness.start()
     finally:
@@ -279,9 +264,7 @@ async def test_not_a_bug_re_runs_implement_with_rejection_instruction(
 # -- duplicate: title already filed, nothing new filed, run proceeds --------------
 
 
-async def test_duplicate_verdict_files_nothing_and_run_proceeds(
-    project, alloy_home, fake_harnesses
-):
+async def test_duplicate_verdict_files_nothing_and_run_proceeds(project, alloy_home, fake_harnesses):
     beads = RecordingBeadsClient()
     fake_harnesses.configure(
         script(
@@ -319,9 +302,7 @@ async def test_duplicate_verdict_files_nothing_and_run_proceeds(
 # -- triage prompt lists filed bugs and remediations for later reports ------------
 
 
-async def test_triage_prompt_lists_filed_bugs_and_remediations(
-    project, alloy_home, fake_harnesses
-):
+async def test_triage_prompt_lists_filed_bugs_and_remediations(project, alloy_home, fake_harnesses):
     beads = RecordingBeadsClient(bug_ids=["bug-first", "bug-second"])
     fake_harnesses.configure(
         script(
@@ -366,9 +347,7 @@ async def test_triage_prompt_lists_filed_bugs_and_remediations(
 # -- triage runner missing: human gate, nothing filed -----------------------------
 
 
-async def test_missing_triage_runner_parks_at_human_gate_without_filing(
-    project, alloy_home, fake_harnesses
-):
+async def test_missing_triage_runner_parks_at_human_gate_without_filing(project, alloy_home, fake_harnesses):
     beads = RecordingBeadsClient()
     config = triage_config(
         runner="missing-triage-runner",
@@ -394,9 +373,7 @@ async def test_missing_triage_runner_parks_at_human_gate_without_filing(
 # -- same title in iteration 2: no second triage or create_bug -------------------
 
 
-async def test_same_bug_title_in_iteration_two_skips_re_triage(
-    project, alloy_home, fake_harnesses
-):
+async def test_same_bug_title_in_iteration_two_skips_re_triage(project, alloy_home, fake_harnesses):
     beads = RecordingBeadsClient(bug_ids=["bug-once"])
     title = "Flaky import in utils"
     fake_harnesses.configure(
@@ -410,9 +387,7 @@ async def test_same_bug_title_in_iteration_two_skips_re_triage(
             judge=[judge_entry("retry", "still red"), judge_entry("done")],
         )
     )
-    harness = make_harness(
-        project, alloy_home, config=triage_config(), beads=beads
-    )
+    harness = make_harness(project, alloy_home, config=triage_config(), beads=beads)
     try:
         final = await harness.start()
     finally:

@@ -16,39 +16,39 @@ _ENV_VAR: Final[str] = "ALLOY_MONITOR_ICONS"
 
 # role -> (nerd, unicode, ascii)
 _ICONS: Final[dict[str, tuple[str, str, str]]] = {
-    "running": ("\uf04b", "\u25b6", ">"),       # play, ▶
-    "judge": ("\uf0e3", "\u2696", "="),         # gavel, ⚖
-    "blocked": ("\uf05e", "\u2298", "X"),       # ban, ⊘
-    "done": ("\uf00c", "\u2713", "+"),          # check, ✓
-    "ready": ("\uf017", "\u25f7", "."),         # clock, ◷
-    "failed": ("\uf00d", "\u2717", "x"),        # times, \u2717
-    "cancelled": ("\uf05e", "\u2298", "-"),     # ban, \u2298
-    "waiting-human": ("\uf007", "\u263a", "?"), # user, \u263a
+    "running": ("\uf04b", "\u25b6", ">"),  # play, ▶
+    "judge": ("\uf0e3", "\u2696", "="),  # gavel, ⚖
+    "blocked": ("\uf05e", "\u2298", "X"),  # ban, ⊘
+    "done": ("\uf00c", "\u2713", "+"),  # check, ✓
+    "ready": ("\uf017", "\u25f7", "."),  # clock, ◷
+    "failed": ("\uf00d", "\u2717", "x"),  # times, \u2717
+    "cancelled": ("\uf05e", "\u2298", "-"),  # ban, \u2298
+    "waiting-human": ("\uf007", "\u263a", "?"),  # user, \u263a
     "review-ready": ("\uf06e", "\u25c9", "r"),  # eye, \u25c9
-    "unknown": ("\uf128", "?", "?"),            # question mark
+    "unknown": ("\uf128", "?", "?"),  # question mark
     "pill_l": ("\ue0b6", "[", "["),
     "pill_r": ("\ue0b4", "]", "]"),
-    "arrow": ("\ue0b0", "\u203a", ">"),         # powerline right
-    "arrow_thin": ("\ue0b1", "\u203a", ">"),    # powerline thin right
+    "arrow": ("\ue0b0", "\u203a", ">"),  # powerline right
+    "arrow_thin": ("\ue0b1", "\u203a", ">"),  # powerline thin right
     "test_ok": ("\uf00c", "\u2713", "+"),
     "test_fail": ("\uf00d", "\u2717", "x"),
     "warn": ("\uf071", "\u26a0", "!"),
-    "stale": ("\uf1da", "\u21bb", "~"),         # history
+    "stale": ("\uf1da", "\u21bb", "~"),  # history
     "clock": ("\uf017", "\u25f7", "o"),
-    "calendar": ("\uf073", "\u25a6", "d"),     # calendar, ▦
-    "branch": ("\ue0a0", "\u2387", "@"),       # powerline branch
-    "scheduler": ("\uf111", "\u25cf", "*"),     # dot
-    "queue": ("\uf0ae", "\u2630", "#"),         # tasks
-    "limits": ("\uf0e4", "\u2696", "L"),        # gauge (reuse scale)
-    "runs": ("\uf03a", "\u2630", "R"),          # list
-    "detail": ("\uf05a", "\u2139", "i"),        # info
-    "tokens": ("\uf1c0", "\u25c6", "T"),         # database
-    "complexity": ("\uf2db", "\u2582", "C"),    # chip, ▂
+    "calendar": ("\uf073", "\u25a6", "d"),  # calendar, ▦
+    "branch": ("\ue0a0", "\u2387", "@"),  # powerline branch
+    "scheduler": ("\uf111", "\u25cf", "*"),  # dot
+    "queue": ("\uf0ae", "\u2630", "#"),  # tasks
+    "limits": ("\uf0e4", "\u2696", "L"),  # gauge (reuse scale)
+    "runs": ("\uf03a", "\u2630", "R"),  # list
+    "detail": ("\uf05a", "\u2139", "i"),  # info
+    "tokens": ("\uf1c0", "\u25c6", "T"),  # database
+    "complexity": ("\uf2db", "\u2582", "C"),  # chip, ▂
     "keyboard": ("\uf11c", "\u2328", "K"),
-    "alloy": ("\uf0c3", "\u2697", "A"),          # flask, ⚗
-    "folder": ("\uf07b", "\ud83d\udcc1", "/"),   # folder, 📁
-    "refresh": ("\uf021", "\u21bb", "R"),        # sync
-    "arrow_left": ("\ue0b2", "\u2039", "<"),     # powerline left
+    "alloy": ("\uf0c3", "\u2697", "A"),  # flask, ⚗
+    "folder": ("\uf07b", "\ud83d\udcc1", "/"),  # folder, 📁
+    "refresh": ("\uf021", "\u21bb", "R"),  # sync
+    "arrow_left": ("\ue0b2", "\u2039", "<"),  # powerline left
 }
 
 

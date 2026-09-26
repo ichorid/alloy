@@ -94,9 +94,7 @@ def branch_name(bead_id: str) -> str:
 
 
 def _git(args: list[str], cwd: Path, *, check: bool = True) -> subprocess.CompletedProcess[str]:
-    proc = subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=120
-    )
+    proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=120)
     if check and proc.returncode != 0:
         raise WorktreeError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
     return proc
@@ -173,7 +171,8 @@ class WorktreeManager:
         _git(["add", "-A", "--intent-to-add"], worktree.path, check=False)
         proc = _git(
             ["diff", "--name-only", worktree.base_commit, "--", ".", *junk_pathspecs()],
-            worktree.path, check=False,
+            worktree.path,
+            check=False,
         )
         return [line for line in proc.stdout.splitlines() if line.strip()]
 
@@ -199,8 +198,12 @@ class WorktreeManager:
         return result
 
     def changed_paths(
-        self, worktree: Worktree, since_commit: str, *,
-        until: str | None = None, paths: list[str] | None = None,
+        self,
+        worktree: Worktree,
+        since_commit: str,
+        *,
+        until: str | None = None,
+        paths: list[str] | None = None,
     ) -> list[str]:
         """Paths that differ between `since_commit` and the working tree (or
         `until`), optionally restricted to `paths`."""
@@ -215,9 +218,17 @@ class WorktreeManager:
     def added_paths(self, commit: str) -> list[str]:
         """Paths the commit introduced (relative to its parent)."""
         proc = _git(
-            ["diff-tree", "--no-commit-id", "--name-only", "-r", "--root",
-             "--diff-filter=A", commit],
-            self.repo, check=False,
+            [
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "--root",
+                "--diff-filter=A",
+                commit,
+            ],
+            self.repo,
+            check=False,
         )
         return [line for line in proc.stdout.splitlines() if line.strip()]
 
@@ -259,7 +270,8 @@ class WorktreeManager:
         current = _git(["rev-parse", "--abbrev-ref", "HEAD"], self.repo, check=False).stdout.strip()
         if current != target:
             return LandResult(
-                False, "",
+                False,
+                "",
                 f"primary checkout is on '{current}', expected '{target}'",
             )
         proc = _git(["merge", "--no-ff", "--no-edit", branch], self.repo, check=False)
@@ -293,8 +305,11 @@ class WorktreeManager:
         return proc.stdout.strip() or head
 
     def _branch_exists(self, branch: str) -> bool:
-        proc = _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
-                    self.repo, check=False)
+        proc = _git(
+            ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+            self.repo,
+            check=False,
+        )
         return proc.returncode == 0
 
     def _assert_owned(self, path: Path, branch: str) -> None:

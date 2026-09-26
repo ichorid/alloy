@@ -51,8 +51,11 @@ class ClaudeRunner(CLIRunner):
     ) -> list[str]:
         # Reuse the command builder to retain ClaudeWriteRunner's permissions.
         args = self.build_command(
-            "", model=model, structured_schema=structured_schema,
-            effort=effort, resume_session=resume_session,
+            "",
+            model=model,
+            structured_schema=structured_schema,
+            effort=effort,
+            resume_session=resume_session,
         )
         del args[args.index("-p") + 1]
         return args
@@ -85,10 +88,15 @@ class ClaudeWriteRunner(ClaudeRunner):
 
     name = "claude-write"
 
-    def build_command(
-        self, prompt, *, model, structured_schema, effort=None, resume_session=None
-    ):
-        return ["--permission-mode", "bypassPermissions", *super().build_command(
-            prompt, model=model, structured_schema=structured_schema, effort=effort,
-            resume_session=resume_session,
-        )]
+    def build_command(self, prompt, *, model, structured_schema, effort=None, resume_session=None):
+        return [
+            "--permission-mode",
+            "bypassPermissions",
+            *super().build_command(
+                prompt,
+                model=model,
+                structured_schema=structured_schema,
+                effort=effort,
+                resume_session=resume_session,
+            ),
+        ]

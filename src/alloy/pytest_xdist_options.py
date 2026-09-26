@@ -17,9 +17,7 @@ def _argv_blocks_xdist() -> bool:
 
 if _argv_blocks_xdist():
 
-    def pytest_addoption(
-        parser: pytest.Parser, pluginmanager: pytest.PytestPluginManager
-    ) -> None:
+    def pytest_addoption(parser: pytest.Parser, pluginmanager: pytest.PytestPluginManager) -> None:
         """Keep ``pytest -p no:xdist`` working alongside the ``-n auto`` in addopts.
 
         Blocking the plugin also drops the ``-n`` option it defines, so the ini

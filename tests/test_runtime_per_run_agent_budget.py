@@ -6,11 +6,12 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
-from alloy.models import AgentResult, utcnow
-from alloy.runtime import RunContext
-from alloy.runners import RunnerRegistry
-from alloy.store import Store
 from support import load_config, make_bead
+
+from alloy.models import AgentResult, utcnow
+from alloy.runners import RunnerRegistry
+from alloy.runtime import RunContext
+from alloy.store import Store
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _RUNTIME_PY = _REPO_ROOT / "src" / "alloy" / "runtime.py"
@@ -122,7 +123,11 @@ async def test_parent_check_limits_ignores_child_calls_14_own_12_child_max_20(tm
     assert store.call_count(parent_run_id, include_children=True) == 26
 
     parent_ctx = _run_context(
-        store, tmp_path, run_id=parent_run_id, bead_id="parent", max_agent_calls=20,
+        store,
+        tmp_path,
+        run_id=parent_run_id,
+        bead_id="parent",
+        max_agent_calls=20,
     )
     assert parent_ctx.check_limits({"iteration": 0, "consiliums": 0}) is None
 
@@ -134,14 +139,22 @@ async def test_child_check_limits_breaches_on_own_calls_only(tmp_path):
     _seed_calls(store, run_id=child_run_id, bead_id="child", count=21, prefix="c")
 
     child_ctx = _run_context(
-        store, tmp_path, run_id=child_run_id, bead_id="child", max_agent_calls=20,
+        store,
+        tmp_path,
+        run_id=child_run_id,
+        bead_id="child",
+        max_agent_calls=20,
     )
     breach = child_ctx.check_limits({"iteration": 0, "consiliums": 0})
     assert breach is not None
     assert "max_agent_calls reached" in breach
 
     parent_ctx = _run_context(
-        store, tmp_path, run_id=parent_run_id, bead_id="parent", max_agent_calls=20,
+        store,
+        tmp_path,
+        run_id=parent_run_id,
+        bead_id="parent",
+        max_agent_calls=20,
     )
     assert parent_ctx.check_limits({"iteration": 0, "consiliums": 0}) is None
 

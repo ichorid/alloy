@@ -11,12 +11,11 @@ from typing import Any, Awaitable, Callable
 
 import yaml
 
+from alloy.beads import Bead
 from alloy.checkpoints import open_checkpointer
 from alloy.config import RecipeConfig, RoleSpec, load_recipe
-from alloy.beads import Bead
 from alloy.engine import RunResult
 from alloy.models import utcnow
-from alloy.recipes import tdd_loop
 from alloy.runners import RunnerRegistry
 from alloy.runtime import RunContext
 from alloy.store import Store
@@ -31,7 +30,8 @@ def scope_config(**overrides: Any) -> RecipeConfig:
     config = load_config()
     roles = dict(config.roles)
     fallback = overrides.pop(
-        "fallback", RoleSpec(runner="cursor", model="composer-2.5", timeout_minutes=5),
+        "fallback",
+        RoleSpec(runner="cursor", model="composer-2.5", timeout_minutes=5),
     )
     roles["scope"] = RoleSpec(
         runner=overrides.pop("runner", "jev"),
@@ -274,8 +274,13 @@ def make_harness(
 
     if store.get_run(run_id) is None:
         store.create_run(
-            run_id=run_id, bead_id=bead.id, thread_id=run_id, recipe=config.name,
-            repo=project, worktree=worktree.path, branch=worktree.branch,
+            run_id=run_id,
+            bead_id=bead.id,
+            thread_id=run_id,
+            recipe=config.name,
+            repo=project,
+            worktree=worktree.path,
+            branch=worktree.branch,
             log_dir=alloy_home / "logs" / run_id,
             parent_run_id=parent_run_id,
         )
@@ -325,7 +330,6 @@ async def await_cancelled_task(
 ) -> float:
     """Await a cancelled graph task; fail if checkpointer teardown exceeds ``budget_s``."""
     import pytest
-
     from conftest import SIMULATED_CLOSE_STALL_S
 
     started = time.monotonic()

@@ -53,16 +53,19 @@ def test_ensure_is_idempotent_so_resume_adopts_the_existing_worktree(manager):
 
 def test_refuses_a_checkout_that_belongs_to_another_task(manager):
     worktree = manager.ensure("bd-1")
-    subprocess.run(["git", "checkout", "-q", "-b", "someone-else"],
-                   cwd=worktree.path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "someone-else"],
+        cwd=worktree.path,
+        check=True,
+        capture_output=True,
+    )
     with pytest.raises(WorktreeError, match="two tasks share a checkout"):
         manager.ensure("bd-1")
 
 
 def test_diff_is_relative_to_the_commit_the_worktree_was_cut_from(manager):
     worktree = manager.ensure("bd-1")
-    (worktree.path / "mypkg" / "__init__.py").write_text("def slugify(s):\n    ...\n",
-                                                         encoding="utf-8")
+    (worktree.path / "mypkg" / "__init__.py").write_text("def slugify(s):\n    ...\n", encoding="utf-8")
     diff = manager.diff(worktree)
     assert "def slugify" in diff
     assert manager.has_changes(worktree)
@@ -72,16 +75,22 @@ def test_adopting_a_worktree_keeps_the_task_diff_after_commits_on_the_branch(man
     """A merge from main (or an agent that commits) moves HEAD; the judge
     must still see everything the task changed since it branched off."""
     worktree = manager.ensure("bd-1")
-    (worktree.path / "mypkg" / "__init__.py").write_text("def slugify(s):\n    ...\n",
-                                                         encoding="utf-8")
-    subprocess.run(["git", "commit", "-qam", "agent committed"], cwd=worktree.path,
-                   check=True, capture_output=True)
+    (worktree.path / "mypkg" / "__init__.py").write_text("def slugify(s):\n    ...\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "commit", "-qam", "agent committed"],
+        cwd=worktree.path,
+        check=True,
+        capture_output=True,
+    )
     (worktree.path / "mypkg" / "extra.py").write_text("MORE = 1\n", encoding="utf-8")
 
     adopted = manager.ensure("bd-1")
 
     assert adopted.base_commit == worktree.base_commit
-    assert set(manager.changed_files(adopted)) == {"mypkg/__init__.py", "mypkg/extra.py"}
+    assert set(manager.changed_files(adopted)) == {
+        "mypkg/__init__.py",
+        "mypkg/extra.py",
+    }
 
 
 def test_removal_is_explicit_so_failures_stay_inspectable(manager):

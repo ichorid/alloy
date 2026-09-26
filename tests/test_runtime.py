@@ -14,12 +14,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from support import load_config, make_bead
 
 from alloy.config import RoleSpec
 from alloy.models import AgentResult, RunnerUnavailable, utcnow
 from alloy.runtime import RunContext
 from alloy.store import Store
-from support import load_config, make_bead
 
 
 class _StaticRegistry:
@@ -56,8 +56,14 @@ class BlockingRunner:
         await self.release.wait()
         now = utcnow()
         return AgentResult(
-            runner="fake", model=model, ok=True, exit_code=0, text="ok",
-            started_at=now, ended_at=now, duration_s=0.01,
+            runner="fake",
+            model=model,
+            ok=True,
+            exit_code=0,
+            text="ok",
+            started_at=now,
+            ended_at=now,
+            duration_s=0.01,
         )
 
 
@@ -118,8 +124,14 @@ def ctx_factory(tmp_path):
     bead = make_bead()
     run_id = "run-1"
     store.create_run(
-        run_id=run_id, bead_id=bead.id, thread_id=run_id, recipe="tdd-loop",
-        repo=tmp_path, worktree=None, branch=None, log_dir=None,
+        run_id=run_id,
+        bead_id=bead.id,
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=tmp_path,
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )
 
     def make(registry: Any) -> RunContext:
@@ -224,12 +236,24 @@ async def test_check_limits_counts_only_parent_own_agent_calls(ctx_factory, tmp_
     parent_run_id = "parent-run"
     child_run_id = "child-run"
     store.create_run(
-        run_id=parent_run_id, bead_id="parent", thread_id=parent_run_id, recipe="tdd-loop",
-        repo=tmp_path, worktree=None, branch=None, log_dir=None,
+        run_id=parent_run_id,
+        bead_id="parent",
+        thread_id=parent_run_id,
+        recipe="tdd-loop",
+        repo=tmp_path,
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )
     store.create_run(
-        run_id=child_run_id, bead_id="child", thread_id=f"{parent_run_id}/child",
-        recipe="tdd-loop", repo=tmp_path, worktree=None, branch=None, log_dir=None,
+        run_id=child_run_id,
+        bead_id="child",
+        thread_id=f"{parent_run_id}/child",
+        recipe="tdd-loop",
+        repo=tmp_path,
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )
     store.update_run(child_run_id, parent_run_id=parent_run_id)
 
@@ -238,25 +262,55 @@ async def test_check_limits_counts_only_parent_own_agent_calls(ctx_factory, tmp_
     parent_calls = 4
     child_calls = 3
     for index in range(parent_calls):
-        store.start_call(f"p-{index}", run_id=parent_run_id, bead_id=bead.id,
-                         role="context", runner="codex", model=None)
+        store.start_call(
+            f"p-{index}",
+            run_id=parent_run_id,
+            bead_id=bead.id,
+            role="context",
+            runner="codex",
+            model=None,
+        )
         store.finish_call(
-            f"p-{index}", run_id=parent_run_id, bead_id=bead.id, role="context",
+            f"p-{index}",
+            run_id=parent_run_id,
+            bead_id=bead.id,
+            role="context",
             iteration=0,
             result=AgentResult(
-                runner="codex", model=None, ok=True, exit_code=0, text="ok",
-                started_at=utcnow(), ended_at=utcnow(), duration_s=0.0,
+                runner="codex",
+                model=None,
+                ok=True,
+                exit_code=0,
+                text="ok",
+                started_at=utcnow(),
+                ended_at=utcnow(),
+                duration_s=0.0,
             ),
         )
     for index in range(child_calls):
-        store.start_call(f"c-{index}", run_id=child_run_id, bead_id="child",
-                         role="implement", runner="codex", model=None)
+        store.start_call(
+            f"c-{index}",
+            run_id=child_run_id,
+            bead_id="child",
+            role="implement",
+            runner="codex",
+            model=None,
+        )
         store.finish_call(
-            f"c-{index}", run_id=child_run_id, bead_id="child", role="implement",
+            f"c-{index}",
+            run_id=child_run_id,
+            bead_id="child",
+            role="implement",
             iteration=0,
             result=AgentResult(
-                runner="codex", model=None, ok=True, exit_code=0, text="ok",
-                started_at=utcnow(), ended_at=utcnow(), duration_s=0.0,
+                runner="codex",
+                model=None,
+                ok=True,
+                exit_code=0,
+                text="ok",
+                started_at=utcnow(),
+                ended_at=utcnow(),
+                duration_s=0.0,
             ),
         )
 
@@ -304,12 +358,12 @@ async def test_call_forwards_resume_session_to_runner(ctx_factory):
     assert runner.resume_sessions == ["sess-1"]
 
 
-async def test_call_drops_resume_session_when_falling_back_to_another_runner(ctx_factory):
+async def test_call_drops_resume_session_when_falling_back_to_another_runner(
+    ctx_factory,
+):
     primary = RecordingRunner("codex", ok=False)
     fallback = RecordingRunner("claude-write")
-    ctx = ctx_factory(
-        _MappedRegistry({"codex": primary, "claude-write": fallback})
-    )
+    ctx = ctx_factory(_MappedRegistry({"codex": primary, "claude-write": fallback}))
     spec = RoleSpec.parse(
         {
             "runner": "codex",

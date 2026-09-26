@@ -19,8 +19,19 @@ from alloy.limits import HARNESSES
 from alloy.monitor.icons import icon
 from alloy.verify import parse_counts
 
-COLUMNS = ("bead", "status", "stage", "iter", "cons", "tests", "elapsed", "now",
-           "tokens", "judge", "complexity")
+COLUMNS = (
+    "bead",
+    "status",
+    "stage",
+    "iter",
+    "cons",
+    "tests",
+    "elapsed",
+    "now",
+    "tokens",
+    "judge",
+    "complexity",
+)
 
 RIGHT_ALIGNED = frozenset({"iter", "cons", "tests", "elapsed", "tokens"})
 
@@ -114,13 +125,16 @@ def _header_line_ascii(snapshot: dict[str, Any]) -> str:
         sched = "scheduler stopped"
     ready = f"ready {snapshot.get('ready_count', 0)} (capped at {snapshot.get('ready_capped_at')})"
     lifetime = snapshot.get("lifetime") or {}
-    totals = (f"done {lifetime.get('done', 0)}  failed {lifetime.get('failed', 0)}"
-              f"  cancelled {lifetime.get('cancelled', 0)}")
+    totals = (
+        f"done {lifetime.get('done', 0)}  failed {lifetime.get('failed', 0)}  cancelled {lifetime.get('cancelled', 0)}"
+    )
     line = f"{sched}  |  {ready}  |  {totals}"
     if "session_totals" in snapshot:
         session = snapshot["session_totals"] or {}
-        line += (f"  |  this session: done {session.get('done', 0)}"
-                 f" failed {session.get('failed', 0)} cancelled {session.get('cancelled', 0)}")
+        line += (
+            f"  |  this session: done {session.get('done', 0)}"
+            f" failed {session.get('failed', 0)} cancelled {session.get('cancelled', 0)}"
+        )
     return line
 
 
@@ -171,9 +185,7 @@ def panel_border_title(panel_id: str, mode: str) -> str:
     return f"{icon(role, mode)} {panel_id}"
 
 
-def panel_border_subtitle(
-    panel_id: str, snapshot: dict[str, Any], *, mode: str
-) -> str | None:
+def panel_border_subtitle(panel_id: str, snapshot: dict[str, Any], *, mode: str) -> str | None:
     """Right segment of a panel's top border when a count or status applies."""
     if panel_id == "runs":
         count = len(snapshot.get("runs") or [])
@@ -189,8 +201,7 @@ def title_line(snapshot: dict[str, Any], width: int, mode: str) -> str:
     left = f" {icon('alloy', mode)} alloy {arrow} monitor {arrow} {icon('folder', mode)} {repo} {arrow}"
     now = datetime.now().astimezone().strftime("%H:%M:%S")
     right = (
-        f"{icon('arrow_left', mode)} {icon('refresh', mode)} 1s "
-        f"{icon('arrow_left', mode)} {icon('clock', mode)} {now} "
+        f"{icon('arrow_left', mode)} {icon('refresh', mode)} 1s {icon('arrow_left', mode)} {icon('clock', mode)} {now} "
     )
     budget = max(0, width - cell_len(right))
     return _fit_cell_width(left, budget) + right
@@ -235,23 +246,8 @@ class TreeRow:
     cells: dict[str, str | Text]
 
 
-def task_tree_rows(
-    snapshot: dict[str, Any],
-    expanded: set[str],
-    width: int,
-    *,
-    mode: str | None = None,
-) -> list[TreeRow]:
-    """Build collapsible task-tree rows from a monitor snapshot."""
-    _ = width  # column filtering is applied by the view; cells always carry all keys
+def _queue_tree_rows(ready, blocked, ready_total, queue_open, mode) -> list[TreeRow]:
     rows: list[TreeRow] = []
-    queue = snapshot.get("queue") or {}
-    ready = queue.get("ready") or []
-    blocked = queue.get("blocked") or []
-    ready_total = int(queue.get("ready_total") or 0)
-    runs = snapshot.get("runs") or []
-
-    queue_open = "queue" in expanded
     show_queue = queue_open or ready_total > 0 or bool(blocked)
     if show_queue:
         toggle = "▾" if queue_open else "▸"
@@ -263,10 +259,7 @@ def task_tree_rows(
                 depth=0,
                 cells=_blank_cells(
                     bead=_queue_bead_label(toggle, mode),
-                    status=(
-                        f"{ready_total} ready · {len(blocked)} blocked\n"
-                        f"next: {next_id}"
-                    ),
+                    status=(f"{ready_total} ready · {len(blocked)} blocked\nnext: {next_id}"),
                 ),
             )
         )
@@ -285,7 +278,11 @@ def task_tree_rows(
             )
         for bead in blocked:
             rows.append(_blocked_row(bead, depth=1))
+    return rows
 
+
+def _epic_tree_rows(snapshot, runs, ready, expanded, mode) -> list[TreeRow]:
+    rows: list[TreeRow] = []
     for epic in snapshot.get("epics") or []:
         epic_id = epic["epic_id"]
         epic_key = f"epic/{epic_id}"
@@ -315,12 +312,33 @@ def task_tree_rows(
                     children.append(_run_tree_row(run, depth=1, mode=mode))
             for bead in ready:
                 if bead.get("epic_id") == epic_id:
-                    children.append(
-                        _queued_row(bead, depth=1, epic_scope=epic_id, mode=mode)
-                    )
+                    children.append(_queued_row(bead, depth=1, epic_scope=epic_id, mode=mode))
             if epic.get("done", 0):
                 children.append(_done_fold_row(epic, depth=1))
             rows.extend(_prefix_tree_children(children))
+    return rows
+
+
+def task_tree_rows(
+    snapshot: dict[str, Any],
+    expanded: set[str],
+    width: int,
+    *,
+    mode: str | None = None,
+) -> list[TreeRow]:
+    """Build collapsible task-tree rows from a monitor snapshot."""
+    _ = width  # column filtering is applied by the view; cells always carry all keys
+    rows: list[TreeRow] = []
+    queue = snapshot.get("queue") or {}
+    ready = queue.get("ready") or []
+    blocked = queue.get("blocked") or []
+    ready_total = int(queue.get("ready_total") or 0)
+    runs = snapshot.get("runs") or []
+
+    queue_open = "queue" in expanded
+    rows.extend(_queue_tree_rows(ready, blocked, ready_total, queue_open, mode))
+
+    rows.extend(_epic_tree_rows(snapshot, runs, ready, expanded, mode))
 
     for run in runs:
         if run.get("epic_id") is None:
@@ -375,9 +393,7 @@ def _prefix_tree_children(children: list[TreeRow]) -> list[TreeRow]:
             cells["bead"] = marked
         else:
             cells["bead"] = f"{glyph} {bead}"
-        prefixed.append(
-            TreeRow(key=child.key, kind=child.kind, depth=child.depth, cells=cells)
-        )
+        prefixed.append(TreeRow(key=child.key, kind=child.kind, depth=child.depth, cells=cells))
     return prefixed
 
 
@@ -498,10 +514,16 @@ def limits_lines(
     lines: list[str] = []
     for harness in HARNESSES:
         if harness in limits:
-            lines.extend(_limits_line(
-                harness, limits[harness], mode=mode, width=width,
-                usage_style=usage_style, reset_width=reset_width,
-            ))
+            lines.extend(
+                _limits_line(
+                    harness,
+                    limits[harness],
+                    mode=mode,
+                    width=width,
+                    usage_style=usage_style,
+                    reset_width=reset_width,
+                )
+            )
     return lines
 
 
@@ -535,8 +557,11 @@ def _limits_line(
     windows = sample.get("windows") or []
     segments = [
         _limits_window_segment(
-            win, align_bar=True, mode=mode,
-            usage_style=usage_style, reset_width=reset_width,
+            win,
+            align_bar=True,
+            mode=mode,
+            usage_style=usage_style,
+            reset_width=reset_width,
         )
         for index, win in enumerate(windows)
     ]
@@ -584,11 +609,7 @@ def _usage_bar(percent: int, mode: str | None = None) -> str:
 
 def _pill_badge(text: str, color: str, mode: str) -> str:
     """Textual-markup pill: colored caps around a bold on-color label."""
-    return (
-        f"[{color}]{icon('pill_l', mode)}[/]"
-        f"[bold {_PAGE} on {color}]{text}[/]"
-        f"[{color}]{icon('pill_r', mode)}[/]"
-    )
+    return f"[{color}]{icon('pill_l', mode)}[/][bold {_PAGE} on {color}]{text}[/][{color}]{icon('pill_r', mode)}[/]"
 
 
 def _limits_window_head(label: str, percent: int, *, align_bar: bool) -> str:
@@ -844,20 +865,14 @@ def _token_table(tokens_by_role: dict[str, Any], indent: str = "") -> list[str]:
     name_w = max([4] + [len(r[0]) for r in rows])
     num_w = max([5] + [len(str(v)) for r in rows for v in r[1:]])
     max_total = max((r[1] for r in rows), default=0)
-    lines = [
-        f"{indent}{'role':<{name_w}}  {'total':>{num_w}}  {'in':>{num_w}}  {'out':>{num_w}}  share"
-    ]
+    lines = [f"{indent}{'role':<{name_w}}  {'total':>{num_w}}  {'in':>{num_w}}  {'out':>{num_w}}  share"]
     for role, total, inp, out in rows:
         bar = _detail_role_token_bar(total, max_total)
-        lines.append(
-            f"{indent}{role:<{name_w}}  {total:>{num_w}}  {inp:>{num_w}}  {out:>{num_w}}  {bar}".rstrip()
-        )
+        lines.append(f"{indent}{role:<{name_w}}  {total:>{num_w}}  {inp:>{num_w}}  {out:>{num_w}}  {bar}".rstrip())
     return lines
 
 
-def _models_table(
-    entries: list[dict[str, Any]], indent: str = "", usage_style: str = "remaining"
-) -> list[str]:
+def _models_table(entries: list[dict[str, Any]], indent: str = "", usage_style: str = "remaining") -> list[str]:
     """Aligned models-used table: model, calls, tokens, then limit windows."""
     rows = []
     for entry in entries:
@@ -867,7 +882,14 @@ def _models_table(
             f"{win['label']} {_display_usage_percent(win, usage_style)}%"
             for win in (entry.get("windows") or {}).values()
         )
-        rows.append((label, str(entry.get("calls", 0)), _text(entry.get("total_tokens")), windows))
+        rows.append(
+            (
+                label,
+                str(entry.get("calls", 0)),
+                _text(entry.get("total_tokens")),
+                windows,
+            )
+        )
     if not rows:
         return []
     model_w = max([5] + [len(r[0]) for r in rows])
@@ -875,9 +897,7 @@ def _models_table(
     tok_w = max([6] + [len(r[2]) for r in rows])
     lines = [f"{indent}{'model':<{model_w}}  {'calls':>{calls_w}}  {'tokens':>{tok_w}}  limits"]
     for label, calls, tokens, windows in rows:
-        lines.append(
-            f"{indent}{label:<{model_w}}  {calls:>{calls_w}}  {tokens:>{tok_w}}  {windows}".rstrip()
-        )
+        lines.append(f"{indent}{label:<{model_w}}  {calls:>{calls_w}}  {tokens:>{tok_w}}  {windows}".rstrip())
     return lines
 
 
@@ -936,18 +956,14 @@ def _format_detail_styled(
     return "\n".join(rows)
 
 
-def _detail_left_column(
-    run: dict[str, Any], mode: str, usage_style: str = "remaining"
-) -> list[str]:
+def _detail_left_column(run: dict[str, Any], mode: str, usage_style: str = "remaining") -> list[str]:
     lines: list[str] = []
     for call in run.get("current_calls") or []:
         requested = _runner(call.get("requested_runner"), call.get("requested_model"))
         effective = _runner(call.get("effective_runner"), call.get("effective_model"))
         seconds = call.get("elapsed_seconds")
         elapsed = "-" if seconds is None else f"{int(seconds)}s"
-        lines.append(
-            f"{icon('running', mode)} verify  {requested} -> {effective} ({elapsed})"
-        )
+        lines.append(f"{icon('running', mode)} verify  {requested} -> {effective} ({elapsed})")
     judge_line = _judge_detail(run.get("judge"))
     if judge_line is not None:
         lines.append(f"{icon('judge', mode)} {judge_line.replace('judge:', 'judge  ', 1)}")
@@ -1033,8 +1049,7 @@ def _models_used_line(entry: dict[str, Any], usage_style: str = "remaining") -> 
         f"tokens {_text(entry.get('total_tokens'))}",
     ]
     window_parts = [
-        f"{win['label']} {_display_usage_percent(win, usage_style)}%"
-        for win in (entry.get("windows") or {}).values()
+        f"{win['label']} {_display_usage_percent(win, usage_style)}%" for win in (entry.get("windows") or {}).values()
     ]
     line = "  ".join(parts)
     if window_parts:
@@ -1076,7 +1091,9 @@ def _stale_as_of(as_of: str | None, mode: str | None = None) -> str:
         return ""
     if mode in ("nerd", "unicode"):
         badge = _pill_badge(
-            icon("stale", mode) + f" as of {parsed.strftime('%H:%M')}", _COLOR_YELLOW, mode
+            icon("stale", mode) + f" as of {parsed.strftime('%H:%M')}",
+            _COLOR_YELLOW,
+            mode,
         )
         return f" {badge}"
     return f" (as of {parsed.strftime('%H:%M')})"
@@ -1091,5 +1108,7 @@ def _judge_detail(judge: dict[str, Any] | None) -> str | None:
         return "judge: no parseable verdict" if effective.get("decision") is not None else None
     if raw.get("decision") == effective.get("decision"):
         return f"judge: {raw['decision']} (confidence {_text(raw.get('confidence'))})"
-    return (f"judge said {raw['decision']} (confidence {_text(raw.get('confidence'))})"
-            f" / Alloy did {_text(effective.get('decision'))} -- {_text(effective.get('reason'))}")
+    return (
+        f"judge said {raw['decision']} (confidence {_text(raw.get('confidence'))})"
+        f" / Alloy did {_text(effective.get('decision'))} -- {_text(effective.get('reason'))}"
+    )

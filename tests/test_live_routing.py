@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from alloy.beads import Bead
 from conftest import (
     context_entry,
     critic_entry,
@@ -13,8 +12,10 @@ from conftest import (
     synthesize_entry,
     write_tests_entry,
 )
-from alloy.store import Store
 from support import load_config, make_bead, make_harness
+
+from alloy.beads import Bead
+from alloy.store import Store
 
 
 def workflow_script(**overrides):
@@ -69,9 +70,7 @@ def test_runs_table_has_nullable_dispatch_tier_column(alloy_home):
     assert info["dispatch_tier"]["notnull"] == 0
 
 
-async def test_live_simple_tier_dispatches_cursor_and_records_dispatch_tier(
-    project, alloy_home, fake_harnesses
-):
+async def test_live_simple_tier_dispatches_cursor_and_records_dispatch_tier(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(workflow_script())
     harness = make_harness(
         project,
@@ -94,9 +93,7 @@ async def test_live_simple_tier_dispatches_cursor_and_records_dispatch_tier(
     assert run["dispatch_tier"] == "simple"
 
 
-async def test_live_complex_tier_dispatches_cursor_with_kimi_model(
-    project, alloy_home, fake_harnesses
-):
+async def test_live_complex_tier_dispatches_cursor_with_kimi_model(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(workflow_script())
     harness = make_harness(
         project,
@@ -115,9 +112,7 @@ async def test_live_complex_tier_dispatches_cursor_with_kimi_model(
     assert row["model"] == "kimi-k3-high"
 
 
-async def test_live_simple_tier_fails_over_to_codex_when_cursor_missing(
-    project, alloy_home, fake_harnesses
-):
+async def test_live_simple_tier_fails_over_to_codex_when_cursor_missing(project, alloy_home, fake_harnesses):
     fake_harnesses.remove("cursor-agent")
     fake_harnesses.configure(workflow_script())
     harness = make_harness(
@@ -144,9 +139,7 @@ async def test_live_simple_tier_fails_over_to_codex_when_cursor_missing(
     assert rows[1]["ok"]
 
 
-async def test_live_medium_tier_fails_over_to_codex_terra_when_cursor_missing(
-    project, alloy_home, fake_harnesses
-):
+async def test_live_medium_tier_fails_over_to_codex_terra_when_cursor_missing(project, alloy_home, fake_harnesses):
     fake_harnesses.remove("cursor-agent")
     fake_harnesses.configure(workflow_script())
     harness = make_harness(
@@ -169,9 +162,7 @@ async def test_live_medium_tier_fails_over_to_codex_terra_when_cursor_missing(
     assert second["ok"]
 
 
-async def test_shadow_routing_keeps_astra_implement_and_no_dispatch_tier(
-    project, alloy_home, fake_harnesses
-):
+async def test_shadow_routing_keeps_astra_implement_and_no_dispatch_tier(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(workflow_script())
     harness = make_harness(
         project,
@@ -195,9 +186,7 @@ async def test_shadow_routing_keeps_astra_implement_and_no_dispatch_tier(
     assert run.get("dispatch_tier") is None
 
 
-async def test_live_routing_leaves_non_tiered_roles_on_recipe_specs(
-    project, alloy_home, fake_harnesses
-):
+async def test_live_routing_leaves_non_tiered_roles_on_recipe_specs(project, alloy_home, fake_harnesses):
     config = live_config()
     fake_harnesses.configure(workflow_script())
     harness = make_harness(
@@ -261,9 +250,7 @@ def test_runs_table_has_escalations_counter_column(alloy_home):
     assert info["escalations"]["dflt_value"] == "0"
 
 
-async def test_live_escalates_simple_to_medium_after_two_consecutive_judge_retries(
-    project, alloy_home, fake_harnesses
-):
+async def test_live_escalates_simple_to_medium_after_two_consecutive_judge_retries(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(retry_escalation_script())
     harness = make_harness(
         project,
@@ -298,9 +285,7 @@ async def test_live_escalates_simple_to_medium_after_two_consecutive_judge_retri
     assert run["dispatch_tier"] == "medium"
 
 
-async def test_live_escalation_changes_codex_fallback_when_cursor_missing(
-    project, alloy_home, fake_harnesses
-):
+async def test_live_escalation_changes_codex_fallback_when_cursor_missing(project, alloy_home, fake_harnesses):
     fake_harnesses.remove("cursor-agent")
     fake_harnesses.configure(retry_escalation_script())
     harness = make_harness(
@@ -351,9 +336,7 @@ async def test_live_escalates_medium_to_complex_after_two_consecutive_judge_retr
     assert final["complexity"] == "complex"
 
 
-async def test_shadow_routing_never_escalates_on_judge_retries(
-    project, alloy_home, fake_harnesses
-):
+async def test_shadow_routing_never_escalates_on_judge_retries(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(retry_escalation_script())
     harness = make_harness(
         project,
@@ -379,9 +362,7 @@ async def test_shadow_routing_never_escalates_on_judge_retries(
     assert run["escalations"] == 0
 
 
-async def test_live_complex_tier_does_not_escalate_further_on_judge_retries(
-    project, alloy_home, fake_harnesses
-):
+async def test_live_complex_tier_does_not_escalate_further_on_judge_retries(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(retry_escalation_script())
     harness = make_harness(
         project,
@@ -403,9 +384,7 @@ async def test_live_complex_tier_does_not_escalate_further_on_judge_retries(
     assert run["escalations"] == 0
 
 
-async def test_consilium_between_retries_resets_escalation_counter(
-    project, alloy_home, fake_harnesses
-):
+async def test_consilium_between_retries_resets_escalation_counter(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
         retry_escalation_script(
             implement=[

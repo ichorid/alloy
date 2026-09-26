@@ -70,19 +70,15 @@ class RoleSpec:
         fallback_raw = raw.get("fallback")
         effort = raw.get("effort")
         if effort is not None and effort not in EFFORT_LEVELS:
-            raise ConfigError(
-                f"invalid effort {effort!r}; expected one of {', '.join(EFFORT_LEVELS)}"
-            )
+            raise ConfigError(f"invalid effort {effort!r}; expected one of {', '.join(EFFORT_LEVELS)}")
         return cls(
             runner=raw.get("runner", default_runner),
             model=raw.get("model"),
             timeout_minutes=float(raw.get("timeout_minutes", DEFAULT_ROLE_TIMEOUT_MIN)),
-            fallback=cls.parse(fallback_raw, default_runner=default_runner)
-            if fallback_raw else None,
+            fallback=cls.parse(fallback_raw, default_runner=default_runner) if fallback_raw else None,
             tiered=bool(raw.get("tiered", False)),
             effort=effort,
-            panel=tuple(cls.parse(item, default_runner=default_runner)
-                        for item in (raw.get("panel") or [])),
+            panel=tuple(cls.parse(item, default_runner=default_runner) for item in (raw.get("panel") or [])),
         )
 
 
@@ -145,9 +141,7 @@ class Limits:
         return cls(
             max_iterations=int(raw.get("max_iterations", defaults.max_iterations)),
             max_consiliums=int(raw.get("max_consiliums", defaults.max_consiliums)),
-            max_wall_time_minutes=float(
-                raw.get("max_wall_time_minutes", defaults.max_wall_time_minutes)
-            ),
+            max_wall_time_minutes=float(raw.get("max_wall_time_minutes", defaults.max_wall_time_minutes)),
             max_agent_calls=int(raw.get("max_agent_calls", defaults.max_agent_calls)),
             max_agent_calls_by_tier=by_tier,
         )
@@ -157,9 +151,7 @@ DEFAULT_TIER_AGENT_CALL_MULTIPLIER = 1.5
 """Calibration mean multiplier behind the per-tier agent-call ceiling."""
 
 
-def resolve_max_agent_calls(
-    config: "RecipeConfig", complexity: str | None, calibration_body: str = ""
-) -> int:
+def resolve_max_agent_calls(config: "RecipeConfig", complexity: str | None, calibration_body: str = "") -> int:
     """Agent-call ceiling for a run of the given complexity tier.
 
     The flat ``limits.max_agent_calls`` is the floor. A known tier raises it
@@ -207,9 +199,7 @@ class VerificationSpec:
     min_acceptance_confidence: float = 0.6
 
     @classmethod
-    def parse(
-        cls, raw: dict[str, Any] | None, *, legacy: dict[str, Any] | None = None
-    ) -> "VerificationSpec":
+    def parse(cls, raw: dict[str, Any] | None, *, legacy: dict[str, Any] | None = None) -> "VerificationSpec":
         """`legacy` is the deprecated `verify:` mapping; only its
         `timeout_minutes` still means anything."""
         raw = raw or {}
@@ -219,16 +209,12 @@ class VerificationSpec:
         if timeout is None:
             timeout = legacy.get("timeout_minutes", defaults.max_command_timeout_minutes)
         return cls(
-            max_checks_per_iteration=int(
-                raw.get("max_checks_per_iteration", defaults.max_checks_per_iteration)
-            ),
+            max_checks_per_iteration=int(raw.get("max_checks_per_iteration", defaults.max_checks_per_iteration)),
             max_total_checks=int(raw.get("max_total_checks", defaults.max_total_checks)),
             max_command_timeout_minutes=float(timeout),
             max_baseline_repairs=int(raw.get("max_baseline_repairs", defaults.max_baseline_repairs)),
             max_test_reviews=int(raw.get("max_test_reviews", defaults.max_test_reviews)),
-            min_acceptance_confidence=float(
-                raw.get("min_acceptance_confidence", defaults.min_acceptance_confidence)
-            ),
+            min_acceptance_confidence=float(raw.get("min_acceptance_confidence", defaults.min_acceptance_confidence)),
         )
 
 
@@ -262,9 +248,7 @@ class MemorySpec:
         if not isinstance(values["enabled"], bool):
             raise ConfigError(f"invalid memory.enabled: {values['enabled']!r}")
         instruction_files = values["instruction_files"]
-        if not isinstance(instruction_files, list) or not all(
-            isinstance(path, str) for path in instruction_files
-        ):
+        if not isinstance(instruction_files, list) or not all(isinstance(path, str) for path in instruction_files):
             raise ConfigError(f"invalid memory.instruction_files: {instruction_files!r}")
         values["instruction_files"] = list(instruction_files)
         return cls(**values)
@@ -324,9 +308,7 @@ class RecipeConfig:
         if not spec.tiered or self.complexity.routing != "live":
             return spec
         if complexity not in COMPLEXITY_LEVELS:
-            raise ConfigError(
-                f"tiered role '{name}' requires a known complexity level, got {complexity!r}"
-            )
+            raise ConfigError(f"tiered role '{name}' requires a known complexity level, got {complexity!r}")
         try:
             return self.complexity.tiers[complexity]
         except KeyError as exc:
@@ -376,9 +358,7 @@ def recipe_search_path(alloy_root: Path | None = None, project: Path | None = No
     return paths
 
 
-def discover_recipes(
-    alloy_root: Path | None = None, project: Path | None = None
-) -> dict[str, Path]:
+def discover_recipes(alloy_root: Path | None = None, project: Path | None = None) -> dict[str, Path]:
     found: dict[str, Path] = {}
     for directory in recipe_search_path(alloy_root, project):
         if not directory.is_dir():
@@ -388,9 +368,7 @@ def discover_recipes(
     return found
 
 
-def load_recipe(
-    name: str, *, alloy_root: Path | None = None, project: Path | None = None
-) -> RecipeConfig:
+def load_recipe(name: str, *, alloy_root: Path | None = None, project: Path | None = None) -> RecipeConfig:
     available = discover_recipes(alloy_root, project)
     path = available.get(name)
     if path is None:

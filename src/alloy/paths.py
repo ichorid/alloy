@@ -1,14 +1,14 @@
 """Filesystem layout for project state and shared user configuration.
 
-    <project>/.alloy/
-      alloy.db          run + agent-call ledger (Alloy metadata)
-      workflows.db      LangGraph checkpoints
-      logs/<run_id>/    raw agent transcripts and test output
-      worktrees/<bead>/ isolated git checkout per task
-      scheduler.pid     daemon lockfile
-    ~/.alloy/
-      recipes/          user-supplied recipe configs (override built-ins)
-      limits.json       last harness usage-limit samples (alloy.limits)
+<project>/.alloy/
+  alloy.db          run + agent-call ledger (Alloy metadata)
+  workflows.db      LangGraph checkpoints
+  logs/<run_id>/    raw agent transcripts and test output
+  worktrees/<bead>/ isolated git checkout per task
+  scheduler.pid     daemon lockfile
+~/.alloy/
+  recipes/          user-supplied recipe configs (override built-ins)
+  limits.json       last harness usage-limit samples (alloy.limits)
 """
 
 from __future__ import annotations
@@ -27,12 +27,13 @@ class AlloyPaths:
 
     @classmethod
     def resolve(
-        cls, root: Path | str | None = None, *, project: Path | str | None = None,
+        cls,
+        root: Path | str | None = None,
+        *,
+        project: Path | str | None = None,
     ) -> "AlloyPaths":
         if root is None:
-            root = os.environ.get(ENV_PROJECT_ROOT) or (
-                Path(project or Path.cwd()) / ".alloy"
-            )
+            root = os.environ.get(ENV_PROJECT_ROOT) or (Path(project or Path.cwd()) / ".alloy")
         return cls(Path(root).expanduser().resolve())
 
     @property

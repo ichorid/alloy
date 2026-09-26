@@ -148,9 +148,7 @@ def test_critic_prompt_excludes_bug_report_protocol():
 # -- workflow: capture only; routing unchanged for non-blocking bugs ----------
 
 
-async def test_non_blocking_implement_bug_is_recorded_without_changing_outcome(
-    project, alloy_home, fake_harnesses
-):
+async def test_non_blocking_implement_bug_is_recorded_without_changing_outcome(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(script())
     baseline_harness = make_harness(project, alloy_home)
     try:

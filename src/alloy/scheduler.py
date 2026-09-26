@@ -23,15 +23,27 @@ from typing import Callable
 from alloy import beads as bd
 from alloy.config import ConfigError, MemorySpec
 from alloy.engine import Engine, EngineError, RunResult
-from alloy.memory_schedule import (
-    MEMORY_REVIEW_RECIPE, apply_review, dirty_instruction_files, embed_instruction_files,
-    review_bead_for_note, review_due, review_plan, review_run_id,
-)
 from alloy.events import EVENT_STALLED
-from alloy.models import DEFAULT_RECIPE_KEY, EMBED_STALE_KEY, Outcome, ProjectMemory, utcnow
+from alloy.memory_schedule import (
+    MEMORY_REVIEW_RECIPE,
+    apply_review,
+    dirty_instruction_files,
+    embed_instruction_files,
+    review_bead_for_note,
+    review_due,
+    review_plan,
+    review_run_id,
+)
+from alloy.models import (
+    DEFAULT_RECIPE_KEY,
+    EMBED_STALE_KEY,
+    Outcome,
+    ProjectMemory,
+    utcnow,
+)
 from alloy.paths import AlloyPaths
-from alloy.store import _pid_alive, RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN
-from alloy.worktree import WorktreeError, WorktreeManager
+from alloy.store import RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN, _pid_alive
+from alloy.worktree import WorktreeManager
 
 DEFAULT_POLL_SECONDS = 15.0
 DEFAULT_STALL_MINUTES = 30.0
@@ -75,8 +87,12 @@ class Scheduler:
         self._write_pidfile()
         self._write_session()
         self._install_signal_handlers()
-        log.info("scheduler up (pid %d, poll %.0fs, repo %s)",
-                 os.getpid(), self.poll_seconds, self.engine.repo)
+        log.info(
+            "scheduler up (pid %d, poll %.0fs, repo %s)",
+            os.getpid(),
+            self.poll_seconds,
+            self.engine.repo,
+        )
         watcher = None if self.once else asyncio.create_task(self._stall_watch())
         try:
             await self.recover()
@@ -123,13 +139,16 @@ class Scheduler:
             if run["run_id"] in self._stalled:
                 continue
             calls = store.active_calls(run["run_id"])
-            what = (f"agent call {calls[0]['role']} still running" if calls
-                    else f"stage {run.get('stage') or '?'}")
-            why = ("run process is gone" if dead
-                   else f"no activity for {int(idle.total_seconds() // 60)} min ({what})")
+            what = f"agent call {calls[0]['role']} still running" if calls else f"stage {run.get('stage') or '?'}"
+            why = "run process is gone" if dead else f"no activity for {int(idle.total_seconds() // 60)} min ({what})"
             log.warning("%s: run %s stalled: %s", run["bead_id"], run["run_id"], why)
-            store.events.emit(EVENT_STALLED, bead=run["bead_id"], run=run["run_id"], reason=why,
-                              stage=run.get("stage"))
+            store.events.emit(
+                EVENT_STALLED,
+                bead=run["bead_id"],
+                run=run["run_id"],
+                reason=why,
+                stage=run.get("stage"),
+            )
             flagged.append(run["run_id"])
         self._stalled = current
         return flagged
@@ -140,7 +159,11 @@ class Scheduler:
         recovered: list[str] = []
         for record in self.engine.store.orphaned_runs():
             bead_id = record["bead_id"]
-            log.info("recovering %s (run %s left by a dead process)", bead_id, record["run_id"])
+            log.info(
+                "recovering %s (run %s left by a dead process)",
+                bead_id,
+                record["run_id"],
+            )
             try:
                 await self._run_current(bead_id)
                 recovered.append(bead_id)
@@ -183,6 +206,10 @@ class Scheduler:
         except Exception:
             log.exception("%s failed", bead.id)
             return True
+        await self._auto_land_after_run(bead, recipe_name, result)
+        return True
+
+    async def _auto_land_after_run(self, bead, recipe_name: str, result) -> None:
         if self._auto_land_enabled() and self._auto_land_due(bead, recipe_name, result):
             if not self.engine._commit_before_land(bead):
                 log.warning("%s: auto-land skipped; worktree still dirty", bead.id)
@@ -195,16 +222,24 @@ class Scheduler:
                     log.warning("%s did not land: %s", bead.id, exc)
                 except Exception:
                     log.exception("%s landing crashed", bead.id)
-        return True
 
     async def _resume_due(self, record: dict) -> bool:
         """journal 38: the harness said when it would be back; that time has passed."""
         bead_id = record["bead_id"]
         retry_at = record.get("retry_at")
         if retry_at:
-            log.info("resuming %s (run %s, retry_at %s passed)", bead_id, record["run_id"], retry_at)
+            log.info(
+                "resuming %s (run %s, retry_at %s passed)",
+                bead_id,
+                record["run_id"],
+                retry_at,
+            )
         else:
-            log.info("resuming %s (run %s, human gate, bead ready)", bead_id, record["run_id"])
+            log.info(
+                "resuming %s (run %s, human gate, bead ready)",
+                bead_id,
+                record["run_id"],
+            )
         instructions = self._human_resume_instructions(bead_id) if retry_at is None else ""
         try:
             await self._run_current(bead_id, resume=True, resume_instructions=instructions)
@@ -230,7 +265,8 @@ class Scheduler:
     ):
         """Run one bead as a task we can cancel from a signal handler."""
         coro = (
-            self.engine.resume(bead_id, resume_instructions) if resume
+            self.engine.resume(bead_id, resume_instructions)
+            if resume
             else self.engine.run(bead_id, recipe_name=recipe_name)
         )
         self._current = asyncio.ensure_future(coro)
@@ -260,7 +296,9 @@ class Scheduler:
             log.debug("memory maintenance skipped: %s", exc)
             return False
         reason = review_due(
-            memory, config.memory, today=today,
+            memory,
+            config.memory,
+            today=today,
             finished_runs=store.finished_runs_since_last_review(),
             last_ran_day=last_ran_day,
         )
@@ -321,7 +359,11 @@ class Scheduler:
             default = self.engine.beads.memories().get(DEFAULT_RECIPE_KEY)
             if default and default not in known:
                 if default != self._unknown_default_recipe:
-                    log.warning("ignoring unknown default recipe %r from %s", default, DEFAULT_RECIPE_KEY)
+                    log.warning(
+                        "ignoring unknown default recipe %r from %s",
+                        default,
+                        DEFAULT_RECIPE_KEY,
+                    )
                 self._unknown_default_recipe = default
             else:
                 self._unknown_default_recipe = None
@@ -413,7 +455,8 @@ class Scheduler:
     def due_human_resume(self) -> dict | None:
         """A ready bead whose run is parked at the human gate without a retry_at."""
         parked = [
-            run for run in self.engine.store.active_runs()
+            run
+            for run in self.engine.store.active_runs()
             if run["status"] == RUN_WAITING_HUMAN and not run.get("retry_at")
         ]
         if not parked:
@@ -496,9 +539,7 @@ class Scheduler:
                 due.append(bead.id)
         return due
 
-    def _auto_land_due(
-        self, bead: bd.Bead, recipe_name: str | None, result: RunResult
-    ) -> bool:
+    def _auto_land_due(self, bead: bd.Bead, recipe_name: str | None, result: RunResult) -> bool:
         """True when a just-settled standalone run's recipe opts into auto-landing."""
         if result.outcome != Outcome.DONE.value or not recipe_name:
             return False
@@ -583,7 +624,11 @@ def read_session(paths: AlloyPaths) -> dict | None:
         data = json.loads(paths.scheduler_session.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
-    if not isinstance(data, dict) or set(data.keys()) != {"pid", "started_at", "ended_at"}:
+    if not isinstance(data, dict) or set(data.keys()) != {
+        "pid",
+        "started_at",
+        "ended_at",
+    }:
         return None
     return data
 
@@ -659,8 +704,13 @@ def signal_stop(pidfile: Path, *, now: bool = False) -> int | None:
 
 
 def spawn_detached(
-    repo: Path, root: Path | None, poll_seconds: float, *, log_file: Path | None = None,
-    stall_minutes: float = DEFAULT_STALL_MINUTES, recipe: str | None = None,
+    repo: Path,
+    root: Path | None,
+    poll_seconds: float,
+    *,
+    log_file: Path | None = None,
+    stall_minutes: float = DEFAULT_STALL_MINUTES,
+    recipe: str | None = None,
 ) -> int:
     """Start `alloy start --foreground` as a background process.
 
@@ -668,9 +718,17 @@ def spawn_detached(
     leaves a trace, not silence.
     """
     argv = [
-        sys.executable, "-m", "alloy.cli", "start", "--foreground",
-        "--repo", str(repo), "--poll", str(poll_seconds),
-        "--stall-minutes", str(stall_minutes),
+        sys.executable,
+        "-m",
+        "alloy.cli",
+        "start",
+        "--foreground",
+        "--repo",
+        str(repo),
+        "--poll",
+        str(poll_seconds),
+        "--stall-minutes",
+        str(stall_minutes),
     ]
     if recipe:
         argv += ["--recipe", recipe]

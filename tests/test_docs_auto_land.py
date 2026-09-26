@@ -11,9 +11,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTS_MD = REPO_ROOT / "AGENTS.md"
-ALLOY_MANAGER_SKILL = (
-    REPO_ROOT / ".claude" / "skills" / "alloy-manager" / "SKILL.md"
-)
+ALLOY_MANAGER_SKILL = REPO_ROOT / ".claude" / "skills" / "alloy-manager" / "SKILL.md"
 
 
 def test_agents_md_documents_alloy_land_command():

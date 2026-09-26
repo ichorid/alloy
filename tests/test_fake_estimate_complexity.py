@@ -14,6 +14,11 @@ import os
 import subprocess
 
 import pytest
+from conftest import bd_create
+from support import make_harness
+from test_scheduler import _bead_notes
+from test_scheduler import script as scheduler_script
+from test_workflow import script as workflow_script
 
 from alloy.beads import META_COMPLEXITY_ESTIMATED
 from alloy.config import load_recipe
@@ -24,10 +29,6 @@ from alloy.runners.base import extract_json_object
 from alloy.runners.claude import ClaudeRunner
 from alloy.runners.cursor import CursorRunner
 from alloy.scheduler import Scheduler
-from conftest import bd_create
-from support import make_harness
-from test_scheduler import _bead_notes, script as scheduler_script
-from test_workflow import script as workflow_script
 
 
 def _run_fake_cli(fake_harnesses, binary: str, prompt: str) -> subprocess.CompletedProcess[str]:
@@ -44,9 +45,7 @@ def _structured_from_runner_output(
     runner,
     proc: subprocess.CompletedProcess[str],
 ) -> dict | None:
-    text, structured, _usage, _session_id, failed = runner.parse(
-        proc.stdout, proc.stderr, proc.returncode
-    )
+    text, structured, _usage, _session_id, failed = runner.parse(proc.stdout, proc.stderr, proc.returncode)
     assert not failed
     if structured is None and text:
         structured = extract_json_object(text)
@@ -153,9 +152,7 @@ async def test_engine_run_with_builtin_recipe_without_estimate_script_records_va
 
     bead = engine.beads.show(bead_id)
     notes = _bead_notes(engine, bead_id)
-    estimate_calls = [
-        c for c in harness.store.agent_calls(harness.run_id) if c["role"] == "estimate"
-    ]
+    estimate_calls = [c for c in harness.store.agent_calls(harness.run_id) if c["role"] == "estimate"]
 
     assert final["complexity_source"] == "estimate"
     assert "estimate failed" not in notes

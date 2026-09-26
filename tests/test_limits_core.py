@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from alloy.limits import (
     harness_for_runner,
     installed_harnesses,
@@ -16,17 +14,19 @@ from alloy.paths import AlloyPaths
 from alloy.runners import RunnerRegistry
 
 WINDOW_KEYS = frozenset({"key", "label", "used_percent", "resets_at", "model"})
-HARNESS_LIMITS_KEYS = frozenset({
-    "harness",
-    "installed",
-    "available",
-    "fetched_at",
-    "as_of",
-    "source",
-    "error",
-    "status",
-    "windows",
-})
+HARNESS_LIMITS_KEYS = frozenset(
+    {
+        "harness",
+        "installed",
+        "available",
+        "fetched_at",
+        "as_of",
+        "source",
+        "error",
+        "status",
+        "windows",
+    }
+)
 
 
 def test_harness_for_runner_mapping():

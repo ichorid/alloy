@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from alloy.config import RoleSpec
 from conftest import (
     context_entry,
     implement_entry,
@@ -12,6 +11,8 @@ from conftest import (
     write_tests_entry,
 )
 from support import load_config, make_bead, make_harness
+
+from alloy.config import RoleSpec
 
 
 def review_entry(verdict: str, *issues: str) -> dict:
@@ -55,7 +56,9 @@ def rows(harness, role: str) -> list[dict]:
 
 async def run(project, alloy_home, config, **bead_meta):
     harness = make_harness(
-        project, alloy_home, config=config,
+        project,
+        alloy_home,
+        config=config,
         bead=make_bead(metadata={"alloy_recipe": "tdd-loop", **bead_meta}),
     )
     try:
@@ -65,13 +68,15 @@ async def run(project, alloy_home, config, **bead_meta):
     return harness, final
 
 
-async def test_revise_sends_tests_back_then_a_sound_review_lets_implement_start(
-    project, alloy_home, fake_harnesses
-):
-    fake_harnesses.configure(script(tests_review=[
-        review_entry("revise", "no test covers the empty-string criterion"),
-        review_entry("sound"),
-    ]))
+async def test_revise_sends_tests_back_then_a_sound_review_lets_implement_start(project, alloy_home, fake_harnesses):
+    fake_harnesses.configure(
+        script(
+            tests_review=[
+                review_entry("revise", "no test covers the empty-string criterion"),
+                review_entry("sound"),
+            ]
+        )
+    )
     harness, final = await run(project, alloy_home, config_with_review())
 
     assert final["outcome"] == "done"
@@ -80,9 +85,7 @@ async def test_revise_sends_tests_back_then_a_sound_review_lets_implement_start(
     assert rows(harness, "tests_review")[0]["runner"] == "codex-readonly"
 
 
-async def test_review_rounds_are_bounded_by_max_test_reviews(
-    project, alloy_home, fake_harnesses
-):
+async def test_review_rounds_are_bounded_by_max_test_reviews(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(script(tests_review=review_entry("revise", "still weak")))
     harness, final = await run(project, alloy_home, config_with_review(max_reviews=1))
 
@@ -107,12 +110,12 @@ async def test_recipes_without_the_role_do_not_review(project, alloy_home, fake_
     assert rows(harness, "tests_review") == []
 
 
-async def test_tiered_tests_role_uses_the_complexity_tier_chain(
-    project, alloy_home, fake_harnesses
-):
+async def test_tiered_tests_role_uses_the_complexity_tier_chain(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(script())
     harness, final = await run(
-        project, alloy_home, config_with_review(tiered_tests=True),
+        project,
+        alloy_home,
+        config_with_review(tiered_tests=True),
         alloy_complexity="complex",
     )
 
@@ -136,12 +139,16 @@ def config_with_panel(*, fallback: bool = True):
 
 
 async def test_panel_merges_issues_from_every_member(project, alloy_home, fake_harnesses):
-    fake_harnesses.configure(script(tests_review=[
-        review_entry("revise", "issue from one member"),
-        review_entry("revise", "issue from the other", "issue from one member"),
-        review_entry("sound"),
-        review_entry("sound"),
-    ]))
+    fake_harnesses.configure(
+        script(
+            tests_review=[
+                review_entry("revise", "issue from one member"),
+                review_entry("revise", "issue from the other", "issue from one member"),
+                review_entry("sound"),
+                review_entry("sound"),
+            ]
+        )
+    )
     harness, final = await run(project, alloy_home, config_with_panel(fallback=False))
 
     assert final["outcome"] == "done"
@@ -151,14 +158,16 @@ async def test_panel_merges_issues_from_every_member(project, alloy_home, fake_h
     assert len(rows(harness, "tests")) >= 2
 
 
-async def test_panel_runs_on_the_remaining_member_when_one_is_missing(
-    project, alloy_home, fake_harnesses
-):
+async def test_panel_runs_on_the_remaining_member_when_one_is_missing(project, alloy_home, fake_harnesses):
     fake_harnesses.remove("cursor-agent")
-    fake_harnesses.configure(script(tests_review=[
-        review_entry("revise", "only the codex member is left"),
-        review_entry("sound"),
-    ]))
+    fake_harnesses.configure(
+        script(
+            tests_review=[
+                review_entry("revise", "only the codex member is left"),
+                review_entry("sound"),
+            ]
+        )
+    )
     harness, final = await run(project, alloy_home, config_with_panel())
 
     assert final["outcome"] == "done"
@@ -168,15 +177,17 @@ async def test_panel_runs_on_the_remaining_member_when_one_is_missing(
     assert len([c for c in rows(harness, "tests") if c["ok"]]) == 2
 
 
-async def test_panel_falls_back_to_sonnet_low_when_every_member_is_missing(
-    project, alloy_home, fake_harnesses
-):
+async def test_panel_falls_back_to_sonnet_low_when_every_member_is_missing(project, alloy_home, fake_harnesses):
     fake_harnesses.remove("cursor-agent")
     fake_harnesses.remove("codex")
-    fake_harnesses.configure(script(tests_review=[
-        review_entry("revise", "fallback reviewer speaking"),
-        review_entry("sound"),
-    ]))
+    fake_harnesses.configure(
+        script(
+            tests_review=[
+                review_entry("revise", "fallback reviewer speaking"),
+                review_entry("sound"),
+            ]
+        )
+    )
     harness, final = await run(project, alloy_home, config_with_panel())
 
     assert final["outcome"] == "done"

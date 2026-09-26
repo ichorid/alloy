@@ -18,7 +18,12 @@ import pytest
 from alloy.monitor.icons import icon
 from alloy.monitor.render import COLUMNS, activity_line, header_line, run_rows
 
-EMPTY_TOKENS = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
+EMPTY_TOKENS = {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "total_tokens": 0,
+    "cost_usd": None,
+}
 WIDE_WIDTH = 100
 
 
@@ -152,8 +157,14 @@ def _run(
     }
 
 
-def _call(role="implement", requested_runner="astra", effective_runner="codex",
-          requested_model=None, effective_model=None, elapsed_seconds=42.1) -> dict:
+def _call(
+    role="implement",
+    requested_runner="astra",
+    effective_runner="codex",
+    requested_model=None,
+    effective_model=None,
+    elapsed_seconds=42.1,
+) -> dict:
     return {
         "role": role,
         "requested_runner": requested_runner,
@@ -164,8 +175,13 @@ def _call(role="implement", requested_runner="astra", effective_runner="codex",
     }
 
 
-def _judge(raw_decision="retry", raw_confidence=0.61, effective_decision="retry",
-           effective_reason="a specific fix remains", matches=True) -> dict:
+def _judge(
+    raw_decision="retry",
+    raw_confidence=0.61,
+    effective_decision="retry",
+    effective_reason="a specific fix remains",
+    matches=True,
+) -> dict:
     return {
         "raw": {"decision": raw_decision, "confidence": raw_confidence},
         "effective": {"decision": effective_decision, "reason": effective_reason},
@@ -195,9 +211,16 @@ def test_one_row_per_run_with_the_documented_column_count():
 
 
 def test_row_identifies_bead_status_and_stage():
-    snapshot = _snapshot(runs=[_run(
-        bead_id="alloy-a1b2", recipe="tdd-loop-jev", status="running", stage="implement",
-    )])
+    snapshot = _snapshot(
+        runs=[
+            _run(
+                bead_id="alloy-a1b2",
+                recipe="tdd-loop-jev",
+                status="running",
+                stage="implement",
+            )
+        ]
+    )
 
     row = run_rows(snapshot)[0]
 
@@ -248,9 +271,17 @@ def test_row_with_null_judge_shows_a_dash_in_the_judge_column():
 
 
 def test_row_with_matching_judge_shows_only_the_single_decision():
-    snapshot = _snapshot(runs=[_run(judge=_judge(
-        raw_decision="done", effective_decision="done", matches=True,
-    ))])
+    snapshot = _snapshot(
+        runs=[
+            _run(
+                judge=_judge(
+                    raw_decision="done",
+                    effective_decision="done",
+                    matches=True,
+                )
+            )
+        ]
+    )
 
     row = run_rows(snapshot)[0]
 
@@ -259,9 +290,17 @@ def test_row_with_matching_judge_shows_only_the_single_decision():
 
 
 def test_row_with_differing_raw_and_effective_judge_shows_both_decisions():
-    snapshot = _snapshot(runs=[_run(judge=_judge(
-        raw_decision="done", effective_decision="retry", matches=False,
-    ))])
+    snapshot = _snapshot(
+        runs=[
+            _run(
+                judge=_judge(
+                    raw_decision="done",
+                    effective_decision="retry",
+                    matches=False,
+                )
+            )
+        ]
+    )
 
     row = run_rows(snapshot)[0]
 
@@ -288,9 +327,18 @@ def test_row_elapsed_column_reflects_elapsed_minutes():
 
 
 def test_row_tokens_column_reflects_total_tokens_when_no_split_is_available():
-    snapshot = _snapshot(runs=[_run(tokens={
-        "input_tokens": None, "output_tokens": None, "total_tokens": 8635, "cost_usd": None,
-    })])
+    snapshot = _snapshot(
+        runs=[
+            _run(
+                tokens={
+                    "input_tokens": None,
+                    "output_tokens": None,
+                    "total_tokens": 8635,
+                    "cost_usd": None,
+                }
+            )
+        ]
+    )
 
     row = run_rows(snapshot)[0]
 
@@ -303,8 +351,14 @@ def test_row_tokens_column_reflects_total_tokens_when_no_split_is_available():
 def test_activity_line_shows_memory_review_and_run_stage():
     snapshot = {
         "auxiliary_calls": [{"role": "memory_reviewer", "effective_model": "gpt-6-sol"}],
-        "runs": [{"status": "running", "stage": "verify", "bead_id": "alloy-123",
-                  "current_calls": []}],
+        "runs": [
+            {
+                "status": "running",
+                "stage": "verify",
+                "bead_id": "alloy-123",
+                "current_calls": [],
+            }
+        ],
     }
     line = activity_line(snapshot)
     assert "gpt-6-sol: reviewing repository memory" in line
@@ -314,24 +368,52 @@ def test_activity_line_shows_memory_review_and_run_stage():
 
 
 def test_activity_line_shows_model_on_running_bead():
-    line = activity_line({"runs": [{"status": "running", "stage": "implement",
-                                    "bead_id": "alloy-123", "current_calls": [
-                                        {"role": "implement", "effective_model": "sonnet"}]}]})
+    line = activity_line(
+        {
+            "runs": [
+                {
+                    "status": "running",
+                    "stage": "implement",
+                    "bead_id": "alloy-123",
+                    "current_calls": [{"role": "implement", "effective_model": "sonnet"}],
+                }
+            ]
+        }
+    )
     assert "sonnet: implement (alloy-123)" in line
 
 
 def test_activity_line_includes_recipe_when_present():
-    line = activity_line({"runs": [{"status": "running", "stage": "implement",
-                                    "bead_id": "alloy-123", "recipe": "tdd-loop",
-                                    "current_calls": [
-                                        {"role": "implement", "effective_model": "sonnet"}]}]})
+    line = activity_line(
+        {
+            "runs": [
+                {
+                    "status": "running",
+                    "stage": "implement",
+                    "bead_id": "alloy-123",
+                    "recipe": "tdd-loop",
+                    "current_calls": [{"role": "implement", "effective_model": "sonnet"}],
+                }
+            ]
+        }
+    )
     assert "sonnet: implement (alloy-123 · tdd-loop)" in line
 
 
 def test_activity_line_includes_recipe_with_no_current_calls():
-    line = activity_line({"runs": [{"status": "running", "stage": "verify",
-                                    "bead_id": "alloy-123", "recipe": "tdd-loop",
-                                    "current_calls": []}]})
+    line = activity_line(
+        {
+            "runs": [
+                {
+                    "status": "running",
+                    "stage": "verify",
+                    "bead_id": "alloy-123",
+                    "recipe": "tdd-loop",
+                    "current_calls": [],
+                }
+            ]
+        }
+    )
     assert "none: verify (alloy-123 · tdd-loop)" in line
 
 
@@ -966,13 +1048,10 @@ def codex_home(tmp_path):
     return tmp_path / "home"
 
 
-def test_limits_lines_codex_rollout_shows_remaining_percent_with_compact_reset_suffix(
+def test_limits_lines_codex_rollout_shows_used_percent_with_compact_reset_suffix(
     codex_home,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    from alloy.limits.codex import probe
-    from alloy.monitor.render import limits_lines
-
     from test_limits_codex import (
         CODEX_TS,
         RESETS_AT_EPOCH,
@@ -980,6 +1059,9 @@ def test_limits_lines_codex_rollout_shows_remaining_percent_with_compact_reset_s
         _token_count_line,
         write_rollout,
     )
+
+    from alloy.limits.codex import probe
+    from alloy.monitor.render import limits_lines
 
     write_rollout(
         codex_home,
@@ -1139,10 +1221,7 @@ def _contains_private_use_area(text: str) -> bool:
 
 def test_header_line_ascii_matches_legacy_format_for_acceptance_fixture():
     snap = _powerline_acceptance_snapshot()
-    expected = (
-        "scheduler running (pid 48213)  |  ready 4 (capped at 1000)  |  "
-        "done 128  failed 3  cancelled 1"
-    )
+    expected = "scheduler running (pid 48213)  |  ready 4 (capped at 1000)  |  done 128  failed 3  cancelled 1"
     assert header_line(snap, "ascii") == expected
 
 
@@ -1366,7 +1445,14 @@ def _tree_styling_fixture() -> dict:
             ],
         },
         epics=[_epic("E", title="Monitor epic", total=9, done=4, running=2, judge=1)],
-        runs=[_run(run_id="run-under-e", bead_id="running-under-e", epic_id="E", status="running")],
+        runs=[
+            _run(
+                run_id="run-under-e",
+                bead_id="running-under-e",
+                epic_id="E",
+                status="running",
+            )
+        ],
     )
 
 
@@ -1449,7 +1535,14 @@ def test_task_tree_ascii_mode_matches_byo4_expectations():
                 judge=0,
             ),
         ],
-        runs=[_run(run_id="run-under-e", bead_id="running-under-e", epic_id="E", status="running")],
+        runs=[
+            _run(
+                run_id="run-under-e",
+                bead_id="running-under-e",
+                epic_id="E",
+                status="running",
+            )
+        ],
     )
 
     rows = _task_tree_rows(snap, expanded={"queue", "epic/E"}, mode="ascii")
@@ -1495,11 +1588,7 @@ def test_task_tree_queued_bead_appears_under_queue_and_epic_when_both_expanded()
     epic_children = _children_after(rows, "epic/E")
 
     queue_queued = [row for row in queue_children if row.kind == "queued" and row.key == f"queue/{bead_id}"]
-    epic_queued = [
-        row
-        for row in epic_children
-        if row.kind == "queued" and row.key == f"epic/E/queued/{bead_id}"
-    ]
+    epic_queued = [row for row in epic_children if row.kind == "queued" and row.key == f"epic/E/queued/{bead_id}"]
 
     assert len(queue_queued) == 1
     assert len(epic_queued) == 1

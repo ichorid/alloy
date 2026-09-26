@@ -283,9 +283,16 @@ execution monitor, with what was done about each.
 
 ## Tests
 
+Use `uv run pytest -n 0 -q <test-file>` for a focused check. Use
+`uv run pytest -n 8 -q` for the bounded full regression suite.
+
+AGENTS.md keeps one generated Beads integration block. Rerunning
+`bd setup codex` may add a second Codex-specific block; remove that duplicate
+while retaining the installed Codex hooks and skill files.
+
 ```bash
-pytest          # runs in parallel via pytest-xdist (-n auto)
-pytest -n 0     # serial, for debugging (or: pytest -p no:xdist)
+uv run pytest -n 0 -q tests/test_workflow.py  # focused check
+uv run pytest -n 8 -q                        # bounded full suite
 ```
 
 The suite runs in parallel by default; `-n 0` (or `-p no:xdist`) forces a

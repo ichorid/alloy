@@ -10,9 +10,6 @@ import hashlib
 import inspect
 import sys
 
-from alloy.models import Attempt
-from alloy.recipes.tdd_loop import judge_prompt
-from alloy.worktree import WorktreeManager
 from conftest import (
     acceptance_entry,
     context_entry,
@@ -28,6 +25,10 @@ from conftest import (
     write_tests_with_helper_entry,
 )
 from support import make_harness
+
+from alloy.models import Attempt
+from alloy.recipes.tdd_loop import judge_prompt
+from alloy.worktree import WorktreeManager
 
 FULL_SUITE = f"{sys.executable} -m pytest -q"
 IMPLEMENTER_TESTS_HEADING = "## Tests changed by the implementer"
@@ -54,7 +55,14 @@ def _acceptance_script(**overrides):
         ],
         "acceptance": [acceptance_entry("accept", confidence=0.9)],
         "judge": [],
-        "critic": {"structured": {"root_cause": "n/a", "evidence": "n/a", "suggested_fix": "n/a", "confidence": 0.5}},
+        "critic": {
+            "structured": {
+                "root_cause": "n/a",
+                "evidence": "n/a",
+                "suggested_fix": "n/a",
+                "confidence": 0.5,
+            }
+        },
         "synthesize": synthesize_entry(),
     }
     base.update(overrides)
@@ -118,9 +126,7 @@ def test_judge_prompt_accepts_changed_tests_and_renders_section():
 # ---------------------------------------------------------------------------
 
 
-async def test_acceptance_gate_shows_none_when_only_tests_role_touched_slugify(
-    project, alloy_home, fake_harnesses
-):
+async def test_acceptance_gate_shows_none_when_only_tests_role_touched_slugify(project, alloy_home, fake_harnesses):
     """tests/test_slugify.py differs from base, but the implementer did not edit it."""
     fake_harnesses.configure(_acceptance_script())
     harness = make_harness(project, alloy_home)
@@ -134,9 +140,7 @@ async def test_acceptance_gate_shows_none_when_only_tests_role_touched_slugify(
     assert _implementer_tests_section(prompt) == "(none)"
 
 
-async def test_acceptance_gate_lists_slugify_when_implementer_rewrites_test(
-    project, alloy_home, fake_harnesses
-):
+async def test_acceptance_gate_lists_slugify_when_implementer_rewrites_test(project, alloy_home, fake_harnesses):
     """Only slugify's fingerprint moves; the tests role's helper file stays put."""
     fake_harnesses.configure(
         _acceptance_script(
@@ -174,12 +178,8 @@ async def test_acceptance_gate_lists_only_helper_when_implementer_rewrites_helpe
     assert _implementer_tests_section(prompt) == HELPER_TEST
 
 
-async def test_acceptance_gate_lists_test_added_by_implementer_after_prove_red(
-    project, alloy_home, fake_harnesses
-):
-    fake_harnesses.configure(
-        _acceptance_script(implement=[implement_add_test_entry()])
-    )
+async def test_acceptance_gate_lists_test_added_by_implementer_after_prove_red(project, alloy_home, fake_harnesses):
+    fake_harnesses.configure(_acceptance_script(implement=[implement_add_test_entry()]))
     harness = make_harness(project, alloy_home)
     try:
         await harness.start()
@@ -195,9 +195,7 @@ async def test_acceptance_gate_lists_test_added_by_implementer_after_prove_red(
 # ---------------------------------------------------------------------------
 
 
-async def test_judge_lists_slugify_when_implementer_rewrites_test_on_escalation(
-    project, alloy_home, fake_harnesses
-):
+async def test_judge_lists_slugify_when_implementer_rewrites_test_on_escalation(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
         _escalate_to_judge_script(
             tests=write_tests_with_helper_entry(),
@@ -235,9 +233,7 @@ async def test_judge_lists_only_helper_when_implementer_rewrites_helper_on_escal
     assert _implementer_tests_section(prompt) == HELPER_TEST
 
 
-async def test_judge_shows_none_when_only_tests_role_touched_slugify_on_escalation(
-    project, alloy_home, fake_harnesses
-):
+async def test_judge_shows_none_when_only_tests_role_touched_slugify_on_escalation(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(_escalate_to_judge_script())
     harness = make_harness(project, alloy_home)
     try:
@@ -255,12 +251,8 @@ async def test_judge_shows_none_when_only_tests_role_touched_slugify_on_escalati
 # ---------------------------------------------------------------------------
 
 
-async def test_attempt_render_includes_tests_edited_when_implementer_changed_test(
-    project, alloy_home, fake_harnesses
-):
-    fake_harnesses.configure(
-        _acceptance_script(implement=[implement_rewrite_tests_entry()])
-    )
+async def test_attempt_render_includes_tests_edited_when_implementer_changed_test(project, alloy_home, fake_harnesses):
+    fake_harnesses.configure(_acceptance_script(implement=[implement_rewrite_tests_entry()]))
     harness = make_harness(project, alloy_home)
     try:
         final = await harness.start()

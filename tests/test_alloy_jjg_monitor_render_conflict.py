@@ -13,8 +13,6 @@ import ast
 import subprocess
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MONITOR_RENDER_TESTS = REPO_ROOT / "tests" / "test_monitor_render.py"
 
@@ -70,14 +68,8 @@ def test_monitor_render_py_gek_weekly_date_suffix_expects_sep_format_not_iso():
 
 def test_monitor_render_py_codex_rollout_test_matches_main_used_percent_name():
     text = MONITOR_RENDER_TESTS.read_text(encoding="utf-8")
-    assert (
-        "def test_limits_lines_codex_rollout_shows_used_percent_with_compact_reset_suffix"
-        in text
-    )
-    assert (
-        "def test_limits_lines_codex_rollout_shows_consumed_percent_with_compact_reset_suffix"
-        not in text
-    )
+    assert "def test_limits_lines_codex_rollout_shows_used_percent_with_compact_reset_suffix" in text
+    assert "def test_limits_lines_codex_rollout_shows_consumed_percent_with_compact_reset_suffix" not in text
 
 
 def test_monitor_render_py_hosts_reset_suffix_weekly_compact_unit_test():

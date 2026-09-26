@@ -20,7 +20,6 @@ import pytest
 from alloy.config import ConfigError, RecipeConfig, RoleSpec, load_recipe
 from alloy.models import COMPLEXITY_LEVELS, next_level
 
-
 # ---------------------------------------------------------------------------
 # models.py: complexity level primitives
 # ---------------------------------------------------------------------------
@@ -306,9 +305,7 @@ def test_parse_folds_tier_list_into_fallback_chain():
 
 
 def test_role_spec_parse_effort_sets_field_and_label():
-    spec = RoleSpec.parse(
-        {"runner": "claude-write", "model": "haiku", "effort": "low"}
-    )
+    spec = RoleSpec.parse({"runner": "claude-write", "model": "haiku", "effort": "low"})
     assert spec.effort == "low"
     assert spec.label == "claude-write:haiku@low"
 
@@ -344,7 +341,11 @@ def test_complexity_tier_rejects_effort_on_cursor_plan_runner():
             "routing": "live",
             "tiers": {
                 "simple": [
-                    {"runner": "cursor-plan", "model": "composer-2.5", "effort": "high"},
+                    {
+                        "runner": "cursor-plan",
+                        "model": "composer-2.5",
+                        "effort": "high",
+                    },
                 ],
             },
         }
@@ -475,9 +476,7 @@ def test_parse_without_landing_block_yields_landing_spec_defaults():
 def test_parse_landing_block_overrides_mode_and_target():
     from alloy.config import LandingSpec
 
-    config = RecipeConfig.parse(
-        _base_raw_recipe(landing={"mode": "auto", "target": "develop"})
-    )
+    config = RecipeConfig.parse(_base_raw_recipe(landing={"mode": "auto", "target": "develop"}))
     assert config.landing == LandingSpec(mode="auto", target="develop")
 
 

@@ -23,8 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON = sys.executable
 
 HARNESS_CANCEL_TEST = (
-    "tests/test_checkpoints_cancellation.py::"
-    "test_harness_start_cancel_finishes_within_checkpointer_budget"
+    "tests/test_checkpoints_cancellation.py::test_harness_start_cancel_finishes_within_checkpointer_budget"
 )
 CANCEL_AWAIT_BUDGET_S = 6.0
 

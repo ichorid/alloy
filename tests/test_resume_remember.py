@@ -12,13 +12,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
-
-from alloy.beads import BeadsClient
-from alloy.cli import app
-from alloy.engine import Engine, RunResult
-from alloy.models import parse_provenance
-from support import load_config
 from conftest import (
     FAKE_BD_SOURCE,
     bd_create,
@@ -29,6 +22,13 @@ from conftest import (
     synthesize_entry,
     write_tests_entry,
 )
+from support import load_config
+from typer.testing import CliRunner
+
+from alloy.beads import BeadsClient
+from alloy.cli import app
+from alloy.engine import Engine, RunResult
+from alloy.models import parse_provenance
 
 
 @pytest.fixture
@@ -60,11 +60,7 @@ def _remember_calls(workdir: Path) -> list[dict]:
     path = workdir / "calls.jsonl"
     if not path.exists():
         return []
-    return [
-        __import__("json").loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    return [__import__("json").loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _human_remember_calls(workdir: Path, bead_id: str) -> list[dict]:
@@ -72,8 +68,7 @@ def _human_remember_calls(workdir: Path, bead_id: str) -> list[dict]:
     return [
         call
         for call in _remember_calls(workdir)
-        if call.get("command") == "remember"
-        and default_key in call.get("argv", [])
+        if call.get("command") == "remember" and default_key in call.get("argv", [])
     ]
 
 
@@ -167,9 +162,7 @@ def test_cli_resume_with_remember_records_default_human_key(
     )
 
     remembers = _human_remember_calls(workdir, bead_id)
-    assert len(remembers) == 1, (
-        f"exit={result.exit_code} stderr={result.stderr!r} remembers={remembers}"
-    )
+    assert len(remembers) == 1, f"exit={result.exit_code} stderr={result.stderr!r} remembers={remembers}"
 
     key, stored = _remember_key_and_body(remembers[0])
     assert key == f"alloy:human:{bead_id}"
@@ -214,9 +207,7 @@ def test_cli_resume_with_remember_custom_key(
         for call in _remember_calls(workdir)
         if call.get("command") == "remember" and "my-key" in call.get("argv", [])
     ]
-    assert len(remembers) == 1, (
-        f"exit={result.exit_code} stderr={result.stderr!r} remembers={remembers}"
-    )
+    assert len(remembers) == 1, f"exit={result.exit_code} stderr={result.stderr!r} remembers={remembers}"
     key, stored = _remember_key_and_body(remembers[0])
     assert key == "my-key"
     body, _run_id, note_bead_id, at = parse_provenance(stored)
@@ -253,7 +244,6 @@ def test_cli_resume_without_remember_makes_no_remember_calls(
     )
 
     assert result.exit_code == 0, (
-        f"exit={result.exit_code!r} stdout={result.stdout!r} "
-        f"stderr={result.stderr!r} exc={result.exception!r}"
+        f"exit={result.exit_code!r} stdout={result.stdout!r} stderr={result.stderr!r} exc={result.exception!r}"
     )
     assert _remember_calls(workdir) == []

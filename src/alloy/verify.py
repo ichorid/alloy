@@ -43,6 +43,7 @@ def verifier_check_requests(action: VerifierAction) -> list[CheckRequest]:
         return [action.to_request()]
     return []
 
+
 # Ordered: first marker file whose project layout matches wins.
 AUTODETECT: list[tuple[str, str]] = [
     ("pytest.ini", "python -m pytest -q"),
@@ -68,6 +69,16 @@ _CARGO = re.compile(r"test result: \w+\. (\d+) passed; (\d+) failed")
 
 
 _ALLOY_SRC = "src/alloy/"
+
+# Cross-cutting workflow code is exercised by tests whose names do not match
+# the source module. These remain suggestions for the verifier, not checks.
+_WORKFLOW_TESTS = {
+    "tdd_loop.py": ("test_workflow.py", "test_prompts.py", "test_triage.py", "test_verify.py"),
+    "state.py": ("test_workflow.py", "test_memory_injection.py"),
+    "role_prompts.py": ("test_prompts.py", "test_workflow.py"),
+    "shared_verification.py": ("test_verify.py", "test_workflow.py", "test_land.py"),
+    "bug_triage.py": ("test_triage.py", "test_remediate.py", "test_workflow.py"),
+}
 
 
 def test_stems_from_changed_alloy_src(changed_files: list[str]) -> set[str]:
@@ -100,6 +111,14 @@ def diff_derived_test_paths(changed_files: list[str], repo_root: Path) -> list[s
         for match in sorted(tests_dir.glob(f"test_{stem}*.py")):
             rel = match.relative_to(repo_root).as_posix()
             if rel not in seen:
+                seen.add(rel)
+                paths.append(rel)
+    for source in changed_files:
+        if not source.startswith("src/alloy/recipes/"):
+            continue
+        for name in _WORKFLOW_TESTS.get(Path(source).name, ()):
+            rel = f"tests/{name}"
+            if rel not in seen and (repo_root / rel).is_file():
                 seen.add(rel)
                 paths.append(rel)
     return paths
@@ -191,10 +210,7 @@ async def run_check(
     if log_dir is not None:
         log_dir.mkdir(parents=True, exist_ok=True)
         path = log_dir / f"check-{index}-{request.kind}-{int(time.time() * 1000)}.log"
-        header = (
-            f"$ {request.command}\npurpose={request.purpose}\nkind={request.kind}\n"
-            f"exit={exit_code}\n\n"
-        )
+        header = f"$ {request.command}\npurpose={request.purpose}\nkind={request.kind}\nexit={exit_code}\n\n"
         path.write_text(header + output, encoding="utf-8")
         log_path = str(path)
 
@@ -250,14 +266,19 @@ def check_logs(log_dir: Path | str | None) -> list[dict[str, Any]]:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[:4]
         header = dict(line.split("=", 1) for line in lines[1:] if "=" in line)
         command = lines[0] if lines else ""
-        entries.append((index, started_ms, {
-            "index": index,
-            "command": command[2:] if command.startswith("$ ") else command,
-            "kind": header.get("kind") or "-".join(parts[2:-1]) or "custom",
-            "exit_code": int(header["exit"]) if header.get("exit", "").lstrip("-").isdigit()
-            else None,
-            "log_path": str(path),
-        }))
+        entries.append(
+            (
+                index,
+                started_ms,
+                {
+                    "index": index,
+                    "command": command[2:] if command.startswith("$ ") else command,
+                    "kind": header.get("kind") or "-".join(parts[2:-1]) or "custom",
+                    "exit_code": int(header["exit"]) if header.get("exit", "").lstrip("-").isdigit() else None,
+                    "log_path": str(path),
+                },
+            )
+        )
     return [entry for _, _, entry in sorted(entries, key=lambda item: item[:2])]
 
 

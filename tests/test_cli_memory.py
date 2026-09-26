@@ -61,7 +61,9 @@ def _index_by_key(payload: list[dict]) -> dict[str, dict]:
 
 
 def test_memory_list_json_emits_one_object_per_non_meta_key_with_fields(
-    project, alloy_home, fake_bd,
+    project,
+    alloy_home,
+    fake_bd,
 ):
     _configure_memories(fake_bd)
 
@@ -90,7 +92,9 @@ def test_memory_list_json_emits_one_object_per_non_meta_key_with_fields(
 
 
 def test_memory_list_json_human_key_has_contradiction_flag(
-    project, alloy_home, fake_bd,
+    project,
+    alloy_home,
+    fake_bd,
 ):
     _configure_memories(fake_bd)
 
@@ -108,7 +112,9 @@ def test_memory_list_json_human_key_has_contradiction_flag(
 
 
 def test_memory_list_json_lesson_has_provenance_embedded_flag_and_age(
-    project, alloy_home, fake_bd,
+    project,
+    alloy_home,
+    fake_bd,
 ):
     _configure_memories(fake_bd)
 
@@ -131,7 +137,9 @@ def test_memory_list_json_lesson_has_provenance_embedded_flag_and_age(
 
 
 def test_memory_list_table_contains_every_non_meta_key(
-    project, alloy_home, fake_bd,
+    project,
+    alloy_home,
+    fake_bd,
 ):
     _configure_memories(fake_bd)
 

@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-
-from types import SimpleNamespace
+from support import make_bead
 
 from alloy.config import RoleSpec
 from alloy.models import RunnerUnavailable
@@ -16,15 +16,11 @@ from alloy.runners import RunnerRegistry
 from alloy.runners.base import extract_json_object, schema_instructions
 from alloy.runtime import RunContext
 from alloy.store import Store
-from support import make_bead
-
 
 SCHEMA = {"type": "object", "properties": {"decision": {"type": "string"}}}
 
 
-async def test_claude_adapter_returns_native_structured_output(
-    fake_harnesses, project, tmp_path
-):
+async def test_claude_adapter_returns_native_structured_output(fake_harnesses, project, tmp_path):
     fake_harnesses.configure({"judge": {"structured": {"decision": "done"}}})
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
     result = await registry.get("claude").run(
@@ -55,12 +51,8 @@ async def test_cursor_adapter_reads_result_envelope(fake_harnesses, project, tmp
     assert result.text == "a python package"
 
 
-async def test_cursor_is_error_envelope_with_exit_zero_is_a_failed_call(
-    fake_harnesses, project, tmp_path
-):
-    fake_harnesses.configure(
-        {"context": {"exit": 0, "is_error": True, "text": "rate limited"}}
-    )
+async def test_cursor_is_error_envelope_with_exit_zero_is_a_failed_call(fake_harnesses, project, tmp_path):
+    fake_harnesses.configure({"context": {"exit": 0, "is_error": True, "text": "rate limited"}})
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
     result = await registry.get("cursor").run("You are gathering context.", project)
     assert not result.ok
@@ -68,21 +60,15 @@ async def test_cursor_is_error_envelope_with_exit_zero_is_a_failed_call(
     assert "rate limited" in (result.error or "")
 
 
-async def test_cursor_success_envelope_with_exit_zero_stays_ok(
-    fake_harnesses, project, tmp_path
-):
-    fake_harnesses.configure(
-        {"context": {"exit": 0, "is_error": False, "text": "all good"}}
-    )
+async def test_cursor_success_envelope_with_exit_zero_stays_ok(fake_harnesses, project, tmp_path):
+    fake_harnesses.configure({"context": {"exit": 0, "is_error": False, "text": "all good"}})
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
     result = await registry.get("cursor").run("You are gathering context.", project)
     assert result.ok
     assert result.text == "all good"
 
 
-async def test_codex_error_event_without_agent_message_and_exit_zero_fails(
-    fake_harnesses, project, tmp_path
-):
+async def test_codex_error_event_without_agent_message_and_exit_zero_fails(fake_harnesses, project, tmp_path):
     fake_harnesses.configure(
         {
             "implement": {
@@ -99,9 +85,7 @@ async def test_codex_error_event_without_agent_message_and_exit_zero_fails(
     assert "out of credits" in (result.error or "")
 
 
-async def test_codex_agent_message_after_error_event_with_exit_zero_succeeds(
-    fake_harnesses, project, tmp_path
-):
+async def test_codex_agent_message_after_error_event_with_exit_zero_succeeds(fake_harnesses, project, tmp_path):
     fake_harnesses.configure(
         {
             "implement": {
@@ -117,24 +101,16 @@ async def test_codex_agent_message_after_error_event_with_exit_zero_succeeds(
     assert result.text == "recovered answer"
 
 
-async def test_claude_is_error_envelope_with_exit_zero_is_a_failed_call(
-    fake_harnesses, project, tmp_path
-):
-    fake_harnesses.configure(
-        {"judge": {"exit": 0, "is_error": True, "text": "boom"}}
-    )
+async def test_claude_is_error_envelope_with_exit_zero_is_a_failed_call(fake_harnesses, project, tmp_path):
+    fake_harnesses.configure({"judge": {"exit": 0, "is_error": True, "text": "boom"}})
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
-    result = await registry.get("claude").run(
-        "You are judging whether this is complete.", project
-    )
+    result = await registry.get("claude").run("You are judging whether this is complete.", project)
     assert not result.ok
     assert result.exit_code == 0
     assert "boom" in (result.error or "")
 
 
-async def test_structured_output_recovered_from_unstructured_harness(
-    fake_harnesses, project, tmp_path
-):
+async def test_structured_output_recovered_from_unstructured_harness(fake_harnesses, project, tmp_path):
     """Codex has no --json-schema, so the schema rides in the prompt and the
     JSON is parsed back out of the answer."""
     fake_harnesses.configure({"judge": {"structured": {"decision": "retry"}}})
@@ -147,12 +123,8 @@ async def test_structured_output_recovered_from_unstructured_harness(
     assert "decision" in call["prompt"]  # the schema was appended to the prompt
 
 
-async def test_nonzero_exit_is_a_failed_result_not_an_exception(
-    fake_harnesses, project, tmp_path
-):
-    fake_harnesses.configure(
-        {"implement": {"exit": 2, "stderr": "codex: rate limited", "text": ""}}
-    )
+async def test_nonzero_exit_is_a_failed_result_not_an_exception(fake_harnesses, project, tmp_path):
+    fake_harnesses.configure({"implement": {"exit": 2, "stderr": "codex: rate limited", "text": ""}})
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
     result = await registry.get("codex").run("Implement the smallest change.", project)
     assert not result.ok
@@ -163,8 +135,13 @@ async def test_nonzero_exit_is_a_failed_result_not_an_exception(
 async def test_codex_error_event_leads_the_failure_message(fake_harnesses, project, tmp_path):
     """codex prints chatter on stderr; the JSONL error event is the real reason."""
     fake_harnesses.configure(
-        {"implement": {"exit": 1, "stderr": "Reading additional input from stdin...\n",
-                       "text": "Your workspace is out of credits."}}
+        {
+            "implement": {
+                "exit": 1,
+                "stderr": "Reading additional input from stdin...\n",
+                "text": "Your workspace is out of credits.",
+            }
+        }
     )
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
     result = await registry.get("codex").run("Implement the smallest change.", project)
@@ -174,9 +151,7 @@ async def test_codex_error_event_leads_the_failure_message(fake_harnesses, proje
 async def test_timeout_is_reported_not_raised(fake_harnesses, project, tmp_path):
     fake_harnesses.configure({"implement": {"sleep": 5}})
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
-    result = await registry.get("codex").run(
-        "Implement the smallest change.", project, timeout=timedelta(seconds=1)
-    )
+    result = await registry.get("codex").run("Implement the smallest change.", project, timeout=timedelta(seconds=1))
     assert not result.ok
     assert "timed out" in result.error
 
@@ -189,9 +164,7 @@ async def test_missing_binary_raises_runner_unavailable(fake_harnesses, project)
         await registry.get("pi").run("hello", project)
 
 
-async def test_agents_always_run_inside_the_given_directory(
-    fake_harnesses, project, tmp_path
-):
+async def test_agents_always_run_inside_the_given_directory(fake_harnesses, project, tmp_path):
     fake_harnesses.configure({"implement": {"text": "ok"}})
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
     await registry.get("codex").run("Implement the smallest change.", project)
@@ -256,9 +229,7 @@ def test_extract_json_object_parses_fixture_with_schema_preamble():
     assert extract_json_object(output) == {"decision": "done"}
 
 
-async def test_text_schema_runner_prompt_starts_with_schema_instructions(
-    fake_harnesses, project, tmp_path
-):
+async def test_text_schema_runner_prompt_starts_with_schema_instructions(fake_harnesses, project, tmp_path):
     fake_harnesses.configure({"judge": {"structured": {"decision": "retry"}}})
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
     await registry.get("codex").run(ROLE_PROMPT, project, structured_schema=SCHEMA)
@@ -294,9 +265,7 @@ def test_codex_build_command_omits_model_reasoning_effort_when_none():
     assert not any("model_reasoning_effort" in arg for arg in argv)
 
 
-async def test_run_context_passes_role_effort_to_claude_write_argv(
-    fake_harnesses, project, tmp_path
-):
+async def test_run_context_passes_role_effort_to_claude_write_argv(fake_harnesses, project, tmp_path):
     fake_harnesses.configure({"implement": {"text": "ok"}})
     store = Store(tmp_path / "alloy.db")
     run_id = "run-effort"
@@ -322,9 +291,7 @@ async def test_run_context_passes_role_effort_to_claude_write_argv(
         log_dir=tmp_path,
         beads=None,
     )
-    spec = RoleSpec.parse(
-        {"runner": "claude-write", "model": "haiku", "effort": "low"}
-    )
+    spec = RoleSpec.parse({"runner": "claude-write", "model": "haiku", "effort": "low"})
     result = await ctx.call("implement", spec, "Implement the smallest change.")
     assert result.ok
     argv = fake_harnesses.calls_for("implement")[0]["argv"]
@@ -335,9 +302,7 @@ async def test_run_context_passes_role_effort_to_claude_write_argv(
 # -- runner session resume (alloy-21u.2) ---------------------------------------
 
 
-def _run_context_for_resume_tests(
-    fake_harnesses, project, tmp_path, *, run_id: str = "run-resume"
-) -> RunContext:
+def _run_context_for_resume_tests(fake_harnesses, project, tmp_path, *, run_id: str = "run-resume") -> RunContext:
     store = Store(tmp_path / "alloy.db")
     store.create_run(
         run_id=run_id,
@@ -365,9 +330,7 @@ def _run_context_for_resume_tests(
 
 def test_claude_build_command_includes_resume_before_prompt_flag():
     runner = RunnerRegistry().get("claude")
-    argv = runner.build_command(
-        "p", model="sonnet", structured_schema=None, resume_session="abc"
-    )
+    argv = runner.build_command("p", model="sonnet", structured_schema=None, resume_session="abc")
     resume_idx = argv.index("--resume")
     assert argv[resume_idx + 1] == "abc"
     assert resume_idx < argv.index("-p")
@@ -375,9 +338,7 @@ def test_claude_build_command_includes_resume_before_prompt_flag():
 
 def test_claude_write_build_command_includes_resume_before_prompt_flag():
     runner = RunnerRegistry().get("claude-write")
-    argv = runner.build_command(
-        "p", model="sonnet", structured_schema=None, resume_session="abc"
-    )
+    argv = runner.build_command("p", model="sonnet", structured_schema=None, resume_session="abc")
     resume_idx = argv.index("--resume")
     assert argv[resume_idx + 1] == "abc"
     assert resume_idx < argv.index("-p")
@@ -386,9 +347,7 @@ def test_claude_write_build_command_includes_resume_before_prompt_flag():
 def test_codex_build_command_uses_exec_resume_subcommand():
     runner = RunnerRegistry().get("codex")
     prompt = "do it"
-    argv = runner.build_command(
-        prompt, model=None, structured_schema=None, resume_session="t1"
-    )
+    argv = runner.build_command(prompt, model=None, structured_schema=None, resume_session="t1")
     assert argv[:3] == ["exec", "resume", "t1"]
     assert "--json" in argv
     assert argv[-1] == prompt
@@ -397,9 +356,7 @@ def test_codex_build_command_uses_exec_resume_subcommand():
 def test_codex_readonly_build_command_uses_exec_resume_subcommand():
     runner = RunnerRegistry().get("codex-readonly")
     prompt = "review this"
-    argv = runner.build_command(
-        prompt, model=None, structured_schema=None, resume_session="t1"
-    )
+    argv = runner.build_command(prompt, model=None, structured_schema=None, resume_session="t1")
     assert argv[:3] == ["exec", "resume", "t1"]
     assert "--json" in argv
     assert argv[-1] == prompt
@@ -407,18 +364,14 @@ def test_codex_readonly_build_command_uses_exec_resume_subcommand():
 
 def test_cursor_build_command_appends_resume_flag():
     runner = RunnerRegistry().get("cursor")
-    argv = runner.build_command(
-        "hi", model=None, structured_schema=None, resume_session="c1"
-    )
+    argv = runner.build_command("hi", model=None, structured_schema=None, resume_session="c1")
     idx = argv.index("--resume")
     assert argv[idx + 1] == "c1"
 
 
 def test_cursor_plan_build_command_appends_resume_flag():
     runner = RunnerRegistry().get("cursor-plan")
-    argv = runner.build_command(
-        "hi", model=None, structured_schema=None, resume_session="c1"
-    )
+    argv = runner.build_command("hi", model=None, structured_schema=None, resume_session="c1")
     idx = argv.index("--resume")
     assert argv[idx + 1] == "c1"
 
@@ -433,9 +386,7 @@ def test_generic_runner_renders_resume_args_template_token():
             }
         }
     ).get("myagent")
-    argv = runner.build_command(
-        "hi", model=None, structured_schema=None, resume_session="s1"
-    )
+    argv = runner.build_command("hi", model=None, structured_schema=None, resume_session="s1")
     assert argv[:2] == ["--resume", "s1"]
     assert argv[-1] == "hi"
 
@@ -455,15 +406,11 @@ def test_generic_runner_renders_resume_args_template_token():
 def test_build_command_argv_unchanged_when_resume_session_is_none(runner_name, kwargs):
     runner = RunnerRegistry().get(runner_name)
     baseline = runner.build_command("hi", structured_schema=None, **kwargs)
-    unchanged = runner.build_command(
-        "hi", structured_schema=None, resume_session=None, **kwargs
-    )
+    unchanged = runner.build_command("hi", structured_schema=None, resume_session=None, **kwargs)
     assert unchanged == baseline
 
 
-async def test_run_context_passes_resume_session_through_fake_harness(
-    fake_harnesses, project, tmp_path
-):
+async def test_run_context_passes_resume_session_through_fake_harness(fake_harnesses, project, tmp_path):
     fake_harnesses.configure({"implement": {"text": "ok"}})
     ctx = _run_context_for_resume_tests(fake_harnesses, project, tmp_path)
     spec = RoleSpec.parse({"runner": "codex"})
@@ -481,9 +428,7 @@ async def test_run_context_passes_resume_session_through_fake_harness(
     assert usage["resumed"] is True
 
 
-async def test_run_context_drops_resume_session_on_fallback(
-    fake_harnesses, project, tmp_path
-):
+async def test_run_context_drops_resume_session_on_fallback(fake_harnesses, project, tmp_path):
     fake_harnesses.configure(
         {
             "implement@codex": [{"exit": 2, "stderr": "codex: rate limited", "text": ""}],
@@ -507,9 +452,7 @@ async def test_run_context_drops_resume_session_on_fallback(
     calls = fake_harnesses.calls_for("implement")
     assert calls[0]["resume"] == "abc"
     assert "resume" not in calls[1]
-    implement_calls = [
-        c for c in ctx.store.agent_calls(ctx.run_id) if c["role"] == "implement"
-    ]
+    implement_calls = [c for c in ctx.store.agent_calls(ctx.run_id) if c["role"] == "implement"]
     assert json.loads(implement_calls[0]["usage_json"])["resumed"] is True
     assert json.loads(implement_calls[1]["usage_json"])["resumed"] is False
 
@@ -555,9 +498,7 @@ def test_cli_runner_stdin_prompt_threshold_on_codex_and_claude():
 
 def test_codex_build_command_stdin_replaces_trailing_prompt_with_dash():
     runner = RunnerRegistry().get("codex")
-    argv = runner.build_command_stdin(
-        model="gpt-5.6-terra", structured_schema=None, effort="high"
-    )
+    argv = runner.build_command_stdin(model="gpt-5.6-terra", structured_schema=None, effort="high")
     assert argv is not None
     assert argv[-1] == "-"
     assert "ignored" not in argv
@@ -567,9 +508,7 @@ def test_codex_build_command_stdin_replaces_trailing_prompt_with_dash():
 
 def test_codex_build_command_stdin_honours_resume_session():
     runner = RunnerRegistry().get("codex")
-    argv = runner.build_command_stdin(
-        model=None, structured_schema=None, resume_session="abc"
-    )
+    argv = runner.build_command_stdin(model=None, structured_schema=None, resume_session="abc")
     assert argv is not None
     assert argv[:3] == ["exec", "resume", "abc"]
     assert argv[-1] == "-"
@@ -578,9 +517,7 @@ def test_codex_build_command_stdin_honours_resume_session():
 
 def test_claude_build_command_stdin_leaves_p_flag_without_prompt_argument():
     runner = RunnerRegistry().get("claude")
-    argv = runner.build_command_stdin(
-        model="sonnet", structured_schema=None, effort="low"
-    )
+    argv = runner.build_command_stdin(model="sonnet", structured_schema=None, effort="low")
     assert argv is not None
     assert "ignored" not in argv
     assert _claude_argv_uses_stdin_prompt_flag(argv)
@@ -590,9 +527,7 @@ def test_claude_build_command_stdin_leaves_p_flag_without_prompt_argument():
 
 def test_claude_build_command_stdin_honours_resume_session():
     runner = RunnerRegistry().get("claude")
-    argv = runner.build_command_stdin(
-        model="sonnet", structured_schema=None, resume_session="abc"
-    )
+    argv = runner.build_command_stdin(model="sonnet", structured_schema=None, resume_session="abc")
     assert argv is not None
     resume_idx = argv.index("--resume")
     assert argv[resume_idx + 1] == "abc"
@@ -601,9 +536,7 @@ def test_claude_build_command_stdin_honours_resume_session():
     assert "ignored" not in argv
 
 
-async def test_codex_oversized_prompt_delivered_via_stdin(
-    fake_harnesses, project, tmp_path
-):
+async def test_codex_oversized_prompt_delivered_via_stdin(fake_harnesses, project, tmp_path):
     prompt = _prompt_with_marker(OVERSIZED_PROMPT_LEN)
     assert len(prompt) > STDIN_PROMPT_THRESHOLD
     fake_harnesses.configure({"implement": {"text": "ok"}})
@@ -616,9 +549,7 @@ async def test_codex_oversized_prompt_delivered_via_stdin(
     assert not _prompt_in_argv(call, prompt)
 
 
-async def test_claude_oversized_prompt_delivered_via_stdin(
-    fake_harnesses, project, tmp_path
-):
+async def test_claude_oversized_prompt_delivered_via_stdin(fake_harnesses, project, tmp_path):
     prompt = _prompt_with_marker(OVERSIZED_PROMPT_LEN)
     assert len(prompt) > STDIN_PROMPT_THRESHOLD
     fake_harnesses.configure({"implement": {"text": "ok"}})
@@ -631,15 +562,11 @@ async def test_claude_oversized_prompt_delivered_via_stdin(
     assert not _prompt_in_argv(call, prompt)
 
 
-async def test_codex_oversized_prompt_with_resume_records_session(
-    fake_harnesses, project, tmp_path
-):
+async def test_codex_oversized_prompt_with_resume_records_session(fake_harnesses, project, tmp_path):
     prompt = _prompt_with_marker(OVERSIZED_PROMPT_LEN)
     fake_harnesses.configure({"implement": {"text": "ok"}})
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
-    result = await registry.get("codex").run(
-        prompt, project, resume_session="abc"
-    )
+    result = await registry.get("codex").run(prompt, project, resume_session="abc")
     assert result.ok
     call = fake_harnesses.calls_for("implement")[0]
     assert IMPLEMENT_MARKER in call["prompt"]
@@ -647,15 +574,11 @@ async def test_codex_oversized_prompt_with_resume_records_session(
     assert _codex_argv_uses_stdin_sentinel(call["argv"])
 
 
-async def test_claude_oversized_prompt_with_resume_records_session(
-    fake_harnesses, project, tmp_path
-):
+async def test_claude_oversized_prompt_with_resume_records_session(fake_harnesses, project, tmp_path):
     prompt = _prompt_with_marker(OVERSIZED_PROMPT_LEN)
     fake_harnesses.configure({"implement": {"text": "ok"}})
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
-    result = await registry.get("claude").run(
-        prompt, project, resume_session="abc"
-    )
+    result = await registry.get("claude").run(prompt, project, resume_session="abc")
     assert result.ok
     call = fake_harnesses.calls_for("implement")[0]
     assert IMPLEMENT_MARKER in call["prompt"]
@@ -663,9 +586,7 @@ async def test_claude_oversized_prompt_with_resume_records_session(
     assert _claude_argv_uses_stdin_prompt_flag(call["argv"])
 
 
-async def test_codex_subthreshold_prompt_stays_in_argv(
-    fake_harnesses, project, tmp_path
-):
+async def test_codex_subthreshold_prompt_stays_in_argv(fake_harnesses, project, tmp_path):
     prompt = _prompt_with_marker(1_000)
     assert len(prompt) <= STDIN_PROMPT_THRESHOLD
     fake_harnesses.configure({"implement": {"text": "ok"}})
@@ -677,9 +598,7 @@ async def test_codex_subthreshold_prompt_stays_in_argv(
     assert not _codex_argv_uses_stdin_sentinel(call["argv"])
 
 
-async def test_claude_subthreshold_prompt_stays_in_argv(
-    fake_harnesses, project, tmp_path
-):
+async def test_claude_subthreshold_prompt_stays_in_argv(fake_harnesses, project, tmp_path):
     prompt = _prompt_with_marker(1_000)
     assert len(prompt) <= STDIN_PROMPT_THRESHOLD
     fake_harnesses.configure({"implement": {"text": "ok"}})

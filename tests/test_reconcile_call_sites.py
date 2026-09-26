@@ -41,8 +41,5 @@ def test_reconcile_inflight_is_only_called_from_scheduler_and_engine():
 
 def test_reconcile_inflight_is_not_called_from_any_monitor_module():
     sites = _call_sites()
-    offenders = [
-        (path, lineno, line) for path, lineno, line in sites
-        if "monitor" in path.name.lower()
-    ]
+    offenders = [(path, lineno, line) for path, lineno, line in sites if "monitor" in path.name.lower()]
     assert offenders == []
