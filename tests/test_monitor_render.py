@@ -173,7 +173,7 @@ def _judge(raw_decision="retry", raw_confidence=0.61, effective_decision="retry"
     }
 
 
-COLUMN_COUNT = 12  # bead, recipe, status, stage, i/max, c/max, tests, elapsed, now, tokens, judge, complexity
+COLUMN_COUNT = 11  # bead, status, stage, i/max, c/max, tests, elapsed, now, tokens, judge, complexity
 
 
 # -- run_rows -----------------------------------------------------------------
@@ -194,7 +194,7 @@ def test_one_row_per_run_with_the_documented_column_count():
         assert len(row) == COLUMN_COUNT
 
 
-def test_row_identifies_bead_recipe_status_and_stage():
+def test_row_identifies_bead_status_and_stage():
     snapshot = _snapshot(runs=[_run(
         bead_id="alloy-a1b2", recipe="tdd-loop-jev", status="running", stage="implement",
     )])
@@ -202,9 +202,8 @@ def test_row_identifies_bead_recipe_status_and_stage():
     row = run_rows(snapshot)[0]
 
     assert row[0] == "alloy-a1b2"
-    assert row[1] == "tdd-loop-jev"
-    assert row[2] == "running"
-    assert row[3] == "implement"
+    assert row[1] == "running"
+    assert row[2] == "implement"
 
 
 def test_row_formats_iteration_and_consilium_progress_as_i_over_max():
@@ -212,8 +211,8 @@ def test_row_formats_iteration_and_consilium_progress_as_i_over_max():
 
     row = run_rows(snapshot)[0]
 
-    assert row[4] == "2/5"
-    assert row[5] == "1/3"
+    assert row[3] == "2/5"
+    assert row[4] == "1/3"
 
 
 def test_row_with_no_current_calls_shows_a_dash_in_the_now_column():
@@ -221,7 +220,7 @@ def test_row_with_no_current_calls_shows_a_dash_in_the_now_column():
 
     row = run_rows(snapshot)[0]
 
-    assert row[8] == "-"
+    assert row[7] == "-"
 
 
 def test_row_with_two_current_calls_joins_them_with_a_plus_in_the_now_column():
@@ -233,11 +232,11 @@ def test_row_with_two_current_calls_joins_them_with_a_plus_in_the_now_column():
 
     row = run_rows(snapshot)[0]
 
-    assert " + " in row[8]
-    assert "implement" in row[8]
-    assert "codex" in row[8]
-    assert "critic" in row[8]
-    assert "claude" in row[8]
+    assert " + " in row[7]
+    assert "implement" in row[7]
+    assert "codex" in row[7]
+    assert "critic" in row[7]
+    assert "claude" in row[7]
 
 
 def test_row_with_null_judge_shows_a_dash_in_the_judge_column():
@@ -245,7 +244,7 @@ def test_row_with_null_judge_shows_a_dash_in_the_judge_column():
 
     row = run_rows(snapshot)[0]
 
-    assert row[10] == "-"
+    assert row[9] == "-"
 
 
 def test_row_with_matching_judge_shows_only_the_single_decision():
@@ -255,8 +254,8 @@ def test_row_with_matching_judge_shows_only_the_single_decision():
 
     row = run_rows(snapshot)[0]
 
-    assert "done" in row[10]
-    assert "→" not in row[10]
+    assert "done" in row[9]
+    assert "→" not in row[9]
 
 
 def test_row_with_differing_raw_and_effective_judge_shows_both_decisions():
@@ -266,10 +265,10 @@ def test_row_with_differing_raw_and_effective_judge_shows_both_decisions():
 
     row = run_rows(snapshot)[0]
 
-    assert "done" in row[10]
-    assert "retry" in row[10]
-    assert row[10] != "done"
-    assert row[10] != "retry"
+    assert "done" in row[9]
+    assert "retry" in row[9]
+    assert row[9] != "done"
+    assert row[9] != "retry"
 
 
 def test_row_carries_the_tests_summary_verbatim():
@@ -277,7 +276,7 @@ def test_row_carries_the_tests_summary_verbatim():
 
     row = run_rows(snapshot)[0]
 
-    assert row[6] == "3 passed, 1 failed"
+    assert row[5] == "3 passed, 1 failed"
 
 
 def test_row_elapsed_column_reflects_elapsed_minutes():
@@ -285,7 +284,7 @@ def test_row_elapsed_column_reflects_elapsed_minutes():
 
     row = run_rows(snapshot)[0]
 
-    assert "7" in row[7]
+    assert "7" in row[6]
 
 
 def test_row_tokens_column_reflects_total_tokens_when_no_split_is_available():
@@ -295,7 +294,7 @@ def test_row_tokens_column_reflects_total_tokens_when_no_split_is_available():
 
     row = run_rows(snapshot)[0]
 
-    assert "8635" in row[9]
+    assert "8635" in row[8]
 
 
 # -- header_line ----------------------------------------------------------
@@ -310,7 +309,8 @@ def test_activity_line_shows_memory_review_and_run_stage():
     line = activity_line(snapshot)
     assert "gpt-6-sol: reviewing repository memory" in line
     assert "none: verify (alloy-123)" in line
-    assert activity_line({"runs": []}).endswith("none: idle")
+    assert not line.startswith("active model")
+    assert activity_line({"runs": []}) == "none: idle"
 
 
 def test_activity_line_shows_model_on_running_bead():
@@ -318,6 +318,21 @@ def test_activity_line_shows_model_on_running_bead():
                                     "bead_id": "alloy-123", "current_calls": [
                                         {"role": "implement", "effective_model": "sonnet"}]}]})
     assert "sonnet: implement (alloy-123)" in line
+
+
+def test_activity_line_includes_recipe_when_present():
+    line = activity_line({"runs": [{"status": "running", "stage": "implement",
+                                    "bead_id": "alloy-123", "recipe": "tdd-loop",
+                                    "current_calls": [
+                                        {"role": "implement", "effective_model": "sonnet"}]}]})
+    assert "sonnet: implement (alloy-123 · tdd-loop)" in line
+
+
+def test_activity_line_includes_recipe_with_no_current_calls():
+    line = activity_line({"runs": [{"status": "running", "stage": "verify",
+                                    "bead_id": "alloy-123", "recipe": "tdd-loop",
+                                    "current_calls": []}]})
+    assert "none: verify (alloy-123 · tdd-loop)" in line
 
 
 def test_header_line_reports_scheduler_not_running():
@@ -1074,12 +1089,6 @@ def test_column_tiers_label_wide_only_columns():
         assert column_tier(name) == "wide"
 
 
-def test_column_tiers_label_comfortable_only_column():
-    from alloy.monitor.render import column_tier
-
-    assert column_tier("recipe") == "comfortable"
-
-
 def test_column_tiers_label_always_shown_columns():
     from alloy.monitor.render import column_tier
 
@@ -1102,12 +1111,10 @@ def test_visible_columns_at_comfortable_width_omits_wide_only_columns():
     assert visible_columns(99) == expected
 
 
-def test_visible_columns_below_comfortable_width_also_omits_recipe():
+def test_visible_columns_below_comfortable_width_still_omits_only_wide_only_columns():
     from alloy.monitor.render import COLUMNS, visible_columns
 
-    expected = tuple(
-        name for name in COLUMNS if name not in {"stage", "cons", "complexity", "now", "recipe"}
-    )
+    expected = tuple(name for name in COLUMNS if name not in {"stage", "cons", "complexity", "now"})
     assert visible_columns(79) == expected
 
 
@@ -1195,7 +1202,7 @@ def test_run_rows_nerd_formats_tests_summary_with_pass_and_fail_counts():
 
     row = run_rows(snapshot, mode="nerd")[0]
 
-    assert row[6] == f"{ok}3 {fail}1"
+    assert row[5] == f"{ok}3 {fail}1"
 
 
 def test_run_rows_nerd_formats_tests_summary_with_pass_only():
@@ -1204,7 +1211,7 @@ def test_run_rows_nerd_formats_tests_summary_with_pass_only():
 
     row = run_rows(snapshot, mode="nerd")[0]
 
-    assert row[6] == f"{ok}3"
+    assert row[5] == f"{ok}3"
 
 
 def test_run_rows_nerd_leaves_unparseable_tests_summary_verbatim():
@@ -1212,7 +1219,7 @@ def test_run_rows_nerd_leaves_unparseable_tests_summary_verbatim():
 
     row = run_rows(snapshot, mode="nerd")[0]
 
-    assert row[6] == "flaky"
+    assert row[5] == "flaky"
 
 
 def test_run_rows_nerd_checks_with_exit_code_zero_shows_ok_glyph_and_total():
@@ -1222,7 +1229,7 @@ def test_run_rows_nerd_checks_with_exit_code_zero_shows_ok_glyph_and_total():
 
     row = run_rows(_snapshot(runs=[run]), mode="nerd")[0]
 
-    assert row[6] == f"{ok}14"
+    assert row[5] == f"{ok}14"
 
 
 def test_run_rows_nerd_checks_with_exit_code_one_shows_fail_glyph_and_total():
@@ -1232,7 +1239,7 @@ def test_run_rows_nerd_checks_with_exit_code_one_shows_fail_glyph_and_total():
 
     row = run_rows(_snapshot(runs=[run]), mode="nerd")[0]
 
-    assert row[6] == f"{fail}14"
+    assert row[5] == f"{fail}14"
 
 
 def test_run_rows_ascii_checks_still_shows_n_checks():
@@ -1241,7 +1248,7 @@ def test_run_rows_ascii_checks_still_shows_n_checks():
 
     row = run_rows(_snapshot(runs=[run]))[0]
 
-    assert row[6] == "14 checks"
+    assert row[5] == "14 checks"
 
 
 def test_run_rows_ascii_mode_keeps_tests_summary_verbatim():
@@ -1249,7 +1256,7 @@ def test_run_rows_ascii_mode_keeps_tests_summary_verbatim():
 
     row = run_rows(snapshot, mode="ascii")[0]
 
-    assert row[6] == "3 passed, 1 failed"
+    assert row[5] == "3 passed, 1 failed"
 
 
 # -- alloy-3g0.6: complexity glyph bar in nerd/ascii modes ---------------------
@@ -1258,32 +1265,32 @@ def test_run_rows_ascii_mode_keeps_tests_summary_verbatim():
 def test_run_rows_nerd_simple_complexity_shows_one_block_glyph():
     row = run_rows(_snapshot(runs=[_run(complexity="simple")]), mode="nerd")[0]
 
-    assert row[11] == "▂"
+    assert row[10] == "▂"
 
 
 def test_run_rows_nerd_medium_complexity_shows_two_block_glyph():
     row = run_rows(_snapshot(runs=[_run(complexity="medium")]), mode="nerd")[0]
 
-    assert row[11] == "▂▄"
+    assert row[10] == "▂▄"
 
 
 def test_run_rows_nerd_complex_complexity_shows_three_block_glyph():
     row = run_rows(_snapshot(runs=[_run(complexity="complex")]), mode="nerd")[0]
 
-    assert row[11] == "▂▄▆"
+    assert row[10] == "▂▄▆"
 
 
 def test_run_rows_nerd_none_complexity_shows_dash():
     row = run_rows(_snapshot(runs=[_run(complexity=None)]), mode="nerd")[0]
 
-    assert row[11] == "-"
+    assert row[10] == "-"
 
 
 def test_run_rows_ascii_mode_keeps_complexity_as_word():
     for level in ("simple", "medium", "complex"):
         row = run_rows(_snapshot(runs=[_run(complexity=level)]), mode="ascii")[0]
 
-        assert row[11] == level
+        assert row[10] == level
 
 
 # -- alloy-3g0.7: status pills -------------------------------------------------
@@ -1449,11 +1456,11 @@ def test_task_tree_ascii_mode_matches_byo4_expectations():
 
     queue = _tree_row_by_key(rows, "queue")
     assert queue.cells["bead"] == "▾ QUEUE"
-    assert queue.cells["status"] == "7 ready · 1 blocked · next: alloy-x"
+    assert queue.cells["status"] == "7 ready · 1 blocked\nnext: alloy-x"
 
     epic = _tree_row_by_key(rows, "epic/E")
     assert epic.cells["bead"] == "▾ E"
-    assert epic.cells["status"] == "1 running · 0 judge · 1/4 done"
+    assert epic.cells["status"] == "1 running · 0 judge\n1/4 done"
 
     queue_children = _children_after(rows, "queue")
     assert [child.kind for child in queue_children] == ["queued", "blocked"]
@@ -1468,7 +1475,7 @@ def test_task_tree_ascii_mode_matches_byo4_expectations():
     assert epic_children[1].key == "epic/E/queued/alloy-x"
     assert epic_children[0].cells["bead"] == "├─ running-under-e"
     assert epic_children[1].cells["bead"] == "├─ alloy-x"
-    assert epic_children[2].cells["bead"] == "└─ ✓ 1 done  (done-1)"
+    assert epic_children[2].cells["bead"] == "└─ ✓ 1 done"
 
 
 def test_task_tree_queued_bead_appears_under_queue_and_epic_when_both_expanded():

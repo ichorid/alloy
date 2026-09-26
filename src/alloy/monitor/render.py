@@ -19,7 +19,7 @@ from alloy.limits import HARNESSES
 from alloy.monitor.icons import icon
 from alloy.verify import parse_counts
 
-COLUMNS = ("bead", "recipe", "status", "stage", "iter", "cons", "tests", "elapsed", "now",
+COLUMNS = ("bead", "status", "stage", "iter", "cons", "tests", "elapsed", "now",
            "tokens", "judge", "complexity")
 
 RIGHT_ALIGNED = frozenset({"iter", "cons", "tests", "elapsed", "tokens"})
@@ -28,11 +28,7 @@ COMFORTABLE_WIDTH = 80
 WIDE_WIDTH = 100
 
 _WIDE_ONLY_COLUMNS = frozenset({"stage", "cons", "complexity", "now"})
-_COMFORTABLE_ONLY_COLUMNS = frozenset({"recipe"})
-_COLUMN_TIERS: dict[str, str] = {
-    **{name: "wide" for name in _WIDE_ONLY_COLUMNS},
-    **{name: "comfortable" for name in _COMFORTABLE_ONLY_COLUMNS},
-}
+_COLUMN_TIERS: dict[str, str] = {name: "wide" for name in _WIDE_ONLY_COLUMNS}
 
 _USAGE_BAR_WIDTH = 16
 LIMITS_HARNESS_WIDTH = max(len(name) for name in HARNESSES)
@@ -40,7 +36,6 @@ LIMITS_HARNESS_WIDTH = max(len(name) for name in HARNESSES)
 LIMITS_WINDOW_LABEL_WIDTH = max(len(label) for label in ("5h", "cycle", "weekly"))
 LIMITS_ALIGNED_WINDOW_COUNT = 2
 _QUEUE_READY_CAP = 50
-_DONE_FOLD_IDS = 2
 _COLOR_GREEN = "#7ee787"
 _COLOR_YELLOW = "#e3b341"
 _COLOR_RED = "#f85149"
@@ -64,10 +59,7 @@ def visible_columns(width: int) -> tuple[str, ...]:
     """Column keys shown in DataTable#runs at the given terminal width."""
     if width >= WIDE_WIDTH:
         return COLUMNS
-    hidden = set(_WIDE_ONLY_COLUMNS)
-    if width < COMFORTABLE_WIDTH:
-        hidden |= _COMFORTABLE_ONLY_COLUMNS
-    return tuple(name for name in COLUMNS if name not in hidden)
+    return tuple(name for name in COLUMNS if name not in _WIDE_ONLY_COLUMNS)
 
 
 def header_line(snapshot: dict[str, Any], mode: str | None = None) -> str:
@@ -93,16 +85,25 @@ def activity_line(snapshot: dict[str, Any]) -> str:
     for run in snapshot.get("runs") or []:
         if run.get("status") != "running":
             continue
+        bead_suffix = _bead_recipe_suffix(run)
         calls = run.get("current_calls") or []
         if calls:
             for call in calls:
                 model = call.get("effective_model") or call.get("effective_runner") or "unknown"
                 action = str(call.get("role") or run.get("stage") or "working").replace("_", " ")
-                activities.append(f"{model}: {action} ({run.get('bead_id')})")
+                activities.append(f"{model}: {action} {bead_suffix}")
         else:
             action = str(run.get("stage") or "working").replace("_", " ")
-            activities.append(f"none: {action} ({run.get('bead_id')})")
-    return "active model | action: " + ("; ".join(activities) if activities else "none: idle")
+            activities.append(f"none: {action} {bead_suffix}")
+    return "; ".join(activities) if activities else "none: idle"
+
+
+def _bead_recipe_suffix(run: dict[str, Any]) -> str:
+    bead_id = run.get("bead_id")
+    recipe = run.get("recipe")
+    if recipe is None:
+        return f"({bead_id})"
+    return f"({bead_id} · {recipe})"
 
 
 def _header_line_ascii(snapshot: dict[str, Any]) -> str:
@@ -262,7 +263,10 @@ def task_tree_rows(
                 depth=0,
                 cells=_blank_cells(
                     bead=_queue_bead_label(toggle, mode),
-                    status=f"{ready_total} ready · {len(blocked)} blocked · next: {next_id}",
+                    status=(
+                        f"{ready_total} ready · {len(blocked)} blocked\n"
+                        f"next: {next_id}"
+                    ),
                 ),
             )
         )
@@ -290,7 +294,7 @@ def task_tree_rows(
         cells = _blank_cells(
             bead=_epic_bead_label(epic, epic_toggle, mode),
             status=(
-                f"{epic.get('running', 0)} running · {epic.get('judge', 0)} judge · "
+                f"{epic.get('running', 0)} running · {epic.get('judge', 0)} judge\n"
                 f"{epic.get('done', 0)}/{epic.get('total', 0)} done"
             ),
         )
@@ -406,7 +410,6 @@ def _queued_row(
         depth=depth,
         cells=_blank_cells(
             bead=bead_id,
-            recipe=_text(bead.get("recipe")),
             status="ready",
             tests=tests,
             complexity=_complexity(bead.get("complexity"), mode),
@@ -429,14 +432,10 @@ def _blocked_row(bead: dict[str, Any], depth: int) -> TreeRow:
 
 def _done_fold_row(epic: dict[str, Any], depth: int) -> TreeRow:
     epic_id = epic["epic_id"]
-    ids = list(epic.get("done_ids") or [])
+    # The full done-id list lives in the epic's detail pane (epic_detail());
+    # naming ids here would widen the bead column for a row that never uses
+    # its other columns.
     summary = f"✓ {epic.get('done', 0)} done"
-    if ids:
-        # A long id list would widen the bead column and push the state columns
-        # off-screen, so cap it.
-        shown = " ".join(ids[:_DONE_FOLD_IDS])
-        more = len(ids) - _DONE_FOLD_IDS
-        summary = f"{summary}  ({shown}{f' +{more}' if more > 0 else ''})"
     return TreeRow(
         key=f"epic/{epic_id}/done",
         kind="done_fold",
@@ -644,7 +643,6 @@ def _limits_window_segment(
 def _row(run: dict[str, Any], mode: str | None = None) -> tuple[str, ...]:
     return (
         _text(run.get("bead_id")),
-        _text(run.get("recipe")),
         _text(run.get("status")),
         _text(run.get("stage")),
         f"{_text(run.get('iteration'))}/{_text(run.get('max_iterations'))}",

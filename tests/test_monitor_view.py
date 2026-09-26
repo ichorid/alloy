@@ -647,7 +647,6 @@ def test_cli_monitor_once_plain_text_prints_header_and_one_row_per_run(
 
     assert result.exit_code == 0
     assert result.stdout.strip() != ""
-    assert "active model | action:" in result.stdout
 
 
 def test_cli_monitor_once_plain_text_with_no_runs_prints_header_without_raising(
@@ -765,16 +764,16 @@ async def test_runs_table_at_comfortable_width_omits_wide_only_columns():
         assert "stage" not in keys
         assert "cons" not in keys
         assert "complexity" not in keys
-        assert "recipe" in keys
+        assert "recipe" not in keys
 
 
-async def test_runs_table_at_comfortable_lower_bound_keeps_recipe():
+async def test_runs_table_at_comfortable_lower_bound_omits_wide_only_columns():
     app = MonitorApp(snapshot_source=lambda: TWO_RUNS, interval=DISABLED_INTERVAL)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         keys = _table_column_keys(_runs_table(app))
         assert keys == list(_expected_visible_column_keys(80))
-        assert "recipe" in keys
+        assert "recipe" not in keys
         assert "parent" not in keys
 
 

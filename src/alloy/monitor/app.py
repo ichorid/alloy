@@ -104,7 +104,7 @@ class MonitorApp(App[None]):
         stats = Static("loading…", id="stats")
         stats.border_title = "STATS"
         yield stats
-        activity = Static("active model | action: none: idle", id="activity")
+        activity = Static("none: idle", id="activity")
         activity.border_title = "NOW"
         yield activity
         limits = Static("", id="limits", markup=True)
@@ -134,8 +134,15 @@ class MonitorApp(App[None]):
             self.set_interval(self.limits_interval, self.refresh_limits)
 
     def on_resize(self, event: Resize) -> None:
-        if self._sync_runs_table_columns(event.size.width) and self._snapshot is not None:
+        if self._snapshot is None:
+            return
+        if self._sync_runs_table_columns(event.size.width):
             self.apply_snapshot(self._snapshot, width=event.size.width)
+        else:
+            # Column set unchanged, but the detail pane's two-column vs. stacked
+            # layout threshold (COMFORTABLE_WIDTH) is independent of column
+            # visibility, so it still needs a width-aware re-render.
+            self._refresh_detail(width=event.size.width)
 
     @work(thread=True)
     def refresh_snapshot(self) -> None:
@@ -161,13 +168,21 @@ class MonitorApp(App[None]):
         """Rebuild the runs table from the task tree, preserving cursor and expansion."""
         self._snapshot = snapshot
         table_width = width if width is not None else self.size.width
-        self._sync_runs_table_columns(table_width)
         table = self.query_one("#runs", DataTable)
         selected_key = self._selected_row_key(table)
         scroll_x, scroll_y = table.scroll_x, table.scroll_y
         self._marked_row = None
-        table.clear()
+        # Clearing rows only (not columns) leaves each Column's auto-width
+        # pinned to the widest value it has ever shown -- Textual's DataTable
+        # never shrinks it back down. Rebuild the columns fresh every refresh
+        # so a column goes narrow again once its long-lived content does.
+        table.clear(columns=True)
         visible = visible_columns(table_width)
+        for column in visible:
+            label: str | Text = column
+            if column_align(column) == "right":
+                label = Text(column, justify="right")
+            table.add_column(label, key=column)
         mode = resolve_mode(interactive=True)
         tree_rows = task_tree_rows(snapshot, self._expanded, table_width, mode=mode)
         row_keys: list[str] = []
@@ -185,8 +200,16 @@ class MonitorApp(App[None]):
                     value = status_badge(str(value), mode)
                 elif column_align(column) == "right" and not isinstance(value, Text):
                     value = Text(value, justify="right")
+                elif isinstance(value, str) and "\n" in value:
+                    # A plain multi-line str isn't split by width measurement
+                    # (textual.render.measure counts the embedded "\n" as a
+                    # character, summing both lines instead of taking the max),
+                    # which blows up the column's auto-width. Text measures
+                    # multi-line content correctly.
+                    value = Text(value)
                 row.append(value)
-            table.add_row(*row, key=tree_row.key)
+            row_height = 2 if tree_row.kind in ("queue", "epic") else 1
+            table.add_row(*row, key=tree_row.key, height=row_height)
         if row_keys:
             if selected_key is None:
                 target = 0
