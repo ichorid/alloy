@@ -13,14 +13,20 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import (
+    acceptance_entry,
+    bd_create,
+    judge_entry,
+    verifier_run_entry,
+    verifier_stop_entry,
+)
+from test_beads import _create_child, _create_epic
 from typer.testing import CliRunner
 
 from alloy import beads as bd
 from alloy.cli import app
 from alloy.engine import Engine
 from alloy.worktree import Worktree, WorktreeManager, branch_name
-from conftest import acceptance_entry, bd_create, judge_entry, verifier_run_entry, verifier_stop_entry
-from test_beads import _create_child, _create_epic
 
 FULL_SUITE = f"{sys.executable} -m pytest -q"
 

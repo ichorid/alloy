@@ -10,54 +10,79 @@ import asyncio
 import json as jsonlib
 import logging
 import os
-import signal
 import sys
-import time
-from datetime import timedelta
 from pathlib import Path
-from typing import Any, Coroutine, Optional, TypeVar
+from typing import Any, Optional
 
 import typer
-from rich.console import Console
 from rich.table import Table
 from typer.core import TyperCommand
 
 from alloy import beads as bd
-from alloy import recipes
+from alloy.cli_common import T as T
+from alloy.cli_common import _emit as _emit
+from alloy.cli_common import _engine as _engine
+from alloy.cli_common import _fail as _fail
+from alloy.cli_common import _run_async as _run_async
+from alloy.cli_common import console as console
+from alloy.cli_common import err as err
 from alloy.config import (
     ConfigError,
-    MemorySpec,
-    RecipeConfig,
-    RoleSpec,
     discover_recipes,
-    load_recipe,
 )
 from alloy.engine import Engine, EngineError
+from alloy.events import ATTENTION_EVENTS, EventLog, format_line, parse_since
+from alloy.limits import probe_all
+from alloy.memory_commands import _apply_review as _apply_review
+from alloy.memory_commands import _review_plan as _review_plan
+from alloy.memory_commands import memory_embed_impl as memory_embed_impl
+from alloy.memory_commands import memory_list_impl as memory_list_impl
+from alloy.memory_commands import memory_review_impl as memory_review_impl
 from alloy.memory_schedule import (
     MEMORY_REVIEW_RECIPE,
-    apply_review,
-    embed_instruction_files,
-    review_plan,
-    review_run_id,
 )
 from alloy.models import (
-    ProjectMemory,
-    ReviewPlan,
-    memory_inventory,
     utcnow,
     with_provenance,
 )
-from alloy.limits import probe_all
 from alloy.monitor import build_snapshot
 from alloy.monitor.app import MonitorApp
 from alloy.monitor.icons import resolve_mode
-from alloy.monitor.render import COLUMNS, activity_line, header_line, limits_lines, run_rows
+from alloy.monitor.render import (
+    COLUMNS,
+    activity_line,
+    header_line,
+    limits_lines,
+    run_rows,
+)
 from alloy.paths import AlloyPaths
-from alloy.runners import BUILTIN, RunnerRegistry, RunnerUnavailable
-from alloy.events import ATTENTION_EVENTS, EventLog, format_line, parse_since
-from alloy.scheduler import DEFAULT_STALL_MINUTES, Scheduler, SchedulerBusy, read_pid, signal_stop, spawn_detached
+from alloy.recipe_commands import _probe_tiers as _probe_tiers
+from alloy.recipe_commands import recipes_command_impl as recipes_command_impl
+from alloy.runners import BUILTIN, RunnerRegistry
+from alloy.scheduler import (
+    DEFAULT_STALL_MINUTES,
+    Scheduler,
+    SchedulerBusy,
+    read_pid,
+    signal_stop,
+    spawn_detached,
+)
+from alloy.status_command import status_impl as status_impl
+from alloy.status_display import _EMPTY_RUN_FIELDS as _EMPTY_RUN_FIELDS
+from alloy.status_display import _STAGE_ROLES as _STAGE_ROLES
+from alloy.status_display import _STATUS_RANK as _STATUS_RANK
+from alloy.status_display import _agent_label as _agent_label
+from alloy.status_display import _bead_row as _bead_row
+from alloy.status_display import _coloured as _coloured
+from alloy.status_display import _current_agent as _current_agent
+from alloy.status_display import _landing_of as _landing_of
+from alloy.status_display import _parse as _parse
+from alloy.status_display import _role_label as _role_label
+from alloy.status_display import _status_row as _status_row
+from alloy.status_display import _status_sort_key as _status_sort_key
+from alloy.status_display import _truncate as _truncate
 from alloy.store import Store
-from alloy.verify import check_logs, checks_summary
+from alloy.verify import check_logs
 
 app = typer.Typer(
     name="alloy",
@@ -65,17 +90,13 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
-console = Console()
-err = Console(stderr=True)
 
 RepoOption = typer.Option(None, "--repo", help="Repository root (default: cwd)")
-RootOption = typer.Option(None, "--root", help="Project state directory (default: $ALLOY_ROOT or <repo>/.alloy)")
-
-T = TypeVar("T")
-
-
-def _engine(repo: Optional[Path], root: Optional[Path]) -> Engine:
-    return Engine.open(repo or Path.cwd(), root)
+RootOption = typer.Option(
+    None,
+    "--root",
+    help="Project state directory (default: $ALLOY_ROOT or <repo>/.alloy)",
+)
 
 
 def _setup_logging(verbose: bool = True) -> None:
@@ -89,44 +110,6 @@ def _setup_logging(verbose: bool = True) -> None:
         force=True,
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
-
-
-def _run_async(coro: Coroutine[Any, Any, T]) -> T:
-    """`asyncio.run` with SIGINT/SIGTERM turned into a cancellation.
-
-    Cancellation unwinds through the graph into the runner, which kills the
-    harness's process group, and leaves the run marked running with a dead
-    pid -- i.e. resumable. The default SIGTERM disposition would have killed
-    only this process and left the harness editing the worktree.
-    """
-
-    async def main() -> T:
-        task = asyncio.ensure_future(coro)
-        loop = asyncio.get_running_loop()
-        installed = []
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                loop.add_signal_handler(sig, task.cancel)
-                installed.append(sig)
-            except (NotImplementedError, ValueError):
-                pass
-        try:
-            return await task
-        finally:
-            for sig in installed:
-                loop.remove_signal_handler(sig)
-
-    return asyncio.run(main())
-
-
-def _emit(payload: Any, as_json: bool) -> None:
-    if as_json:
-        console.print_json(jsonlib.dumps(payload, default=str))
-
-
-def _fail(message: str) -> None:
-    err.print(f"[red]error:[/red] {message}")
-    raise typer.Exit(1)
 
 
 # --------------------------------------------------------------------------
@@ -269,15 +252,6 @@ def land(
     console.print(f"[green]landed[/green] {bead_id} -- {payload['landing']['sha']}")
 
 
-def _landing_of(bead: bd.Bead) -> dict[str, Any]:
-    """The bead's landing metadata as one status object."""
-    return {
-        "state": bead.metadata.get(bd.META_LAND_STATE),
-        "sha": bead.metadata.get(bd.META_LAND_SHA),
-        "repair": bead.metadata.get(bd.META_LAND_REPAIR),
-    }
-
-
 @app.command(cls=_OptionalValueCommand)
 def resume(
     bead_id: str = typer.Argument(...),
@@ -306,7 +280,12 @@ def resume(
     except asyncio.CancelledError:
         err.print(f"[yellow]interrupted[/yellow] {bead_id}; it stays resumable")
         raise typer.Exit(130)
-    payload = {"bead": result.bead_id, "run_id": result.run_id, "outcome": result.outcome, "reason": result.reason}
+    payload = {
+        "bead": result.bead_id,
+        "run_id": result.run_id,
+        "outcome": result.outcome,
+        "reason": result.reason,
+    }
     if json:
         _emit(payload, True)
         return
@@ -389,7 +368,12 @@ def start(
         console.print(f"scheduler started (pid {pid}); log: {engine.paths.scheduler_log}")
         return
     _setup_logging()
-    scheduler = Scheduler(engine=engine, poll_seconds=poll, recipe_filter=recipe, stall_minutes=stall_minutes)
+    scheduler = Scheduler(
+        engine=engine,
+        poll_seconds=poll,
+        recipe_filter=recipe,
+        stall_minutes=stall_minutes,
+    )
     try:
         asyncio.run(scheduler.serve())
     except SchedulerBusy as exc:
@@ -406,7 +390,9 @@ def events(
         None, "--since", help="History from this far back (30m, 2h, 1d) or an ISO time"
     ),
     only: Optional[str] = typer.Option(
-        None, "--only", help="Comma-separated kinds: needs-human,failed,stalled,done,resumed,cancelled"
+        None,
+        "--only",
+        help="Comma-separated kinds: needs-human,failed,stalled,done,resumed,cancelled",
     ),
     attention: bool = typer.Option(False, "--attention", help="Shortcut for --only needs-human,failed,stalled"),
     json: bool = typer.Option(False, "--json", help="One JSON object per line"),
@@ -466,88 +452,7 @@ def status(
     json: bool = typer.Option(False, "--json", help="Machine-readable output"),
     limit: int = typer.Option(50, "--limit", help="Cap when listing every bead"),
 ) -> None:
-    """Show every bead Alloy tracks -- queued, running, or finished -- with its
-    place in the schedule. Designed to be read by humans and by agents."""
-    engine = _engine(repo, root)
-    scheduler_pid = read_pid(engine.paths.scheduler_pid)
-
-    if bead_id:
-        try:
-            beads_list = [engine.beads.show(bead_id)]
-        except bd.BeadsError as exc:
-            _fail(str(exc))
-            return
-    else:
-        beads_list = engine.beads.alloy_beads()
-
-    ready_ids = {b.id for b in engine.beads.ready(limit=max(limit, 1000))}
-    queue_order = sorted((b for b in beads_list if b.id in ready_ids), key=lambda b: (b.priority, b.id))
-    queue_position = {b.id: index + 1 for index, b in enumerate(queue_order)}
-
-    rows = [_bead_row(engine, b, ready_ids) for b in beads_list]
-    for row in rows:
-        row["queue_position"] = queue_position.get(row["bead"])
-    rows.sort(key=_status_sort_key)
-    if not bead_id:
-        rows = rows[:limit]
-
-    payload = {
-        "root": str(engine.paths.root),
-        "repo": str(engine.repo),
-        "scheduler": {"running": scheduler_pid is not None, "pid": scheduler_pid},
-        "beads": rows,
-    }
-    if json:
-        _emit(payload, True)
-        return
-
-    console.print(
-        f"scheduler: [{'green' if scheduler_pid else 'yellow'}]"
-        f"{'running (pid ' + str(scheduler_pid) + ')' if scheduler_pid else 'stopped'}[/]"
-    )
-    if not rows:
-        console.print("alloy is not tracking any beads yet")
-        return
-    table = Table(show_header=True, header_style="bold", expand=True)
-    # One line per bead, whatever the terminal width: the title gives way
-    # first, identifiers and numbers keep their minimum widths.
-    for column, min_width in (
-        ("parent", 10),
-        ("bead", 12),
-        ("title", 12),
-        ("pri", 3),
-        ("queue", 5),
-        ("status", 9),
-        ("stage", 9),
-        ("agent", 14),
-        ("iter", 4),
-        ("tests", 18),
-        ("elapsed", 7),
-    ):
-        table.add_column(
-            column,
-            no_wrap=True,
-            overflow="ellipsis",
-            min_width=min_width,
-            ratio=4 if column == "title" else (2 if column == "agent" else None),
-        )
-    for row in rows:
-        queue = str(row["queue_position"]) if row["queue_position"] else "-"
-        max_iter = row["max_iterations"] if row["max_iterations"] is not None else "-"
-        table.add_row(
-            row.get("parent_bead_id") or "-",
-            row["bead"],
-            _truncate(row["title"], 32),
-            str(row["priority"]),
-            queue,
-            _coloured(row["status"] or row["bead_status"]),
-            row["stage"] or "-",
-            _agent_label(row),
-            f"{row['iteration']}/{max_iter}",
-            row["tests"] or "-",
-            row["elapsed"],
-        )
-    console.print(table)
+    return status_impl(bead_id, repo, root, json, limit)
 
 
 @app.command()
@@ -604,7 +509,10 @@ def monitor(
         return
     limits_source = None
     if not no_limits:
-        limits_source = lambda: probe_all(engine.paths, RunnerRegistry(), home=Path.home())
+
+        def limits_source():
+            return probe_all(engine.paths, RunnerRegistry(), home=Path.home())
+
     app = MonitorApp(
         snapshot_source=lambda: build_snapshot(engine),
         interval=interval,
@@ -672,11 +580,30 @@ def logs(
     )[-tail:]
     checks = check_logs(record["log_dir"])
     if json:
-        _emit({"run_id": record["run_id"], "log_dir": record["log_dir"], "calls": calls, "checks": checks}, True)
+        _emit(
+            {
+                "run_id": record["run_id"],
+                "log_dir": record["log_dir"],
+                "calls": calls,
+                "checks": checks,
+            },
+            True,
+        )
         return
     console.print(f"[bold]run[/bold] {record['run_id']}   [bold]logs[/bold] {record['log_dir']}")
     table = Table(show_header=True, header_style="bold")
-    for column in ("#", "bead", "role", "runner", "model", "iter", "secs", "exit", "prefix", "artifact"):
+    for column in (
+        "#",
+        "bead",
+        "role",
+        "runner",
+        "model",
+        "iter",
+        "secs",
+        "exit",
+        "prefix",
+        "artifact",
+    ):
         table.add_column(column)
     for index, call in enumerate(calls, 1):
         table.add_row(
@@ -719,54 +646,7 @@ def memory_list(
     root: Optional[Path] = RootOption,
     json: bool = typer.Option(False, "--json", help="Machine-readable output"),
 ) -> None:
-    """List every non-meta memory: key, owner, provenance, age in days and
-    flags (contradiction recorded, embedded, proposal pending)."""
-    engine = _engine(repo, root)
-    try:
-        memories = engine.beads.memories()
-    except bd.BeadsError as exc:
-        _fail(str(exc))
-        return
-    memory = ProjectMemory.from_raw(memories, MemorySpec())
-    rows = memory_inventory(memory, utcnow().date())
-    if json:
-        _emit(rows, True)
-        return
-    if not rows:
-        console.print("no project memories")
-        return
-    table = Table(show_header=True, header_style="bold")
-    # The key is what a reader greps for, so it is never cut or wrapped: it
-    # keeps its full width and the other columns fold when the terminal is
-    # narrow.
-    table.add_column("key", no_wrap=True, min_width=max(len(row["key"]) for row in rows))
-    for column in ("owner", "run", "bead", "date", "age", "flags"):
-        table.add_column(column, overflow="fold")
-    for row in rows:
-        table.add_row(
-            row["key"],
-            row["owner"],
-            row["run_id"] or "-",
-            row["bead_id"] or "-",
-            row["date"] or "-",
-            str(row["age_days"]) if row["age_days"] is not None else "-",
-            ", ".join(row["flags"]) or "-",
-        )
-    console.print(table)
-
-
-def _review_plan(engine: Engine, recipe_name: str, memory: ProjectMemory, run_id: str) -> ReviewPlan:
-    """Run the read-only memory review (see memory_schedule.review_plan)."""
-    try:
-        return _run_async(review_plan(engine, recipe_name, memory, run_id, today=utcnow().date()))
-    except ConfigError as exc:
-        _fail(str(exc))
-        raise  # unreachable: _fail exits
-
-
-def _apply_review(engine: Engine, plan: ReviewPlan, run_id: str) -> dict[str, Any]:
-    """Execute the plan (see memory_schedule.apply_review)."""
-    return apply_review(engine, plan, run_id, today=utcnow().date())
+    return memory_list_impl(repo, root, json)
 
 
 @memory_app.command(name="review")
@@ -774,7 +654,9 @@ def memory_review(
     repo: Optional[Path] = RepoOption,
     root: Optional[Path] = RootOption,
     recipe: str = typer.Option(
-        MEMORY_REVIEW_RECIPE, "--recipe", help="Recipe whose memory settings and memory_reviewer role to use"
+        MEMORY_REVIEW_RECIPE,
+        "--recipe",
+        help="Recipe whose memory settings and memory_reviewer role to use",
     ),
     apply: bool = typer.Option(
         False,
@@ -783,61 +665,7 @@ def memory_review(
     ),
     json: bool = typer.Option(False, "--json", help="Machine-readable output"),
 ) -> None:
-    """Plan a project-memory review: deterministic hygiene (expired alloy
-    memories, orphan contradiction flags, duplicate bodies) plus the
-    memory_reviewer role's keep/update/forget/embed verdicts. Read-only
-    unless --apply is given."""
-    engine = _engine(repo, root)
-    try:
-        memories = engine.beads.memories()
-    except bd.BeadsError as exc:
-        _fail(str(exc))
-        return
-    try:
-        config = engine.load_config(recipe)
-    except ConfigError as exc:
-        _fail(str(exc))
-        return
-    memory = ProjectMemory.from_raw(memories, config.memory)
-    run_id = review_run_id()
-    plan = _review_plan(engine, recipe, memory, run_id)
-    applied: dict[str, Any] | None = None
-    if apply:
-        try:
-            applied = _apply_review(engine, plan, run_id)
-        except bd.BeadsError as exc:
-            _fail(str(exc))
-            return
-    if json:
-        payload = plan.model_dump(exclude_none=True)
-        if applied is not None:
-            payload["applied"] = applied
-        _emit(payload, True)
-        return
-    if not plan.reviewer_ok:
-        err.print(f"[yellow]memory_reviewer unavailable:[/yellow] {plan.reviewer_reason}")
-    if not plan.items and applied is None:
-        console.print("nothing to do")
-        return
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("key", no_wrap=True)
-    for column in ("action", "source", "reason"):
-        table.add_column(column, overflow="fold")
-    for item in plan.items:
-        table.add_row(item.key, item.action, item.source, item.reason)
-    if plan.items:
-        console.print(table)
-    if applied is not None:
-        console.print(
-            f"applied: forgot {len(applied['forgotten'])}, "
-            f"remembered {len(applied['remembered'])}, "
-            f"proposed {len(applied['proposals'])}"
-            + (
-                f" (review bead {applied['review_bead']}{', new' if applied['review_bead_created'] else ', reused'})"
-                if applied["review_bead"]
-                else ""
-            )
-        )
+    return memory_review_impl(repo, root, recipe, apply, json)
 
 
 @memory_app.command(name="embed")
@@ -846,23 +674,7 @@ def memory_embed(
     root: Optional[Path] = RootOption,
     recipe: str = typer.Option(MEMORY_REVIEW_RECIPE, "--recipe", help="Recipe whose memory settings to use"),
 ) -> None:
-    """Render the alloy:meta:embed set into the managed block of every
-    existing instruction file (memory.instruction_files) and print the files
-    that changed. Never runs git."""
-    engine = _engine(repo, root)
-    try:
-        memories = engine.beads.memories()
-    except bd.BeadsError as exc:
-        _fail(str(exc))
-        return
-    try:
-        config = engine.load_config(recipe)
-    except ConfigError as exc:
-        _fail(str(exc))
-        return
-    memory = ProjectMemory.from_raw(memories, config.memory)
-    for name in embed_instruction_files(engine.repo, memory, config.memory):
-        console.print(name)
+    return memory_embed_impl(repo, root, recipe)
 
 
 @app.command(name="recipes")
@@ -873,393 +685,15 @@ def recipes_command(
     probe: bool = typer.Option(False, "--probe", help="Smoke-test each distinct tier entry"),
     recipe: Optional[str] = typer.Option(None, "--recipe", help="Limit to one recipe"),
 ) -> None:
-    """List recipes, their configured roles, and whether those harnesses exist."""
-    repo_path = (repo or Path.cwd()).resolve()
-    paths = AlloyPaths.resolve(root, project=repo_path)
-    found = discover_recipes(paths.shared_root, repo_path)
-    if recipe is not None:
-        if recipe not in found:
-            _fail(f"unknown recipe: {recipe}")
-        found = {recipe: found[recipe]}
-
-    entries: list[dict[str, Any]] = []
-    probes: list[dict[str, Any]] = []
-    probed: set[tuple[str, str | None, str | None]] = set()
-    for name, path in sorted(found.items()):
-        entry: dict[str, Any] = {"name": name, "config": str(path), "graph": name in recipes.REGISTRY}
-        try:
-            config = load_recipe(name, alloy_root=paths.shared_root, project=repo_path)
-        except ConfigError as exc:
-            entry["error"] = str(exc)
-            entries.append(entry)
-            continue
-        # The recipe's own `runners:` block (api keys, binaries) decides what
-        # is available -- a bare registry would call Jev "missing" forever.
-        registry = RunnerRegistry(config.runners, log_dir=paths.logs / "probes" / name)
-
-        def describe(spec: "RoleSpec") -> dict[str, Any]:
-            info: dict[str, Any] = {
-                "runner": spec.runner,
-                "model": spec.model,
-                "effort": spec.effort,
-                "available": registry.available(spec.runner),
-            }
-            if spec.fallback is not None:
-                info["fallback"] = describe(spec.fallback)
-            return info
-
-        entry["roles"] = {role: describe(spec) for role, spec in config.roles.items()}
-        tiers: dict[str, list[dict[str, Any]]] = {}
-        for tier, head in config.complexity.tiers.items():
-            chain = []
-            spec = head
-            while spec is not None:
-                chain.append(
-                    {
-                        "runner": spec.runner,
-                        "model": spec.model,
-                        "effort": spec.effort,
-                        "available": registry.available(spec.runner),
-                    }
-                )
-                spec = spec.fallback
-            tiers[tier] = chain
-        entry["complexity"] = {
-            "routing": config.complexity.routing,
-            "escalate_after_retries": config.complexity.escalate_after_retries,
-            "tiers": tiers,
-        }
-        if probe:
-            probes.extend(_run_async(_probe_tiers(registry, tiers, repo_path, probed)))
-        entry["critics"] = [
-            {"runner": spec.runner, "available": registry.available(spec.runner)} for spec in config.consilium.critics
-        ]
-        entry["limits"] = config.limits.__dict__
-        entry["landing"] = {
-            "mode": config.landing.mode,
-            "target": config.landing.target,
-        }
-        entries.append(entry)
-
-    if json:
-        payload = {"recipes": entries}
-        if probe:
-            payload["probe"] = probes
-        _emit(payload, True)
-        if probe and (any(not row["ok"] for row in probes) or any("error" in e for e in entries)):
-            raise typer.Exit(1)
-        return
-    for entry in entries:
-        console.print(f"[bold]{entry['name']}[/bold]  ({entry['config']})")
-        if entry.get("error"):
-            console.print(f"  [red]{entry['error']}[/red]")
-            continue
-        if not entry["graph"]:
-            console.print("  [yellow]no graph registered for this name[/yellow]")
-        for role, info in entry.get("roles", {}).items():
-            console.print(f"  {role:<10} {_role_label(info)}")
-        complexity = entry["complexity"]
-        console.print(
-            f"  complexity routing={complexity['routing']} "
-            f"escalate_after_retries={complexity['escalate_after_retries']}"
-        )
-        for tier, chain in complexity["tiers"].items():
-            console.print(f"    {tier:<8} " + " [dim]->[/dim] ".join(_role_label(info) for info in chain))
-        critics = ", ".join(f"{c['runner']}{'' if c['available'] else '(missing)'}" for c in entry["critics"])
-        console.print(f"  critics    {critics or '(none)'}")
-        console.print(f"  limits     {entry['limits']}")
-    if probe:
-        table = Table(title="Tier probes")
-        for column in ("Tier", "Runner", "Model", "Effort", "Result", "Error", "Seconds"):
-            table.add_column(column)
-        for row in probes:
-            table.add_row(
-                row["tier"],
-                row["runner"],
-                row["model"] or "-",
-                row["effort"] or "-",
-                "ok" if row["ok"] else "error",
-                row["error"] or "-",
-                f"{row['duration_s']:.1f}",
-            )
-        console.print(table)
-        if any(not row["ok"] for row in probes) or any("error" in e for e in entries):
-            raise typer.Exit(1)
+    return recipes_command_impl(repo, root, json, probe, recipe)
 
 
 # --------------------------------------------------------------------------
 
 
-async def _probe_tiers(
-    registry: RunnerRegistry,
-    tiers: dict[str, list[dict[str, Any]]],
-    repo: Path,
-    seen: set[tuple[str, str | None, str | None]],
-) -> list[dict[str, Any]]:
-    rows = []
-    for tier, chain in tiers.items():
-        for entry in chain:
-            key = (entry["runner"], entry["model"], entry["effort"])
-            if key in seen:
-                continue
-            seen.add(key)
-            row = {"tier": tier, "runner": key[0], "model": key[1], "effort": key[2]}
-            started = time.monotonic()
-            try:
-                result = await registry.get(key[0]).run(
-                    "Reply with the single word OK.",
-                    cwd=repo,
-                    model=key[1],
-                    effort=key[2],
-                    timeout=timedelta(minutes=2),
-                )
-                row.update(ok=result.ok, error=result.error, duration_s=result.duration_s)
-            except RunnerUnavailable as exc:
-                row.update(ok=False, error=str(exc), duration_s=time.monotonic() - started)
-            rows.append(row)
-    return rows
-
-
-def _role_label(info: dict[str, Any]) -> str:
-    mark = "" if info["available"] else " [yellow](runner missing)[/yellow]"
-    model = f":{info['model']}" if info.get("model") else ""
-    effort = f"@{info['effort']}" if info.get("effort") else ""
-    label = f"{info['runner']}{model}{effort}{mark}"
-    if info.get("fallback"):
-        label += f"  [dim]-> fallback[/dim] {_role_label(info['fallback'])}"
-    return label
-
-
-_STAGE_ROLES = ("context", "tests", "implement", "judge")
-
-
-def _current_agent(engine: Engine, config: RecipeConfig | None, record: dict[str, Any]) -> dict[str, Any]:
-    """The role/runner/model actually behind this run right now.
-
-    `record["stage"]` names the *current* graph node (set by `ctx.set_stage`
-    as each node starts), which can be well ahead of the *last completed*
-    agent call in `agent_calls` -- e.g. stage "implement" while the most
-    recently finished call was still "tests", because the implement call
-    itself hasn't returned yet. Showing the last completed call there would
-    claim "tests" is still going on when it manifestly isn't (the stage
-    already says otherwise), so: when the stage names one of the roles this
-    recipe configures directly, trust the stage and show *that* role's
-    configured runner/model (resolving the `astra`-style alias to what will
-    actually execute) -- it is either running right now or about to be. Only
-    fall back to the last completed call for stages with no directly agent
-    (`verify`/`baseline` are deterministic Python, not an agent call) or once
-    the run has moved somewhere this function doesn't special-case.
-    """
-    from alloy.runners import ALIASES
-    from alloy.store import TERMINAL_RUN_STATUSES
-
-    stage = record.get("stage")
-    if record.get("status") in TERMINAL_RUN_STATUSES or record.get("status") == "waiting-human":
-        return {"role": None, "runner": None, "model": None}  # nothing is running
-
-    if config and stage in _STAGE_ROLES:
-        spec = config.roles.get(stage)
-        if spec:
-            try:
-                # Live routing dispatches tiered roles through the tier chain
-                # for the run's complexity (recorded on the run row by estimate).
-                spec = config.resolve_role(stage, record.get("complexity"))
-            except ConfigError:
-                pass  # complexity not known yet: show the role's own spec
-            # A failed primary call for this very stage/iteration means the
-            # fallback is what is running now.
-            calls = engine.store.agent_calls(record["run_id"])
-            last = calls[-1] if calls else None
-            while (
-                spec.fallback is not None
-                and last is not None
-                and last["role"] == stage
-                and not last["ok"]
-                and last["iteration"] == record.get("iteration", 0)
-                and ALIASES.get(spec.runner, spec.runner) == ALIASES.get(last["runner"], last["runner"])
-            ):
-                spec = spec.fallback
-                calls = [c for c in calls if c is not last]
-                last = calls[-1] if calls else None
-            runner = ALIASES.get(spec.runner, spec.runner)
-            return {"role": stage, "runner": runner, "model": spec.model}
-    if config and stage == "consilium":
-        return {"role": stage, "runner": "multiple critics", "model": None}
-    if config and stage == "synthesize":
-        spec = config.consilium.synthesizer
-        runner = ALIASES.get(spec.runner, spec.runner)
-        return {"role": stage, "runner": runner, "model": spec.model}
-
-    calls = engine.store.agent_calls(record["run_id"])
-    if calls:
-        last = calls[-1]
-        return {"role": last["role"], "runner": last["runner"], "model": last["model"]}
-    return {"role": stage, "runner": None, "model": None}
-
-
-def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
-    from datetime import datetime, timezone
-
-    snapshot = engine.graph_snapshot_for_run(record["run_id"])
-    state = (snapshot or {}).get("values") or {}
-    try:
-        config = engine.load_config(record["recipe"])
-        max_iterations = config.limits.max_iterations
-    except ConfigError:
-        config, max_iterations = None, 0
-
-    agent = _current_agent(engine, config, record)
-
-    started = _parse(record["started_at"])
-    ended = _parse(record["ended_at"]) if record["ended_at"] else None
-    paused_at = _parse(record.get("paused_at")) if record.get("paused_at") else None
-    reference = ended or paused_at or datetime.now(timezone.utc)
-    paused_s = float(record.get("paused_s") or 0)  # time parked or dead: not work
-    elapsed = max(0, int(((reference - started).total_seconds() - paused_s) // 60)) if started else 0
-
-    parent_run_id = record.get("parent_run_id")
-    parent_bead_id = None
-    if parent_run_id:
-        parent = engine.store.get_run(parent_run_id)
-        if parent:
-            parent_bead_id = parent["bead_id"]
-
-    return {
-        "bead": record["bead_id"],
-        "run_id": record["run_id"],
-        "parent_run_id": parent_run_id,
-        "parent_bead_id": parent_bead_id,
-        "children": [child["run_id"] for child in engine.store.children_of(record["run_id"])],
-        "remediating": (record["stage"].split(":", 1)[1] if (record["stage"] or "").startswith("remediate:") else None),
-        "recipe": record["recipe"],
-        "status": record["status"],
-        "stage": record["stage"],
-        "iteration": record["iteration"],
-        "max_iterations": max_iterations,
-        "consiliums": record["consiliums"],
-        "agent_calls": record["agent_calls"],
-        "tests": record["tests_summary"],
-        "checks": checks_summary(state),
-        "elapsed": f"{elapsed}m",
-        "elapsed_minutes": elapsed,
-        "agent_role": agent["role"],
-        "runner": agent["runner"],
-        "model": agent["model"],
-        "complexity": record.get("complexity"),
-        "complexity_source": state.get("complexity_source"),
-        "dispatch_tier": record.get("dispatch_tier"),
-        "worktree": record["worktree"],
-        "branch": record["branch"],
-        "log_dir": record["log_dir"],
-        "outcome": record["outcome"],
-        "outcome_reason": record["outcome_reason"],
-    }
-
-
-_EMPTY_RUN_FIELDS: dict[str, Any] = {
-    "parent_run_id": None,
-    "parent_bead_id": None,
-    "children": [],
-    "remediating": None,
-    "complexity": None,
-    "complexity_source": None,
-    "dispatch_tier": None,
-    "run_id": None,
-    "status": None,
-    "stage": None,
-    "iteration": 0,
-    "max_iterations": None,
-    "consiliums": 0,
-    "agent_calls": 0,
-    "tests": None,
-    "checks": None,
-    "elapsed": "-",
-    "elapsed_minutes": 0,
-    "agent_role": None,
-    "runner": None,
-    "model": None,
-    "worktree": None,
-    "branch": None,
-    "log_dir": None,
-    "outcome": None,
-    "outcome_reason": None,
-}
-
 # Beads not currently offered by `bd ready` (running, waiting on a human, or
 # already terminal) sort first by this rank; a bead that *is* ready sorts by
 # its queue position instead (see `_status_sort_key`).
-_STATUS_RANK = {
-    bd.STATUS_IMPLEMENTING: 0,
-    bd.STATUS_WAITING_HUMAN: 1,
-    bd.STATUS_REVIEW_READY: 3,
-    bd.STATUS_FAILED: 4,
-    bd.STATUS_DONE: 5,
-}
-
-
-def _bead_row(engine: Engine, bead: bd.Bead, ready_ids: set[str]) -> dict[str, Any]:
-    """One bead, merged with its most recent run (if it has ever been run)."""
-    row: dict[str, Any] = {
-        "bead": bead.id,
-        "title": bead.title,
-        "priority": bead.priority,
-        "bead_status": bead.status,
-        "ready": bead.id in ready_ids,
-        "recipe": bead.recipe,
-        "landing": _landing_of(bead),
-    }
-    record = engine.store.latest_run_for_bead(bead.id)
-    if record:
-        run_row = _status_row(engine, record)
-        run_row.pop("bead", None)
-        run_row.pop("recipe", None)
-        row.update(run_row)
-    else:
-        row.update(_EMPTY_RUN_FIELDS)
-    return row
-
-
-def _status_sort_key(row: dict[str, Any]) -> tuple[int, int, str]:
-    if row["ready"]:
-        rank = 2
-    else:
-        rank = _STATUS_RANK.get(row["bead_status"], 2)
-    return (rank, row["priority"], row["bead"])
-
-
-def _agent_label(row: dict[str, Any]) -> str:
-    if not row.get("runner"):
-        return "-"
-    model = f":{row['model']}" if row.get("model") else ""
-    return f"{row.get('agent_role') or '?'}:{row['runner']}{model}"
-
-
-def _truncate(text: str | None, width: int) -> str:
-    text = text or ""
-    return text if len(text) <= width else text[: width - 1] + "…"
-
-
-def _parse(value: str | None):
-    from datetime import datetime, timezone
-
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-
-
-def _coloured(status: str) -> str:
-    colour = {
-        "running": "cyan",
-        "done": "green",
-        "waiting-human": "yellow",
-        "failed": "red",
-        "cancelled": "dim",
-    }.get(status, "white")
-    return f"[{colour}]{status}[/{colour}]"
 
 
 if __name__ == "__main__":

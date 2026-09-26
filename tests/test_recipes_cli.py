@@ -10,9 +10,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from typer.testing import CliRunner
-
-from alloy.cli import app
 from conftest import (
     bd_create,
     context_entry,
@@ -24,6 +21,9 @@ from conftest import (
     write_tests_entry,
 )
 from support import make_bead, make_harness
+from typer.testing import CliRunner
+
+from alloy.cli import app
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTS_MD = REPO_ROOT / "AGENTS.md"
