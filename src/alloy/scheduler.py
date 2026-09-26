@@ -42,6 +42,7 @@ from alloy.models import (
     utcnow,
 )
 from alloy.paths import AlloyPaths
+from alloy.procs import read_pid
 from alloy.store import RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN, _pid_alive
 from alloy.worktree import WorktreeManager
 
@@ -683,23 +684,6 @@ def _parse_iso(value: str) -> datetime | None:
         return None
     # A naive time is local wall-clock time (the form "resets 1:20am" gives).
     return parsed if parsed.tzinfo is not None else parsed.astimezone()
-
-
-def read_pid(pidfile: Path) -> int | None:
-    """The pid of a live scheduler, or None (clearing a stale file)."""
-    try:
-        pid = int(pidfile.read_text(encoding="utf-8").strip())
-    except (FileNotFoundError, ValueError):
-        return None
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        with contextlib.suppress(FileNotFoundError):
-            pidfile.unlink()
-        return None
-    except PermissionError:
-        return pid
-    return pid
 
 
 def signal_stop(pidfile: Path, *, now: bool = False) -> int | None:

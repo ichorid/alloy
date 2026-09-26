@@ -10,9 +10,11 @@ timeout or a killed ``alloy run`` left the harness working on its own.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import signal
 import time
+from pathlib import Path
 
 DEFAULT_GRACE_S = 5.0
 
@@ -154,6 +156,26 @@ def terminate_pid(pid: int, *, grace_s: float = DEFAULT_GRACE_S) -> bool:
             return True
         time.sleep(0.1)
     return not pid_alive(pid)
+
+
+def read_pid(pidfile: Path) -> int | None:
+    """The pid written in `pidfile` if that process is still alive, else None
+    (clearing a stale file). Shared by the scheduler (its own pidfile) and the
+    engine (checking whether a run's recorded pid is a live scheduler daemon,
+    not a standalone process, before signalling it)."""
+    try:
+        pid = int(pidfile.read_text(encoding="utf-8").strip())
+    except (FileNotFoundError, ValueError):
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        with contextlib.suppress(FileNotFoundError):
+            pidfile.unlink()
+        return None
+    except PermissionError:
+        return pid
+    return pid
 
 
 def terminate_group(pid: int, *, grace_s: float = DEFAULT_GRACE_S) -> bool:

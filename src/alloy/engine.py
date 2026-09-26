@@ -29,7 +29,7 @@ from alloy.models import (
     with_provenance,
 )
 from alloy.paths import AlloyPaths
-from alloy.procs import pid_alive, terminate_group, terminate_pid
+from alloy.procs import pid_alive, read_pid, terminate_group, terminate_pid
 from alloy.runners import RunnerRegistry
 from alloy.runtime import RunContext
 from alloy.store import (
@@ -162,12 +162,28 @@ class Engine:
         )
 
     def cancel(self, bead_id: str, *, grace_s: float = 5.0) -> bool:
-        """Stop the run -- the process too, not just the bookkeeping."""
+        """Stop the run -- the process too, not just the bookkeeping.
+
+        Refuses instead of signalling the recorded pid when that pid is a
+        live scheduler daemon (a bead the scheduler is running in-process,
+        not a standalone `alloy run`): the scheduler runs one bead at a time
+        in its own process, so terminating that pid would take down the
+        whole scheduler -- every other queued and future run -- rather than
+        just this one bead.
+        """
         record = self.store.latest_run_for_bead(bead_id)
         if record is None or record["status"] in (RUN_DONE, RUN_FAILED, RUN_CANCELLED):
             return False
         pid = record.get("pid")
         if record["status"] == RUN_RUNNING and pid_alive(pid) and pid != os.getpid():
+            scheduler_pid = read_pid(self.paths.scheduler_pid)
+            if scheduler_pid is not None and int(pid) == scheduler_pid:
+                raise EngineError(
+                    f"{bead_id}: run {record['run_id']} is owned by the live scheduler "
+                    f"(pid {pid}); cancelling it would stop the whole scheduler, not just "
+                    "this run. Stop the scheduler first (`alloy stop`), or wait for it to "
+                    "finish this run, then cancel."
+                )
             log.info("%s: stopping pid %s", bead_id, pid)
             if not terminate_pid(int(pid), grace_s=grace_s):
                 raise EngineError(f"could not stop pid {pid} running {bead_id}")

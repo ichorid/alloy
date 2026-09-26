@@ -378,6 +378,44 @@ async def test_cancel_terminates_the_owning_process(engine, beads_project):
         holder.wait(timeout=10)
 
 
+async def test_cancel_refuses_a_run_owned_by_the_live_scheduler(engine, beads_project):
+    """A bead the scheduler is running in-process records the scheduler's own
+    pid as the run's pid (it has no separate OS process). `cancel` must not
+    SIGTERM that pid -- that would stop the whole scheduler, taking every
+    other run down with it -- and must instead refuse with a clear message,
+    leaving the run and the scheduler untouched."""
+    import subprocess
+    import sys
+
+    bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop")
+    engine.beads.claim(bead_id)
+    scheduler_stand_in = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    engine.store.create_run(
+        run_id="scheduler-owned",
+        bead_id=bead_id,
+        thread_id="scheduler-owned",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    engine.store.update_run("scheduler-owned", pid=scheduler_stand_in.pid)
+    engine.paths.scheduler_pid.parent.mkdir(parents=True, exist_ok=True)
+    engine.paths.scheduler_pid.write_text(str(scheduler_stand_in.pid), encoding="utf-8")
+
+    try:
+        with pytest.raises(EngineError, match="alloy stop"):
+            engine.cancel(bead_id)
+
+        assert pid_alive(scheduler_stand_in.pid)
+        assert engine.store.get_run("scheduler-owned")["status"] == "running"
+        assert engine.beads.show(bead_id).status != bd.STATUS_READY
+    finally:
+        scheduler_stand_in.kill()
+        scheduler_stand_in.wait(timeout=10)
+
+
 # -- alloy-c5v.2: cancel kills orphaned harness process groups ---------------
 
 
