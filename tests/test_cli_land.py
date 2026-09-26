@@ -146,7 +146,7 @@ def test_cli_land_review_ready_green_verifier_merges_closes_and_reports_landed(
 ):
     """`alloy land B` on review-ready B merges alloy/B into main and closes B."""
     fake_harnesses.configure(_land_script())
-    bead_id = bd_create(beads_project, "feature to land", alloy_recipe="tdd-loop")
+    bead_id = bd_create(beads_project, "feature to land", alloy_recipe="tdd-loop", alloy_use_worktree="true")
     worktree = _seed_review_ready(land_engine, beads_project, alloy_home, bead_id)
     primary_head_before = _prepare_clean_merge(beads_project, worktree)
     bead_tip = _head(worktree.path)
@@ -224,7 +224,7 @@ async def test_land_commits_uncommitted_work_before_merging(
 ):
     """Uncommitted agent work must be committed before the land recipe runs."""
     fake_harnesses.configure(_land_script())
-    bead_id = bd_create(beads_project, "dirty worktree", alloy_recipe="tdd-loop")
+    bead_id = bd_create(beads_project, "dirty worktree", alloy_recipe="tdd-loop", alloy_use_worktree="true")
     worktree = _seed_review_ready(land_engine, beads_project, alloy_home, bead_id)
     (worktree.path / "feature.txt").write_text("bead work\n", encoding="utf-8")
     (worktree.path / "tests").mkdir(exist_ok=True)
@@ -258,7 +258,7 @@ def test_cli_land_wrong_primary_branch_parks_bead_and_leaves_main_unchanged(
 ):
     """Primary on another branch: non-zero exit, B waiting-human, main untouched."""
     fake_harnesses.configure(_land_script())
-    bead_id = bd_create(beads_project, "park when wrong branch", alloy_recipe="tdd-loop")
+    bead_id = bd_create(beads_project, "park when wrong branch", alloy_recipe="tdd-loop", alloy_use_worktree="true")
     worktree = _seed_review_ready(land_engine, beads_project, alloy_home, bead_id)
     _prepare_clean_merge(beads_project, worktree)
 

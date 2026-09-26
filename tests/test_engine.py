@@ -52,7 +52,8 @@ def script(**overrides):
     return base
 
 
-async def test_a_successful_run_updates_the_bead_and_leaves_a_branch(engine, beads_project, fake_harnesses):
+async def test_a_successful_run_updates_the_bead_and_runs_in_place_by_default(engine, beads_project, fake_harnesses):
+    """Without `alloy_use_worktree`, the bead runs directly in the primary checkout."""
     fake_harnesses.configure(script())
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
 
@@ -62,8 +63,36 @@ async def test_a_successful_run_updates_the_bead_and_leaves_a_branch(engine, bea
     bead = engine.beads.show(bead_id)
     assert bead.status == bd.STATUS_REVIEW_READY
     assert bead.metadata[bd.META_RUN_ID] == result.run_id
+    assert bead.metadata[bd.META_BRANCH] == ""
+    assert bead.metadata[bd.META_WORKTREE] == str(beads_project)
+    assert result.worktree == str(beads_project)
+
+
+async def test_in_place_run_refuses_to_start_on_a_dirty_primary_checkout(engine, beads_project, fake_harnesses):
+    """A fresh in-place start must not risk sweeping someone else's tracked,
+    uncommitted edit into the bead's diff/commit via commit_wip's `git add -A`."""
+    (beads_project / "mypkg" / "__init__.py").write_text("SOMEONE_ELSES_WIP = True\n", encoding="utf-8")
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+
+    with pytest.raises(EngineError, match="uncommitted tracked changes"):
+        await engine.run(bead_id)
+
+
+async def test_a_successful_run_leaves_a_branch_when_worktree_is_requested(engine, beads_project, fake_harnesses):
+    """Setting `alloy_use_worktree` opts the bead into an isolated worktree/branch."""
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop", alloy_use_worktree="true")
+
+    result = await engine.run(bead_id)
+
+    assert result.outcome == "done"
+    bead = engine.beads.show(bead_id)
+    assert bead.status == bd.STATUS_REVIEW_READY
+    assert bead.metadata[bd.META_RUN_ID] == result.run_id
     assert bead.metadata[bd.META_BRANCH] == f"alloy/{bead_id}"
     assert bead.metadata[bd.META_WORKTREE] == result.worktree
+    assert result.worktree != str(beads_project)
 
 
 async def test_the_bead_is_claimed_before_any_agent_runs(engine, beads_project, fake_harnesses):
@@ -79,7 +108,7 @@ async def test_agents_only_ever_touch_the_worktree(engine, beads_project, fake_h
     from pathlib import Path
 
     fake_harnesses.configure(script())
-    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop", alloy_use_worktree="true")
 
     result = await engine.run(bead_id)
 
@@ -215,8 +244,8 @@ async def test_cancel_returns_the_bead_to_ready_and_keeps_the_worktree(engine, b
 
 async def test_two_beads_get_independent_worktrees(engine, beads_project, fake_harnesses):
     fake_harnesses.configure(script())
-    first = bd_create(beads_project, "first", alloy_recipe="tdd-loop")
-    second = bd_create(beads_project, "second", alloy_recipe="tdd-loop")
+    first = bd_create(beads_project, "first", alloy_recipe="tdd-loop", alloy_use_worktree="true")
+    second = bd_create(beads_project, "second", alloy_recipe="tdd-loop", alloy_use_worktree="true")
 
     first_result = await engine.run(first)
     fake_harnesses.reset_calls()
@@ -510,6 +539,13 @@ def _epic_child(beads: bd.BeadsClient, epic_id: str, title: str) -> str:
     return child_id
 
 
+def _worktree_epic(beads: bd.BeadsClient, title: str, description: str) -> str:
+    """An epic opted into an isolated worktree via `alloy_use_worktree`."""
+    epic_id = _create_epic(beads, title, description)
+    beads.set_metadata(epic_id, {bd.META_USE_WORKTREE: "true"})
+    return epic_id
+
+
 def _implement_write(path: str, content: str) -> dict:
     return {
         "text": f"Wrote {path}",
@@ -553,7 +589,7 @@ async def test_epic_child_runs_in_shared_epic_worktree(
     fake_harnesses,
 ):
     """A child under an epic uses <worktrees>/<epic-id> on branch alloy/<epic-id>."""
-    epic_id = _create_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
+    epic_id = _worktree_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
     child_id = _epic_child(engine.beads, epic_id, "add token endpoint")
 
     fake_harnesses.configure(script())
@@ -574,7 +610,7 @@ async def test_epic_child_base_commit_starts_after_sibling_commit(
     fake_harnesses,
 ):
     """After sibling Y commits on alloy/<epic>, child X's base_commit is Y's HEAD."""
-    epic_id = _create_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
+    epic_id = _worktree_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
     child_y = _epic_child(engine.beads, epic_id, "wire callback route")
     child_x = _epic_child(engine.beads, epic_id, "add token endpoint")
 
@@ -629,7 +665,7 @@ async def test_worktree_owner_metadata_runs_in_owner_worktree(
     fake_harnesses,
 ):
     """A bead with alloy_worktree_owner=<id> runs in <worktrees>/<id>."""
-    owner_id = bd_create(beads_project, "landed feature", alloy_recipe="tdd-loop")
+    owner_id = bd_create(beads_project, "landed feature", alloy_recipe="tdd-loop", alloy_use_worktree="true")
     fake_harnesses.configure(script())
     await engine.run(owner_id)
 
@@ -684,7 +720,7 @@ async def test_standalone_bead_keeps_per_bead_worktree_path(
     fake_harnesses,
 ):
     """Beads without an epic ancestor still use <worktrees>/<own-id>."""
-    bead_id = bd_create(beads_project, "standalone task", alloy_recipe="tdd-loop")
+    bead_id = bd_create(beads_project, "standalone task", alloy_recipe="tdd-loop", alloy_use_worktree="true")
 
     fake_harnesses.configure(script())
     result = await engine.run(bead_id)
@@ -700,7 +736,7 @@ async def test_epic_child_resume_restores_recorded_base_commit(
     fake_harnesses,
 ):
     """Resume must not recompute base via merge-base after more commits land on alloy/<epic>."""
-    epic_id = _create_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
+    epic_id = _worktree_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
     child_y = _epic_child(engine.beads, epic_id, "wire callback route")
     child_x = _epic_child(engine.beads, epic_id, "add token endpoint")
 
@@ -787,7 +823,7 @@ async def test_epic_child_success_commits_on_owner_branch_and_closes(
     fake_harnesses,
 ):
     """Successful epic child: commit on alloy/<epic>, child closed, owner tree kept clean."""
-    epic_id = _create_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
+    epic_id = _worktree_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
     child_id = _epic_child(engine.beads, epic_id, "add token endpoint")
     child_path = "mypkg/token.py"
     child_content = "TOKEN = 'abc'\n"
@@ -812,7 +848,7 @@ async def test_worktree_owner_bead_success_commits_on_owner_branch_and_closes(
     fake_harnesses,
 ):
     """Beads with alloy_worktree_owner commit on the owner branch and close."""
-    owner_id = bd_create(beads_project, "landed feature", alloy_recipe="tdd-loop")
+    owner_id = bd_create(beads_project, "landed feature", alloy_recipe="tdd-loop", alloy_use_worktree="true")
     fake_harnesses.configure(script())
     await engine.run(owner_id)
 
@@ -870,7 +906,7 @@ async def test_standalone_bead_success_stays_review_ready(
     fake_harnesses,
 ):
     """Beads without a shared owner still land at review-ready with worktree kept."""
-    bead_id = bd_create(beads_project, "standalone task", alloy_recipe="tdd-loop")
+    bead_id = bd_create(beads_project, "standalone task", alloy_recipe="tdd-loop", alloy_use_worktree="true")
 
     fake_harnesses.configure(script())
     result = await engine.run(bead_id)

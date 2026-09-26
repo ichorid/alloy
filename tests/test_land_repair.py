@@ -170,7 +170,7 @@ def test_cli_land_conflict_files_one_repair_bug_blocking_landed_bead(
     """Conflict on B files one bug with worktree_owner=B, blocks B, repairing state."""
     conflict_path = "mypkg/__init__.py"
     fake_harnesses.configure(_land_script())
-    bead_id = bd_create(beads_project, "land conflict repair", alloy_recipe="tdd-loop")
+    bead_id = bd_create(beads_project, "land conflict repair", alloy_recipe="tdd-loop", alloy_use_worktree="true")
     worktree = _seed_review_ready(land_engine, beads_project, alloy_home, bead_id)
     bead_head_before = _prepare_merge_conflict(beads_project, worktree, conflict_path)
     bugs_before = set(_bug_ids(land_engine.beads))
@@ -217,7 +217,7 @@ def test_cli_land_conflict_retry_does_not_file_second_repair_bug(
     """Landing B again while its repair bug is open creates no second bug."""
     conflict_path = "mypkg/__init__.py"
     fake_harnesses.configure(_land_script())
-    bead_id = bd_create(beads_project, "land conflict dedupe", alloy_recipe="tdd-loop")
+    bead_id = bd_create(beads_project, "land conflict dedupe", alloy_recipe="tdd-loop", alloy_use_worktree="true")
     worktree = _seed_review_ready(land_engine, beads_project, alloy_home, bead_id)
     _prepare_merge_conflict(beads_project, worktree, conflict_path)
 

@@ -1040,7 +1040,7 @@ async def test_scheduler_tick_auto_lands_standalone_tdd_loop_after_success(
     """Standalone bead with landing.mode auto closes with a merge commit on main after one tick."""
     _patch_engine_recipes(monkeypatch, scheduler.engine)
     fake_harnesses.configure(_auto_land_script())
-    bead_id = bd_create(beads_project, "standalone auto land", alloy_recipe="tdd-loop")
+    bead_id = bd_create(beads_project, "standalone auto land", alloy_recipe="tdd-loop", alloy_use_worktree="true")
     primary_before = _head(beads_project)
     _advance_main(beads_project)
 
@@ -1065,6 +1065,7 @@ async def test_scheduler_tick_lands_completed_epic_on_next_tick(
     _patch_engine_recipes(monkeypatch, scheduler.engine)
     fake_harnesses.configure(script())
     epic_id = _create_epic(beads_project, "auto land epic")
+    scheduler.engine.beads.set_metadata(epic_id, {bd.META_USE_WORKTREE: "true"})
     child_id = _create_epic_child(
         beads_project,
         "only epic child",
@@ -1131,7 +1132,7 @@ async def test_scheduler_tick_relands_bead_in_repairing_when_repair_bug_closed(
     _patch_engine_recipes(monkeypatch, scheduler.engine)
     fake_harnesses.configure(_land_harness_entries())
     conflict_path = "mypkg/__init__.py"
-    bead_id = bd_create(beads_project, "repair retry auto land", alloy_recipe="tdd-loop")
+    bead_id = bd_create(beads_project, "repair retry auto land", alloy_recipe="tdd-loop", alloy_use_worktree="true")
     worktree = _seed_review_ready(scheduler.engine, beads_project, alloy_home, bead_id)
     primary_before = _head(beads_project)
     _prepare_merge_conflict(beads_project, worktree, conflict_path)

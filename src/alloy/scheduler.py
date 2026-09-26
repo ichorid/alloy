@@ -506,10 +506,12 @@ class Scheduler:
         return False
 
     def _completed_epics(self) -> list[str]:
-        """Open epics with an Alloy worktree whose descendants have all closed.
+        """Open epics whose descendants have all closed and that Alloy actually
+        ran (manual or empty epics, never touched by a run, are left alone).
 
-        The worktree is what marks "Alloy work": an epic no run ever touched
-        (manual or empty) has no worktree and is left alone."""
+        An epic that opted into an isolated worktree (`alloy_use_worktree`) is
+        marked by that worktree's presence; an in-place epic has no worktree,
+        so a descendant carrying `alloy_run_id` is the signal instead."""
         worktrees = WorktreeManager(repo=self.engine.repo, root=self.engine.paths.worktrees)
         due: list[str] = []
         for bead in self.engine.beads.list_by_status(bd.STATUS_READY):
@@ -517,10 +519,22 @@ class Scheduler:
                 continue
             if self.engine.beads.open_descendants(bead.id):
                 continue
-            if not (worktrees.path_for(bead.id) / ".git").exists():
+            has_worktree = (worktrees.path_for(bead.id) / ".git").exists()
+            if not has_worktree and not self._any_descendant_ran(bead.id):
                 continue
             due.append(bead.id)
         return due
+
+    def _any_descendant_ran(self, epic_id: str) -> bool:
+        """Whether any descendant (closed or not) recorded an Alloy run -- the
+        in-place equivalent of "this epic has a worktree"."""
+        for child in self.engine.beads.children(epic_id):
+            if child.issue_type == "epic":
+                if self._any_descendant_ran(child.id):
+                    return True
+            elif child.metadata.get(bd.META_RUN_ID):
+                return True
+        return False
 
     def _repaired_beads(self) -> list[str]:
         """Review-ready beads in `repairing` whose repair bug is now closed."""

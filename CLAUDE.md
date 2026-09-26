@@ -96,13 +96,35 @@ transcripts go under Alloy's logs without run-ledger entries.
 `alloy status <bead-id> --json` includes `complexity`, `complexity_source`, and
 `dispatch_tier` (null in shadow mode).
 
+By default a bead (or epic) runs **in place**, directly in the primary
+checkout, on whatever branch is already there — no git worktree is created.
+Set the bead metadata flag `alloy_use_worktree` truthy (`bd update <id>
+--set-metadata alloy_use_worktree=true`) to opt that bead, or an epic and all
+its children, into an isolated git worktree/branch (`alloy/<bead-id>` or
+`alloy/<epic-id>`) instead; epic children with the flag share one worktree,
+each child closing on success and the epic landing once every descendant is
+closed. `alloy_worktree_owner=<id>` still names an explicit shared owner
+outside an epic, and that owner's own `alloy_use_worktree` flag decides
+whether the shared checkout is isolated or in place.
+
+In-place runs share the single primary checkout, so they are not
+concurrency-safe: two beads cannot run in place at once, and Alloy commits WIP
+there with a plain `git add -A`, which cannot tell its own bead's changes
+apart from anyone else's. To avoid silently sweeping unrelated work into a
+bead's diff/commit, a fresh (non-resume, non-retry) in-place start refuses to
+begin while the primary checkout has uncommitted changes to *tracked* files
+(untracked clutter such as `.beads/` is ignored). Beads that need real
+concurrency or run alongside manual edits to the repo should set
+`alloy_use_worktree`.
+
 Shipped recipes set `landing: {mode: auto, target: main}`. After a successful
-run the scheduler invokes `alloy land <bead-id>`: trial-merge into the bead
-branch, re-verify, merge into the primary checkout on `landing.target`, close
-the bead, and remove the worktree. Recipes with `landing: {mode: off}` stop at
-`review-ready`; land manually with `alloy land <bead-id>` when ready. Epic
-children share one worktree (`alloy/<epic-id>`); each child closes on success
-and the epic lands when every descendant is closed.
+run the scheduler invokes `alloy land <bead-id>`: for a worktree-opted bead,
+trial-merge into the bead branch, re-verify, merge into the primary checkout
+on `landing.target`, close the bead, and remove the worktree; for an in-place
+bead there is no branch to merge, so landing just verifies the primary
+checkout is already on `landing.target` and closes the bead. Recipes with
+`landing: {mode: off}` stop at `review-ready`; land manually with `alloy land
+<bead-id>` when ready.
 
 Remediation is bounded by each run's own budget: a run is capped by its own
 `max_agent_calls` (remediation children spend their own budget, not the

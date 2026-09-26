@@ -184,9 +184,21 @@ class WorktreeManager:
         proc = _git(["status", "--porcelain"], worktree.path, check=False)
         return bool(proc.stdout.strip())
 
+    def has_uncommitted_tracked_changes(self, path: Path) -> bool:
+        """True when a *tracked* file is modified/staged/deleted -- ignores
+        untracked clutter (e.g. `.beads/`, build artifacts) that a checkout
+        commonly carries even when nobody's work is in progress there."""
+        proc = _git(["status", "--porcelain", "--untracked-files=no"], path, check=False)
+        return bool(proc.stdout.strip())
+
     def head(self, path: Path) -> str:
         """The worktree's current HEAD commit."""
         return self._head(path)
+
+    def current_branch(self, path: Path | None = None) -> str:
+        """The branch checked out at `path` (the primary checkout by default)."""
+        proc = _git(["rev-parse", "--abbrev-ref", "HEAD"], path or self.repo, check=False)
+        return proc.stdout.strip()
 
     def fingerprints(self, worktree: Worktree, paths: list[str]) -> dict[str, str]:
         """sha256 of each path's current contents; paths absent on disk are omitted."""

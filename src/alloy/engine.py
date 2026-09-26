@@ -269,27 +269,23 @@ class Engine:
         # The land run is done; `_settle` has parked the bead at
         # on_success_status (review-ready). Now move the target branch.
         owner_id = self._worktree_owner(bead)
-        branch = branch_name(owner_id)
         target = config.landing.target
         worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
-        merged = worktrees.merge_into_primary(branch, target)
-        if not merged.ok:
-            self.beads.set_status(bead_id, bd.STATUS_WAITING_HUMAN)
-            self.beads.set_metadata(bead_id, {bd.META_LAND_STATE: "parked"})
-            self.beads.note(bead_id, f"alloy: landing parked -- {merged.reason}")
-            raise EngineError(f"landing {bead_id} parked: {merged.reason}")
+        use_worktree = self._use_worktree(bead, owner_id)
+        sha, landed_where = self._merge_owner_into_primary(bead_id, owner_id, target, worktrees, use_worktree)
 
         self.beads.set_metadata(
             bead_id,
             {
                 bd.META_LAND_STATE: "landed",
-                bd.META_LAND_SHA: merged.sha,
+                bd.META_LAND_SHA: sha,
             },
         )
-        self.beads.note(bead_id, f"alloy: landed {branch} into {target} as {merged.sha}")
+        self.beads.note(bead_id, f"alloy: landed {landed_where} into {target} as {sha}")
         self.beads.close(bead_id)
-        worktrees.remove(owner_id, force=True, delete_branch=True)
-        log.info("%s: landed %s into %s as %s", bead_id, branch, target, merged.sha)
+        if use_worktree:
+            worktrees.remove(owner_id, force=True, delete_branch=True)
+        log.info("%s: landed %s into %s as %s", bead_id, landed_where, target, sha)
         return RunResult(
             bead_id,
             result.run_id,
@@ -297,6 +293,39 @@ class Engine:
             reason=result.reason,
             worktree=result.worktree,
         )
+
+    def _merge_owner_into_primary(
+        self,
+        bead_id: str,
+        owner_id: str,
+        target: str,
+        worktrees: WorktreeManager,
+        use_worktree: bool,
+    ) -> tuple[str, str]:
+        """Move the owner's finished work onto `target`; returns (sha, description).
+
+        Parks the bead at waiting-human and raises when the primary checkout
+        refuses -- either a real merge conflict, or (in-place) the primary
+        simply isn't on `target`.
+        """
+        if use_worktree:
+            branch = branch_name(owner_id)
+            merged = worktrees.merge_into_primary(branch, target)
+            if merged.ok:
+                return merged.sha, branch
+            reason = merged.reason
+        else:
+            # In-place bead: the work already lives on the primary checkout's
+            # current branch, so there is no separate branch to merge.
+            current = worktrees.current_branch()
+            if current == target:
+                return worktrees.head(self.repo), "the primary checkout"
+            reason = f"primary checkout is on '{current}', expected '{target}'"
+
+        self.beads.set_status(bead_id, bd.STATUS_WAITING_HUMAN)
+        self.beads.set_metadata(bead_id, {bd.META_LAND_STATE: "parked"})
+        self.beads.note(bead_id, f"alloy: landing parked -- {reason}")
+        raise EngineError(f"landing {bead_id} parked: {reason}")
 
     # -- remediation ------------------------------------------------------
 
@@ -482,20 +511,43 @@ class Engine:
         worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
         if worktree is None:
             owner_id = self._worktree_owner(bead)
-            worktree = worktrees.ensure(owner_id)
-            if base_commit:
-                # Resume: the run recorded where this bead's work starts;
-                # later commits on a shared branch must not move it.
-                worktree = Worktree(worktree.bead_id, worktree.path, worktree.branch, base_commit)
-            elif owner_id != bead.id:
-                # A shared (epic or owner) worktree: this bead's diff starts at
-                # the owner branch's HEAD right now, after any siblings' commits.
-                worktree = Worktree(
-                    worktree.bead_id,
-                    worktree.path,
-                    worktree.branch,
-                    worktrees.head(worktree.path),
-                )
+            if self._use_worktree(bead, owner_id):
+                worktree = worktrees.ensure(owner_id)
+                if base_commit:
+                    # Resume: the run recorded where this bead's work starts;
+                    # later commits on a shared branch must not move it.
+                    worktree = Worktree(worktree.bead_id, worktree.path, worktree.branch, base_commit)
+                elif owner_id != bead.id:
+                    # A shared (epic or owner) worktree: this bead's diff starts at
+                    # the owner branch's HEAD right now, after any siblings' commits.
+                    worktree = Worktree(
+                        worktree.bead_id,
+                        worktree.path,
+                        worktree.branch,
+                        worktrees.head(worktree.path),
+                    )
+            else:
+                # Default: no isolated worktree. Run directly in the primary
+                # checkout, on whatever branch is already checked out there.
+                worktree = Worktree(owner_id, self.repo, "", base_commit or worktrees.head(self.repo))
+                retrying_own_work = self.store.latest_run_for_bead(bead.id) is not None
+                if (
+                    not base_commit
+                    and not retrying_own_work
+                    and worktrees.has_uncommitted_tracked_changes(self.repo)
+                ):
+                    # commit_wip does `git add -A`: on a truly fresh in-place
+                    # start (never run before, not a resume/retry of this
+                    # bead's own prior attempt) a pre-existing modified/staged
+                    # tracked file would be silently swept into this bead's
+                    # diff and commit. Refuse instead of mixing it in.
+                    # Untracked clutter (e.g. `.beads/`) is left alone -- it's
+                    # normal checkout noise, not someone's in-progress edit.
+                    raise WorktreeError(
+                        f"primary checkout {self.repo} has uncommitted tracked changes; "
+                        f"commit or stash them before running {bead.id} in place "
+                        f"(or set alloy_use_worktree on {owner_id} to isolate it)"
+                    )
         log_dir = self.paths.run_logs(run_id)
         log_dir.mkdir(parents=True, exist_ok=True)
         ctx = RunContext(
@@ -528,6 +580,15 @@ class Engine:
         """The bead whose worktree/branch this bead's work lands on."""
         return bead.metadata.get(bd.META_WORKTREE_OWNER) or self.beads.epic_root(bead.id) or bead.id
 
+    def _use_worktree(self, bead: Bead, owner_id: str) -> bool:
+        """Whether `owner_id` opted into an isolated worktree via `alloy_use_worktree`.
+
+        Default is no: Alloy runs beads directly in the primary checkout unless
+        the bead (or its epic) sets this metadata flag truthy.
+        """
+        owner = bead if owner_id == bead.id else self.beads.show(owner_id)
+        return bd.metadata_flag(owner.metadata, bd.META_USE_WORKTREE)
+
     def _commit_before_land(self, bead: Bead) -> bool:
         """Commit any dirty work on the owner worktree before the land recipe runs.
 
@@ -537,11 +598,14 @@ class Engine:
         """
         owner_id = self._worktree_owner(bead)
         worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
-        try:
-            worktree = worktrees.ensure(owner_id)
-        except WorktreeError as exc:
-            log.warning("landing commit for %s skipped: %s", bead.id, exc)
-            return False
+        if self._use_worktree(bead, owner_id):
+            try:
+                worktree = worktrees.ensure(owner_id)
+            except WorktreeError as exc:
+                log.warning("landing commit for %s skipped: %s", bead.id, exc)
+                return False
+        else:
+            worktree = Worktree(owner_id, self.repo, "", worktrees.head(self.repo))
         committed = worktrees.commit_wip(worktree, f"{bead.id}: {bead.title}")
         if committed:
             log.info("%s: committed pending work as %.8s before landing", bead.id, committed)
@@ -780,7 +844,11 @@ class Engine:
                 f"alloy: {recipe_name} succeeded in {final.get('iteration', 0)} iteration(s) "
                 f"on branch {ctx.worktree.branch}. {reason}",
             )
-            if config.cleanup_worktree_on_success and owner_id == bead.id:
+            if (
+                config.cleanup_worktree_on_success
+                and owner_id == bead.id
+                and self._use_worktree(bead, owner_id)
+            ):
                 ctx.worktrees.remove(bead.id)
         else:
             self.store.finish_run(run_id, status=RUN_FAILED, outcome=outcome, reason=reason)

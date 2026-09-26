@@ -54,6 +54,22 @@ META_WORKTREE_OWNER = "alloy_worktree_owner"
 META_LAND_STATE = "alloy_land_state"
 META_LAND_SHA = "alloy_land_sha"
 META_LAND_REPAIR = "alloy_land_repair"
+META_USE_WORKTREE = "alloy_use_worktree"
+"""Opt-in flag: a bead (or epic) with this set truthy gets an isolated git
+worktree/branch. Without it, Alloy runs the bead directly in the primary
+checkout -- no worktree is created."""
+
+TRUTHY_METADATA = frozenset({"1", "true", "yes", "on"})
+
+
+def metadata_flag(metadata: dict[str, Any], key: str) -> bool:
+    """Parse a bead metadata value as a boolean flag (`True`, `"true"`, `"1"`, ...)."""
+    value = metadata.get(key)
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in TRUTHY_METADATA
 
 # Labels on beads Alloy files itself. `human` is Beads' own convention, so
 # `bd human list` surfaces needs-human bugs without any Alloy-specific query.
