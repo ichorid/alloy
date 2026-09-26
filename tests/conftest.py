@@ -41,8 +41,7 @@ def pytest_sessionstart(session: pytest.Session) -> None:
     if not config.args or targets <= {root, root / "tests"}:
         if os.environ.get(_SUITE_ACTIVE_ENV):
             pytest.exit(
-                "nested full-suite pytest run refused (recursion guard); "
-                "pass explicit test files/node ids",
+                "nested full-suite pytest run refused (recursion guard); pass explicit test files/node ids",
                 returncode=4,
             )
         os.environ[_SUITE_ACTIVE_ENV] = "1"
@@ -52,31 +51,31 @@ FAKE_SOURCE = Path(__file__).parent / "fakebin" / "_fake.py"
 FAKE_BD_SOURCE = Path(__file__).parent / "fakebin" / "_fake_bd.py"
 FAKE_RUNNERS = ("claude", "codex", "cursor-agent", "jev", "pi")
 
-PASSING_TEST = '''
+PASSING_TEST = """
 from mypkg import slugify
 
 
 def test_slugify_basic():
     assert slugify("Hello World") == "hello-world"
-'''
+"""
 
-PASSING_TEST_GREEN = '''
+PASSING_TEST_GREEN = """
 def test_slugify_placeholder():
     assert True
-'''
+"""
 
-HELPER_TEST = '''
+HELPER_TEST = """
 def test_helper_placeholder():
     assert True
-'''
+"""
 
-IMPLEMENTATION = '''
+IMPLEMENTATION = """
 import re
 
 
 def slugify(text):
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-'''
+"""
 
 
 def _git(args: list[str], cwd: Path) -> None:
@@ -150,7 +149,8 @@ class FakeHarnesses:
         """
         (self.bindir / name).unlink(missing_ok=True)
         keep = [
-            entry for entry in os.environ["PATH"].split(os.pathsep)
+            entry
+            for entry in os.environ["PATH"].split(os.pathsep)
             if entry == str(self.bindir) or shutil.which(name, path=entry) is None
         ]
         os.environ["PATH"] = os.pathsep.join(keep)
@@ -410,9 +410,7 @@ def implement_add_test_entry() -> dict:
             {
                 "path": "tests/test_extra.py",
                 "content": (
-                    "from mypkg import slugify\n\n\n"
-                    "def test_slugify_single_char():\n"
-                    '    assert slugify("a") == "a"\n'
+                    'from mypkg import slugify\n\n\ndef test_slugify_single_char():\n    assert slugify("a") == "a"\n'
                 ),
             },
         ],
@@ -557,8 +555,7 @@ def beads_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     _git(["config", "user.email", "alloy@test"], repo)
     _git(["config", "user.name", "Alloy Test"], repo)
     _git(["commit", "-q", "--allow-empty", "-m", "initial"], repo)
-    subprocess.run(["bd", "init", "--prefix", "t"], cwd=str(repo),
-                   check=True, capture_output=True, text=True)
+    subprocess.run(["bd", "init", "--prefix", "t"], cwd=str(repo), check=True, capture_output=True, text=True)
     from alloy.beads import BeadsClient
 
     BeadsClient(repo=repo).ensure_statuses()
@@ -574,8 +571,7 @@ def beads_project(project: Path, beads_template: Path) -> Path:
 
 def bd_create(repo: Path, title: str, *, priority: int = 2, **metadata) -> str:
     """Create a bead and return its id."""
-    proc = subprocess.run(["bd", "q", title], cwd=str(repo),
-                          check=True, capture_output=True, text=True)
+    proc = subprocess.run(["bd", "q", title], cwd=str(repo), check=True, capture_output=True, text=True)
     bead_id = proc.stdout.strip().splitlines()[-1].strip()
     args = ["bd", "update", bead_id, "-p", str(priority)]
     for key, value in metadata.items():

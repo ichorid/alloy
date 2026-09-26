@@ -54,9 +54,7 @@ def parse_since(value: str, now: datetime | None = None) -> datetime:
 class EventLog:
     path: Path
 
-    def emit(
-        self, event: str, *, bead: str, run: str | None = None, reason: str = "", **extra: Any
-    ) -> dict[str, Any]:
+    def emit(self, event: str, *, bead: str, run: str | None = None, reason: str = "", **extra: Any) -> dict[str, Any]:
         record: dict[str, Any] = {
             "ts": utcnow().isoformat(),
             "event": event,
@@ -77,9 +75,7 @@ class EventLog:
             pass  # the feed is a courtesy; it must never fail a run
         return record
 
-    def read(
-        self, *, since: datetime | None = None, only: frozenset[str] | None = None
-    ) -> list[dict[str, Any]]:
+    def read(self, *, since: datetime | None = None, only: frozenset[str] | None = None) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
         events = []

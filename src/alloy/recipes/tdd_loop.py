@@ -119,22 +119,22 @@ class TddState(TypedDict, total=False):
     title: str
 
     context: dict[str, Any]
-    memory_block: str                          # rendered project memory, fixed at run start
-    memory_check_hints: str                    # stored alloy:check-hints body, fixed at run start
-    memory_calibration: str                    # stored alloy:calibration body, fixed at run start
-    memory_keys: list[str]                     # every stored memory key, fixed at run start
-    memory_lessons: dict[str, str]             # stored alloy:lesson:* bodies, fixed at run start
-    memory_regressions: dict[str, str]         # refreshed after an unmerged remediation
+    memory_block: str  # rendered project memory, fixed at run start
+    memory_check_hints: str  # stored alloy:check-hints body, fixed at run start
+    memory_calibration: str  # stored alloy:calibration body, fixed at run start
+    memory_keys: list[str]  # every stored memory key, fixed at run start
+    memory_lessons: dict[str, str]  # stored alloy:lesson:* bodies, fixed at run start
+    memory_regressions: dict[str, str]  # refreshed after an unmerged remediation
     complexity: str
     complexity_source: str
     retries_on_tier: int
     escalations: Annotated[list[dict[str, Any]], operator.add]
-    baseline_checks: list[dict[str, Any]]      # CheckRequest dicts from the tests role
-    baseline: list[dict[str, Any]] | None      # CheckResult dicts from prove_red
+    baseline_checks: list[dict[str, Any]]  # CheckRequest dicts from the tests role
+    baseline: list[dict[str, Any]] | None  # CheckResult dicts from prove_red
     baseline_repairs: int
-    tests_reviews: int                         # independent reviews of the tests so far
-    tests_session: dict[str, Any] | None       # {runner, session_id} of the last tests call
-    test_fingerprints: dict[str, str]          # path -> sha256 of every test file after prove_red
+    tests_reviews: int  # independent reviews of the tests so far
+    tests_session: dict[str, Any] | None  # {runner, session_id} of the last tests call
+    test_fingerprints: dict[str, str]  # path -> sha256 of every test file after prove_red
 
     iteration: int
     consiliums: int
@@ -142,38 +142,38 @@ class TddState(TypedDict, total=False):
     implementer: str  # the runner that actually produced the last change
 
     checks: Annotated[list[dict[str, Any]], operator.add]  # CheckResult dicts, every iteration
-    iteration_checks: int                      # checks run in the current iteration
-    verifier_stop: dict[str, Any] | None       # the VerifierAction that ended the last loop
-    last_check: dict[str, Any] | None          # the most recent CheckResult
-    last_instructions: str                     # what the last implement call was told
-    pending_check: dict[str, Any] | None       # the VerifierAction run_check_step executes
-    unrunnable_streak: int                     # consecutive checks that could not run
-    verify_more_at_checks: int | None          # len(checks) when acceptance last said verify_more
-    verify_more_declined: int                  # verify_more rounds asked this iteration
-    verify_route: str | None                   # where verifier_step / run_check_step sent the run
-    acceptance: dict[str, Any] | None          # the AcceptanceVerdict after post-processing
-    acceptance_route: str | None               # where acceptance_gate sent the run
+    iteration_checks: int  # checks run in the current iteration
+    verifier_stop: dict[str, Any] | None  # the VerifierAction that ended the last loop
+    last_check: dict[str, Any] | None  # the most recent CheckResult
+    last_instructions: str  # what the last implement call was told
+    pending_check: dict[str, Any] | None  # the VerifierAction run_check_step executes
+    unrunnable_streak: int  # consecutive checks that could not run
+    verify_more_at_checks: int | None  # len(checks) when acceptance last said verify_more
+    verify_more_declined: int  # verify_more rounds asked this iteration
+    verify_route: str | None  # where verifier_step / run_check_step sent the run
+    acceptance: dict[str, Any] | None  # the AcceptanceVerdict after post-processing
+    acceptance_route: str | None  # where acceptance_gate sent the run
     decision: dict[str, Any] | None
     change_summary: str
     attempts: Annotated[list[dict[str, Any]], operator.add]
     reported_bugs: Annotated[list[dict[str, Any]], operator.add]
-    triaged_titles: list[str]                 # reports the triage role has labelled
-    filed_bugs: list[dict[str, Any]]          # {bead_id, title, where, severity}
-    implementer_stopped: bool                 # the last implement call reported blocks_task yes
-    blocking_bug: dict[str, Any] | None       # the bug currently routed to remediate
+    triaged_titles: list[str]  # reports the triage role has labelled
+    filed_bugs: list[dict[str, Any]]  # {bead_id, title, where, severity}
+    implementer_stopped: bool  # the last implement call reported blocks_task yes
+    blocking_bug: dict[str, Any] | None  # the bug currently routed to remediate
     remediations: Annotated[list[dict[str, Any]], operator.add]  # {bead_id, outcome}, by remediate
-    triage_route: str | None                  # where the last triage sent the run
+    triage_route: str | None  # where the last triage sent the run
     critiques: Annotated[list[dict[str, Any]], reset_or_extend]
     budget_extensions: int
 
     stage: str
     outcome: str | None
     outcome_reason: str
-    conflict_files: list[str]               # land: paths the trial merge conflicted on
+    conflict_files: list[str]  # land: paths the trial merge conflicted on
     limit_hit: str | None
     human_note: str
     implement_unavailable: bool  # implement's whole fallback chain was unavailable
-    resume_to: str | None      # stage that parked the run at the human gate
+    resume_to: str | None  # stage that parked the run at the human gate
     resume_target: str | None  # where human_gate sends the resumed run
 
 
@@ -254,9 +254,7 @@ Produce a context packet:
 
 
 def context_prompt(brief: str, acceptance: str, *, memory: str = "") -> str:
-    return assemble(
-        CONTEXT_STATIC, _project_layer(memory), "", _task_layer(brief, acceptance), ""
-    ).text
+    return assemble(CONTEXT_STATIC, _project_layer(memory), "", _task_layer(brief, acceptance), "").text
 
 
 ESTIMATE_STATIC = """You are estimating how hard this task is
@@ -377,10 +375,12 @@ def tests_review_prompt(
         _project_layer(memory),
         _run_layer(context),
         _task_layer(brief, acceptance),
-        "\n\n".join([
-            "## Baseline run (these commands must fail right now)\n" + _render_results(baseline),
-            _diff_section(diff),
-        ]),
+        "\n\n".join(
+            [
+                "## Baseline run (these commands must fail right now)\n" + _render_results(baseline),
+                _diff_section(diff),
+            ]
+        ),
     ).text
 
 
@@ -429,9 +429,7 @@ def implement_prompt(
         # straight back here without a judge call.
         check = CheckResult.model_validate(failed_check)
         volatile.append(
-            "## Failed check\n"
-            f"`{check.command}` -> exit {check.exit_code} ({check.headline()})\n\n"
-            f"{check.output_tail}"
+            f"## Failed check\n`{check.command}` -> exit {check.exit_code} ({check.headline()})\n\n{check.output_tail}"
         )
         volatile.append(_diff_section(diff))
         if previous_instructions:
@@ -460,14 +458,17 @@ def triage_prompt(
 ) -> str:
     bug = BugReport.model_validate(report)
     blocks = {True: "yes", False: "no"}.get(bug.blocks_task, "(not stated)")
-    filed_text = "\n".join(
-        f"- {item.get('bead_id') or '(unfiled)'}: {item.get('title', '')} "
-        f"[{item.get('severity', '')}] at {item.get('where') or '?'}"
-        for item in filed
-    ) or "(none yet)"
-    remediation_text = "\n".join(
-        f"- {item.get('bead_id') or '?'}: {item.get('outcome', '')}" for item in remediations
-    ) or "(none yet)"
+    filed_text = (
+        "\n".join(
+            f"- {item.get('bead_id') or '(unfiled)'}: {item.get('title', '')} "
+            f"[{item.get('severity', '')}] at {item.get('where') or '?'}"
+            for item in filed
+        )
+        or "(none yet)"
+    )
+    remediation_text = (
+        "\n".join(f"- {item.get('bead_id') or '?'}: {item.get('outcome', '')}" for item in remediations) or "(none yet)"
+    )
     sections = [
         "You are triaging a bug report from a coding agent. You are read-only: you cannot "
         "edit code; you only label the report so Alloy can decide what happens next.",
@@ -487,14 +488,14 @@ def triage_prompt(
         sections.append(f"## Project context\n{project_context}")
     sections.append(
         "Choose exactly one severity:\n"
-        "- \"not-a-bug\"    -- the report is the task itself, the tests it was asked to make "
+        '- "not-a-bug"    -- the report is the task itself, the tests it was asked to make '
         "pass, or a defect that only appears with this task's changes\n"
-        "- \"duplicate\"    -- it matches a bug already filed in this run (listed above)\n"
-        "- \"non-blocking\" -- a real pre-existing defect the task can finish without; "
+        '- "duplicate"    -- it matches a bug already filed in this run (listed above)\n'
+        '- "non-blocking" -- a real pre-existing defect the task can finish without; '
         "it is filed for later and stays out of this task's scope\n"
-        "- \"blocking\"     -- a real pre-existing defect the task cannot finish without; "
+        '- "blocking"     -- a real pre-existing defect the task cannot finish without; '
         "Alloy fixes it autonomously in its own bead before the task continues\n"
-        "- \"needs-human\"  -- it blocks the task but the fix needs an architectural change "
+        '- "needs-human"  -- it blocks the task but the fix needs an architectural change '
         "or a decision outside the task (a schema or public API change, a dependency swap, "
         "behaviour the acceptance criteria contradict), or the remediations already done in "
         "this run show remediation is spiralling. This is the operator's carve-out, not the "
@@ -517,13 +518,13 @@ def render_project_context(
 ) -> str:
     """The project context packet: brief, bead graph, progress -- clipped to a
     fixed size so the scope role sees the whole project, never a transcript."""
-    history_text = "\n".join(
-        item if isinstance(item, str) else Attempt.model_validate(item).render()
-        for item in run_history
-    ) or "(none)"
-    remediation_text = "\n".join(
-        f"- {item.get('bead_id') or '?'}: {item.get('outcome', '')}" for item in remediations
-    ) or "(none yet)"
+    history_text = (
+        "\n".join(item if isinstance(item, str) else Attempt.model_validate(item).render() for item in run_history)
+        or "(none)"
+    )
+    remediation_text = (
+        "\n".join(f"- {item.get('bead_id') or '?'}: {item.get('outcome', '')}" for item in remediations) or "(none yet)"
+    )
     stats_text = ", ".join(f"{key}={value}" for key, value in snapshot.stats.items()) or "(unknown)"
     progress = [f"stats: {stats_text}"]
     if iteration is not None:
@@ -557,27 +558,29 @@ def scope_prompt(
     diffstat: str,
     diff: str,
 ) -> str:
-    return "\n\n".join([
-        "You are deciding whether a bug fix is safe to merge into a paused task. You are "
-        "read-only: you cannot edit code; you only label the fix so Alloy can decide "
-        "whether it lands.",
-        f"## Project context\n{project_context}",
-        f"## The paused task (parent)\n{parent_brief}",
-        f"## Parent acceptance criteria\n{parent_acceptance or '(none stated)'}",
-        f"## The bug being fixed\n{bug_brief}",
-        f"## Diffstat\n{diffstat}",
-        f"## The fix\n```diff\n{clip_diff(diff)}\n```",
-        "Choose exactly one verdict:\n"
-        "- \"merge\"         -- the change is what this defect requires and nothing more; "
-        "it fits what the project brief and bead graph say the project is doing\n"
-        "- \"too-broad\"     -- an architecture-sized change for a bug fix: new subsystems, "
-        "public API or schema changes, broad refactors, dependency swaps, or work that "
-        "belongs to another open bead; judge this against the project brief and the bead "
-        "graph, not against a file count\n"
-        "- \"subverts-task\" -- it changes behaviour the parent's acceptance criteria rely "
-        "on, so the paused task would pass or fail for the wrong reason\n\n"
-        "Return verdict, reason and confidence in the required structured output.",
-    ])
+    return "\n\n".join(
+        [
+            "You are deciding whether a bug fix is safe to merge into a paused task. You are "
+            "read-only: you cannot edit code; you only label the fix so Alloy can decide "
+            "whether it lands.",
+            f"## Project context\n{project_context}",
+            f"## The paused task (parent)\n{parent_brief}",
+            f"## Parent acceptance criteria\n{parent_acceptance or '(none stated)'}",
+            f"## The bug being fixed\n{bug_brief}",
+            f"## Diffstat\n{diffstat}",
+            f"## The fix\n```diff\n{clip_diff(diff)}\n```",
+            "Choose exactly one verdict:\n"
+            '- "merge"         -- the change is what this defect requires and nothing more; '
+            "it fits what the project brief and bead graph say the project is doing\n"
+            '- "too-broad"     -- an architecture-sized change for a bug fix: new subsystems, '
+            "public API or schema changes, broad refactors, dependency swaps, or work that "
+            "belongs to another open bead; judge this against the project brief and the bead "
+            "graph, not against a file count\n"
+            '- "subverts-task" -- it changes behaviour the parent\'s acceptance criteria rely '
+            "on, so the paused task would pass or fail for the wrong reason\n\n"
+            "Return verdict, reason and confidence in the required structured output.",
+        ]
+    )
 
 
 def _diffstat(diff: str) -> str:
@@ -898,9 +901,7 @@ def harvest_prompt(
     human_note: str = "",
     existing_lessons: dict[str, str] | None = None,
 ) -> str:
-    lessons = "\n".join(
-        f"- {key}: {body}" for key, body in sorted((existing_lessons or {}).items())
-    )
+    lessons = "\n".join(f"- {key}: {body}" for key, body in sorted((existing_lessons or {}).items()))
     guidance = human_note.strip()
     volatile = (
         f"{evidence}\n\n"
@@ -927,8 +928,9 @@ Return one verdict per remaining key:
 Give a one-sentence reason for each. Do not invent keys."""
 
 TREE_SUMMARY_LIMIT = 200
-_TREE_SKIP_DIRS = frozenset({".git", "__pycache__", "node_modules", ".venv", "venv",
-                             ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox"})
+_TREE_SKIP_DIRS = frozenset(
+    {".git", "__pycache__", "node_modules", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox"}
+)
 
 
 def repo_tree_summary(root: Path, *, limit: int = TREE_SUMMARY_LIMIT) -> str:
@@ -976,7 +978,7 @@ def embedded_memory_block(root: Path, instruction_files: list[str]) -> str:
             if line.strip() != MEMORY_RENDER_HEADER:
                 continue
             section = [line]
-            for rest in lines[index + 1:]:
+            for rest in lines[index + 1 :]:
                 if rest.startswith("## "):
                     break
                 section.append(rest)
@@ -996,8 +998,10 @@ def memory_review_prompt(
     for key in sorted(entries):
         entry = entries[key]
         if entry.owner == "alloy":
-            provenance = (f"run={entry.run_id or '-'} bead={entry.bead_id or '-'} "
-                          f"at={entry.date.isoformat() if entry.date else '-'}")
+            provenance = (
+                f"run={entry.run_id or '-'} bead={entry.bead_id or '-'} "
+                f"at={entry.date.isoformat() if entry.date else '-'}"
+            )
         else:
             provenance = "human-written"
         flag = " [contradiction flagged]" if CONTRADICTION_KEY_PREFIX + key in entries else ""
@@ -1020,19 +1024,23 @@ async def review_memory(ctx: RunContext, memory: ProjectMemory, *, today: date) 
     hygiene = memory_hygiene(memory, spec.ttl_days, today)
     planned = ReviewPlan(items=hygiene)
     prompt = memory_review_prompt(
-        memory, planned,
+        memory,
+        planned,
         embedded_block=embedded_memory_block(ctx.worktree.path, spec.instruction_files),
         tree_summary=repo_tree_summary(ctx.worktree.path),
     )
     default = ReviewVerdicts(verdicts=[])
     answer = await classify(
-        ctx, "memory_reviewer", ctx.recipe.role("memory_reviewer"), prompt,
-        model_cls=ReviewVerdicts, default=default,
+        ctx,
+        "memory_reviewer",
+        ctx.recipe.role("memory_reviewer"),
+        prompt,
+        model_cls=ReviewVerdicts,
+        default=default,
     )
     if answer is default:
         log.warning("memory_reviewer: %s; plan is hygiene only", default.reason)
-        return merge_review_plan(hygiene, None, set(memory.entries),
-                                 reviewer_reason=default.reason)
+        return merge_review_plan(hygiene, None, set(memory.entries), reviewer_reason=default.reason)
     return merge_review_plan(hygiene, answer, set(memory.entries))
 
 
@@ -1040,11 +1048,7 @@ def existing_lessons(memory: ProjectMemory | None) -> dict[str, str]:
     """The live alloy:lesson:* entries, key -> provenance-stripped body."""
     if memory is None:
         return {}
-    return {
-        key: entry.body
-        for key, entry in memory.entries.items()
-        if key.startswith(LESSON_KEY_PREFIX)
-    }
+    return {key: entry.body for key, entry in memory.entries.items() if key.startswith(LESSON_KEY_PREFIX)}
 
 
 # --------------------------------------------------------------------------
@@ -1102,9 +1106,7 @@ def _render_check_lines(results: list[CheckResult]) -> list[str]:
     ]
 
 
-def _render_results(
-    checks: list[dict[str, Any]], verifier_stop: dict[str, Any] | None = None
-) -> str:
+def _render_results(checks: list[dict[str, Any]], verifier_stop: dict[str, Any] | None = None) -> str:
     """The checks of one iteration: every headline, then the last output tail."""
     results = [CheckResult.model_validate(item) for item in checks]
     if results:
@@ -1183,9 +1185,7 @@ async def classify(
     The default's reason records the failure; its identity signals defaulting.
     """
     try:
-        result = await ctx.call(
-            role, spec, prompt, schema=model_cls.schema_for_agents(), iteration=iteration
-        )
+        result = await ctx.call(role, spec, prompt, schema=model_cls.schema_for_agents(), iteration=iteration)
     except Exception as exc:
         default.reason = f"{role} failed: {exc}"
         return default
@@ -1235,14 +1235,21 @@ async def call_in_session(
     fallback chain; the ledger's usage_json `resumed` says which happened."""
     if session_id is not None:
         result = await ctx.call(
-            role, replace(spec, fallback=None), resumed_prompt,
-            schema=schema, iteration=iteration, resume_session=session_id,
+            role,
+            replace(spec, fallback=None),
+            resumed_prompt,
+            schema=schema,
+            iteration=iteration,
+            resume_session=session_id,
         )
         if result.ok:
             return result
         log.warning(
             "%s: resuming session %s on %s failed (%s); running fresh",
-            role, session_id, spec.label, (result.error or f"exit {result.exit_code}")[:200],
+            role,
+            session_id,
+            spec.label,
+            (result.error or f"exit {result.exit_code}")[:200],
         )
     return await ctx.call(role, spec, prompt, schema=schema, iteration=iteration)
 
@@ -1277,9 +1284,7 @@ def _implementer_changed_tests(ctx: RunContext, state: TddState) -> list[str]:
     """Test files whose contents moved since prove_red: edited, deleted or
     added by the implementer, as opposed to written by the tests role."""
     before = state.get("test_fingerprints") or {}
-    current = [
-        path for path in ctx.worktrees.changed_files(ctx.worktree) if is_test_path(path)
-    ]
+    current = [path for path in ctx.worktrees.changed_files(ctx.worktree) if is_test_path(path)]
     paths = sorted(set(before) | set(current))
     after = ctx.worktrees.fingerprints(ctx.worktree, paths)
     return [path for path in paths if before.get(path) != after.get(path)]
@@ -1331,7 +1336,9 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
         iteration_checks = int(state.get("iteration_checks", 0) or 0)
         total = len(state.get("baseline") or []) + len(checks)
         update: dict[str, Any] = {
-            "stage": "verify", "pending_check": None, "verify_route": "acceptance_gate",
+            "stage": "verify",
+            "pending_check": None,
+            "verify_route": "acceptance_gate",
             "verifier_stop": None,
         }
 
@@ -1350,8 +1357,7 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
             risks = list(last_action.get("remaining_risks") or [])
             stop = VerifierAction(
                 action="stop",
-                reason=f"Alloy stopped verification after {iteration_checks} checks "
-                "this iteration",
+                reason=f"Alloy stopped verification after {iteration_checks} checks this iteration",
                 remaining_risks=[*risks, "verifier check budget exhausted"],
             )
             update["verifier_stop"] = stop.model_dump()
@@ -1383,7 +1389,9 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
         session_id = resumable_session(spec, tests_session)
         try:
             result = await call_in_session(
-                ctx, "verifier", spec,
+                ctx,
+                "verifier",
+                spec,
                 verifier_prompt(*prompt_args, **prompt_kwargs),
                 verifier_prompt(*prompt_args, **prompt_kwargs, resumed=True),
                 session_id=session_id,
@@ -1408,18 +1416,14 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
                 decision=JudgeDecision(
                     decision="human",
                     reason="verifier modified the worktree: " + ", ".join(touched),
-                    next_instructions="Revert or keep the verifier's edits, then "
-                    "resume; the implementer runs again.",
+                    next_instructions="Revert or keep the verifier's edits, then resume; the implementer runs again.",
                 ).model_dump(),
             )
             return update
-        action = failure if result is None else answer_of(
-            "verifier", result, model_cls=VerifierAction, default=failure
-        )
+        action = failure if result is None else answer_of("verifier", result, model_cls=VerifierAction, default=failure)
         requests = verifier_check_requests(action) if action.action == "run" else []
         if action is failure or (action.action == "run" and not requests):
-            why = failure.reason if action is failure else \
-                "verifier proposed a run without a command"
+            why = failure.reason if action is failure else "verifier proposed a run without a command"
             stop = VerifierAction(
                 action="stop",
                 reason=f"verifier failed: {why}",
@@ -1473,9 +1477,7 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
                         "decision": JudgeDecision(
                             decision="human",
                             reason="the verifier proposed two commands in a row that could "
-                            "not run: " + ", ".join(
-                                f"`{c.command}` ({c.headline()})" for c in unrunnable
-                            ),
+                            "not run: " + ", ".join(f"`{c.command}` ({c.headline()})" for c in unrunnable),
                             next_instructions="Check the worktree's toolchain or tell the "
                             "implementer what to verify, then resume; the implementer "
                             "runs again.",
@@ -1489,9 +1491,7 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
         checks = [*(state.get("checks") or []), *records]
         iteration_checks = int(state.get("iteration_checks", 0) or 0) + len(records)
         last = CheckResult.model_validate(records[-1]) if records else None
-        ctx.set_tests_summary(
-            f"{len(checks)} checks, last: {last.headline()}" if last else f"{len(checks)} checks"
-        )
+        ctx.set_tests_summary(f"{len(checks)} checks, last: {last.headline()}" if last else f"{len(checks)} checks")
         update: dict[str, Any] = {
             "stage": "verify",
             "checks": records,
@@ -1512,10 +1512,7 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
             return update
 
         if failed_required is not None:
-            reason = (
-                f"required check `{failed_required.command}` failed "
-                f"({failed_required.headline()})"
-            )
+            reason = f"required check `{failed_required.command}` failed ({failed_required.headline()})"
             update.update(
                 verify_route="guard",
                 decision=JudgeDecision(
@@ -1527,14 +1524,16 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
                         "without weakening or skipping it."
                     ),
                 ).model_dump(),
-                attempts=[Attempt(
-                    iteration=iteration,
-                    implementer=_implementer(state),
-                    change_summary=state.get("change_summary", ""),
-                    checks=_checks_headline(_checks_of({"checks": checks}, iteration)),
-                    decision="repair",
-                    reason=reason,
-                ).model_dump()],
+                attempts=[
+                    Attempt(
+                        iteration=iteration,
+                        implementer=_implementer(state),
+                        change_summary=state.get("change_summary", ""),
+                        checks=_checks_headline(_checks_of({"checks": checks}, iteration)),
+                        decision="repair",
+                        reason=reason,
+                    ).model_dump()
+                ],
             )
         return update
 
@@ -1558,24 +1557,28 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
         stop = VerifierAction.model_validate(stop_raw) if stop_raw else None
         changed_tests = _implementer_changed_tests(ctx, state)
         verdict = await classify(
-            ctx, "acceptance", spec,
+            ctx,
+            "acceptance",
+            spec,
             acceptance_prompt(
-                ctx.bead.acceptance_criteria, ctx.diff(), changed_tests, checks, stop_raw,
+                ctx.bead.acceptance_criteria,
+                ctx.diff(),
+                changed_tests,
+                checks,
+                stop_raw,
                 declined=int(state.get("verify_more_declined", 0) or 0),
             ),
             model_cls=AcceptanceVerdict,
             default=AcceptanceVerdict(decision="escalate", reason="acceptance role failed"),
             iteration=iteration,
         )
-        if verdict.decision == "accept" and \
-                verdict.confidence < verification.min_acceptance_confidence:
+        if verdict.decision == "accept" and verdict.confidence < verification.min_acceptance_confidence:
             verdict = AcceptanceVerdict(
                 decision="escalate",
                 reason=f"{verdict.reason}; confidence below threshold",
                 confidence=verdict.confidence,
             )
-        if verdict.decision == "verify_more" and \
-                iteration_checks >= verification.max_checks_per_iteration:
+        if verdict.decision == "verify_more" and iteration_checks >= verification.max_checks_per_iteration:
             verdict = AcceptanceVerdict(
                 decision="escalate",
                 reason=f"{verdict.reason}; verifier check budget exhausted",
@@ -1632,7 +1635,9 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
             update.update(
                 acceptance_route="guard",
                 decision=JudgeDecision(
-                    decision="retry", reason=reason, next_instructions=instructions,
+                    decision="retry",
+                    reason=reason,
+                    next_instructions=instructions,
                     confidence=verdict.confidence,
                 ).model_dump(),
                 attempts=[Attempt(**row, decision="repair", reason=reason).model_dump()],
@@ -1724,9 +1729,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
     empty dict it already tolerates.
     """
 
-    def _capture_bugs(
-        role: str, result: AgentResult, state: TddState, iteration: int
-    ) -> list[dict[str, Any]]:
+    def _capture_bugs(role: str, result: AgentResult, state: TddState, iteration: int) -> list[dict[str, Any]]:
         titles = {bug["title"] for bug in state.get("reported_bugs", [])}
         reports = []
         for bug in extract_bug_reports(result.text):
@@ -1739,8 +1742,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
                 try:
                     ctx.beads.note(
                         ctx.bead.id,
-                        f"alloy: {role} reported bug '{bug.title}' at {bug.where} "
-                        f"(blocks_task={bug.blocks_task})",
+                        f"alloy: {role} reported bug '{bug.title}' at {bug.where} (blocks_task={bug.blocks_task})",
                     )
                 except Exception:
                     log.warning("could not record bug on bead %s", ctx.bead.id, exc_info=True)
@@ -1763,21 +1765,19 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         reported_bugs = _capture_bugs("context", result, state, 0)
         packet = _context_from(result)
         packet.check_hints = _check_hints(
-            packet.check_hints, ctx.bead.check_hint, (ctx.worktree.path, ctx.worktrees.repo),
+            packet.check_hints,
+            ctx.bead.check_hint,
+            (ctx.worktree.path, ctx.worktrees.repo),
             memory_hints=parse_check_hints(state.get("memory_check_hints", "")),
         )
-        record_memory_contradictions(
-            packet.compact()["memory_contradictions"], state.get("memory_keys") or []
-        )
+        record_memory_contradictions(packet.compact()["memory_contradictions"], state.get("memory_keys") or [])
         return {
             "reported_bugs": reported_bugs,
             "context": packet.compact(),
             "stage": "context",
         }
 
-    def record_memory_contradictions(
-        contradictions: list[str], memory_keys: list[str]
-    ) -> None:
+    def record_memory_contradictions(contradictions: list[str], memory_keys: list[str]) -> None:
         """Flag each ``key: why`` the context role reported against an existing
         project memory as alloy:review:contradiction:<key> for a reviewer, and
         leave one note on the bead. Entries for keys outside the run-start
@@ -1853,7 +1853,9 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         )
         prompt_kwargs = dict(memory=state.get("memory_block", ""))
         result = await call_in_session(
-            ctx, "tests", spec,
+            ctx,
+            "tests",
+            spec,
             tests_prompt(*prompt_args, **prompt_kwargs),
             tests_prompt(*prompt_args, **prompt_kwargs, resumed=True),
             session_id=session_id,
@@ -1927,9 +1929,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         if not problems:
             # The implementer starts from here: remember what every test file
             # looked like so the gates can tell its edits from the tests role's.
-            test_paths = [
-                path for path in ctx.worktrees.changed_files(ctx.worktree) if is_test_path(path)
-            ]
+            test_paths = [path for path in ctx.worktrees.changed_files(ctx.worktree) if is_test_path(path)]
             update["test_fingerprints"] = ctx.worktrees.fingerprints(ctx.worktree, test_paths)
             return update
         repairs = state.get("baseline_repairs", 0) + 1
@@ -1976,16 +1976,24 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         update: dict[str, Any] = {"stage": "tests_review", "tests_reviews": reviews}
         role_spec = ctx.recipe.role("tests_review")
         prompt = tests_review_prompt(
-            ctx.bead.task_brief(), ctx.bead.acceptance_criteria,
-            state.get("context", {}), state.get("baseline") or [], ctx.diff(),
+            ctx.bead.task_brief(),
+            ctx.bead.acceptance_criteria,
+            state.get("context", {}),
+            state.get("baseline") or [],
+            ctx.diff(),
             memory=state.get("memory_block", ""),
         )
 
         async def review_with(spec: RoleSpec) -> TestsReview | None:
             failure = TestsReview(verdict="sound")
             review = await classify(
-                ctx, "tests_review", spec, prompt,
-                model_cls=TestsReview, default=failure, iteration=0,
+                ctx,
+                "tests_review",
+                spec,
+                prompt,
+                model_cls=TestsReview,
+                default=failure,
+                iteration=0,
             )
             return None if review is failure else review
 
@@ -1994,17 +2002,16 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
             # A panel: every available member reviews independently. One member
             # failing or missing just narrows it; only when none answers does the
             # role's own fallback run.
-            answers = [r for r in await asyncio.gather(*(review_with(m) for m in members))
-                       if r is not None]
+            answers = [r for r in await asyncio.gather(*(review_with(m) for m in members)) if r is not None]
             if not answers and role_spec.fallback is not None:
                 spec = _first_available(role_spec.fallback)
                 answers = [r for r in [await review_with(spec) if spec else None] if r]
-            issues = list(dict.fromkeys(
-                i for r in answers if r.verdict != "sound" for i in r.issues
-            ))
+            issues = list(dict.fromkeys(i for r in answers if r.verdict != "sound" for i in r.issues))
         else:
-            spec = _first_available(role_spec) if not role_spec.panel else (
-                _first_available(role_spec.fallback) if role_spec.fallback else None
+            spec = (
+                _first_available(role_spec)
+                if not role_spec.panel
+                else (_first_available(role_spec.fallback) if role_spec.fallback else None)
             )
             if spec is None:
                 return update
@@ -2096,9 +2103,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         return {
             "triage_route": "human_gate",
             "resume_to": "implement",
-            "decision": JudgeDecision(
-                decision="human", reason=reason, next_instructions=question
-            ).model_dump(),
+            "decision": JudgeDecision(decision="human", reason=reason, next_instructions=question).model_dump(),
         }
 
     def _file_bug(report: BugReport, verdict: BugTriage) -> str:
@@ -2106,9 +2111,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
             return "(unfiled)"
         severity = verdict.severity
         labels = [LABEL_BUG] + ([LABEL_HUMAN] if severity == "needs-human" else [])
-        metadata = {
-            key: ctx.bead.metadata[key] for key in (META_RECIPE,) if ctx.bead.metadata.get(key)
-        }
+        metadata = {key: ctx.bead.metadata[key] for key in (META_RECIPE,) if ctx.bead.metadata.get(key)}
         metadata[META_DISCOVERED_IN_RUN] = ctx.run_id
         bug_id = ctx.beads.create_bug(
             title=report.title,
@@ -2135,35 +2138,50 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         notes = [state["instructions"]] if state.get("instructions") else []
         project_context = getattr(ctx, "project_context", None)
         update: dict[str, Any] = {
-            "stage": "triage", "triaged_titles": triaged, "filed_bugs": filed,
+            "stage": "triage",
+            "triaged_titles": triaged,
+            "filed_bugs": filed,
         }
         for raw in untriaged(state):
             report = BugReport.model_validate(raw)
             where = f"{report.where or '?'}: {report.evidence}"
             spec = _first_available(configured)
             if spec is None:
-                return {**update, **_park(
-                    f"no triage runner is available ({configured.label}) for bug report "
-                    f"'{report.title}' at {where}; nothing was filed.",
-                    "Install or configure the triage runner, then resume; the report "
-                    "is triaged before the implementer runs again.",
-                )}
+                return {
+                    **update,
+                    **_park(
+                        f"no triage runner is available ({configured.label}) for bug report "
+                        f"'{report.title}' at {where}; nothing was filed.",
+                        "Install or configure the triage runner, then resume; the report "
+                        "is triaged before the implementer runs again.",
+                    ),
+                }
             failure = TriageFailure()
             verdict = await classify(
-                ctx, "triage", spec,
+                ctx,
+                "triage",
+                spec,
                 triage_prompt(
-                    ctx.bead.task_brief(), ctx.bead.acceptance_criteria,
-                    _checks_of(state, iteration), raw, filed, remediations,
+                    ctx.bead.task_brief(),
+                    ctx.bead.acceptance_criteria,
+                    _checks_of(state, iteration),
+                    raw,
+                    filed,
+                    remediations,
                     project_context(state) if callable(project_context) else None,
                 ),
-                model_cls=BugTriage, default=failure, iteration=iteration,
+                model_cls=BugTriage,
+                default=failure,
+                iteration=iteration,
             )
             if verdict is failure:
-                return {**update, **_park(
-                    f"{failure.reason} while triaging bug report '{report.title}' at {where}; "
-                    "nothing was filed.",
-                    "Decide what to do with the report, then resume.",
-                )}
+                return {
+                    **update,
+                    **_park(
+                        f"{failure.reason} while triaging bug report '{report.title}' at {where}; nothing was filed.",
+                        "Decide what to do with the report, then resume.",
+                    ),
+                }
             triaged.append(report.title)
             severity = verdict.severity
             if severity == "not-a-bug":
@@ -2174,19 +2192,23 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
                 continue
             if severity == "duplicate":
                 notes.append(
-                    f"Bug '{report.title}' duplicates a report already filed in this run; "
-                    "proceed with the task."
+                    f"Bug '{report.title}' duplicates a report already filed in this run; proceed with the task."
                 )
                 continue
             try:
                 bug_id = _file_bug(report, verdict)
             except Exception as exc:
-                return {**update, **_park(
-                    f"could not file bug '{report.title}' ({severity}) at {where}: {exc}",
-                    "File or dismiss the bug by hand, then resume.",
-                )}
+                return {
+                    **update,
+                    **_park(
+                        f"could not file bug '{report.title}' ({severity}) at {where}: {exc}",
+                        "File or dismiss the bug by hand, then resume.",
+                    ),
+                }
             entry = {
-                "bead_id": bug_id, "title": report.title, "where": report.where,
+                "bead_id": bug_id,
+                "title": report.title,
+                "where": report.where,
                 "severity": severity,
             }
             filed.append(entry)
@@ -2200,43 +2222,52 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
                 if ctx.is_child:
                     # Depth one: a child does not spawn its own child; the
                     # parent parks through this run's outcome.
-                    return {**update, "blocking_bug": {**entry, "reason": verdict.reason}, **_park(
-                        f"blocking bug '{report.title}' ({bug_id}) found inside remediation "
-                        f"child {ctx.run_id}: {verdict.reason}. Remediation is one level "
-                        "deep, so the bug is filed unclaimed and this run stops.",
-                        f"Fix {bug_id} (or merge its fix into this branch), then resume; "
-                        "the implementer continues from there.",
-                    )}
+                    return {
+                        **update,
+                        "blocking_bug": {**entry, "reason": verdict.reason},
+                        **_park(
+                            f"blocking bug '{report.title}' ({bug_id}) found inside remediation "
+                            f"child {ctx.run_id}: {verdict.reason}. Remediation is one level "
+                            "deep, so the bug is filed unclaimed and this run stops.",
+                            f"Fix {bug_id} (or merge its fix into this branch), then resume; "
+                            "the implementer continues from there.",
+                        ),
+                    }
                 estimate = remediation_call_estimate(state)
                 allowed_calls = ctx.agent_call_limit(state) * ctx.budget(state)
                 remaining = allowed_calls - ctx.store.call_count(ctx.run_id)
                 if remaining < estimate:
-                    return {**update, "blocking_bug": {**entry, "reason": verdict.reason},
-                            **_park(
-                        f"agent call headroom too low to start remediation of blocking "
-                        f"bug '{report.title}' ({bug_id}): {remaining}/{allowed_calls} "
-                        f"calls remain, estimated {estimate:g} needed. Nothing was spent "
-                        "on remediation.",
-                        f"Fix {bug_id} (or merge its fix into this branch), then resume; "
-                        "resuming grants a fresh budget window and the implementer "
-                        "continues from there.",
-                    )}
+                    return {
+                        **update,
+                        "blocking_bug": {**entry, "reason": verdict.reason},
+                        **_park(
+                            f"agent call headroom too low to start remediation of blocking "
+                            f"bug '{report.title}' ({bug_id}): {remaining}/{allowed_calls} "
+                            f"calls remain, estimated {estimate:g} needed. Nothing was spent "
+                            "on remediation.",
+                            f"Fix {bug_id} (or merge its fix into this branch), then resume; "
+                            "resuming grants a fresh budget window and the implementer "
+                            "continues from there.",
+                        ),
+                    }
                 return {
                     **update,
                     "triage_route": "remediate",
                     "blocking_bug": {**entry, "reason": verdict.reason},
                     "instructions": "\n".join(notes),
                 }
-            return {**update, **_park(
-                f"bug '{report.title}' ({bug_id}) needs a human: {verdict.reason}. "
-                f"Bead {ctx.bead.id} is now blocked by {bug_id}.",
-                f"Resolve {bug_id} (see `bd human list`), then resume; the implementer "
-                "runs again with your instructions.",
-            )}
+            return {
+                **update,
+                **_park(
+                    f"bug '{report.title}' ({bug_id}) needs a human: {verdict.reason}. "
+                    f"Bead {ctx.bead.id} is now blocked by {bug_id}.",
+                    f"Resolve {bug_id} (see `bd human list`), then resume; the implementer "
+                    "runs again with your instructions.",
+                ),
+            }
         return {
             **update,
-            "triage_route": "implement" if state.get("implementer_stopped")
-            else "verifier_step",
+            "triage_route": "implement" if state.get("implementer_stopped") else "verifier_step",
             "instructions": "\n".join(notes),
         }
 
@@ -2262,11 +2293,17 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         except Exception as exc:
             outcome, reason, run_id = Outcome.FAILED.value, str(exc), None
         entry = {
-            "bead_id": bug_id, "run_id": run_id, "outcome": outcome, "reason": reason,
-            "started_at": started_at, "ended_at": utcnow().isoformat(),
+            "bead_id": bug_id,
+            "run_id": run_id,
+            "outcome": outcome,
+            "reason": reason,
+            "started_at": started_at,
+            "ended_at": utcnow().isoformat(),
         }
         update: dict[str, Any] = {
-            "stage": "remediate", "remediations": [entry], "blocking_bug": None,
+            "stage": "remediate",
+            "remediations": [entry],
+            "blocking_bug": None,
         }
         if outcome == Outcome.DONE.value:
             notes = [state["instructions"]] if state.get("instructions") else []
@@ -2278,8 +2315,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         if ctx.beads is not None and ctx.recipe.memory.enabled:
             try:
                 update["memory_regressions"] = {
-                    key: body for key, body in ctx.beads.memories().items()
-                    if key.startswith(REGRESSION_KEY_PREFIX)
+                    key: body for key, body in ctx.beads.memories().items() if key.startswith(REGRESSION_KEY_PREFIX)
                 }
             except Exception:
                 log.warning("could not refresh regression memories", exc_info=True)
@@ -2314,9 +2350,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         )
         breach = ctx.check_limits(state)
         # Green means: every required check of this iteration passed.
-        tests_green = not any(
-            _is_red(check) for check in _checks_of(state, state.get("iteration", 0))
-        )
+        tests_green = not any(_is_red(check) for check in _checks_of(state, state.get("iteration", 0)))
 
         decision = proposed
         if proposed.decision == "done" and not tests_green:
@@ -2330,8 +2364,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
             decision = JudgeDecision(
                 decision="retry",
                 reason="done proposed while the diff is empty; overridden by Alloy",
-                next_instructions=proposed.next_instructions
-                or "The worktree has no changes; implement the task.",
+                next_instructions=proposed.next_instructions or "The worktree has no changes; implement the task.",
                 confidence=proposed.confidence,
             )
 
@@ -2340,15 +2373,17 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         if not any(row.get("iteration") == iteration for row in state.get("attempts") or []):
             # The iteration ends here without a judge or repair row (e.g. the
             # acceptance gate accepted): record it once, with guard's verdict.
-            recorded["attempts"] = [Attempt(
-                iteration=iteration,
-                implementer=state.get("implementer") or ctx.role_spec("implement", state).runner,
-                change_summary=state.get("change_summary", ""),
-                checks=_checks_headline(_checks_of(state, iteration)),
-                decision=decision.decision,
-                reason=decision.reason,
-                changed_tests=_implementer_changed_tests(ctx, state),
-            ).model_dump()]
+            recorded["attempts"] = [
+                Attempt(
+                    iteration=iteration,
+                    implementer=state.get("implementer") or ctx.role_spec("implement", state).runner,
+                    change_summary=state.get("change_summary", ""),
+                    checks=_checks_headline(_checks_of(state, iteration)),
+                    decision=decision.decision,
+                    reason=decision.reason,
+                    changed_tests=_implementer_changed_tests(ctx, state),
+                ).model_dump()
+            ]
 
         if decision.decision in ("done", "abort", "human"):
             return {"stage": "guard", "decision": decision.model_dump(), **recorded}
@@ -2360,15 +2395,15 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
                 "limit_hit": breach,
                 "decision": JudgeDecision(
                     decision="human",
-                    reason=f"Alloy stopped the loop: {breach}. "
-                    f"Last judge reason: {decision.reason}",
+                    reason=f"Alloy stopped the loop: {breach}. Last judge reason: {decision.reason}",
                     next_instructions=decision.next_instructions,
                     confidence=decision.confidence,
                 ).model_dump(),
             }
 
-        if decision.decision == "consilium" and \
-                state.get("consiliums", 0) >= ctx.recipe.limits.max_consiliums * ctx.budget(state):
+        if decision.decision == "consilium" and state.get(
+            "consiliums", 0
+        ) >= ctx.recipe.limits.max_consiliums * ctx.budget(state):
             decision = JudgeDecision(
                 decision="retry",
                 reason="consilium budget exhausted; downgraded to retry",
@@ -2378,7 +2413,9 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
 
         if decision.decision == "consilium":
             return {
-                "stage": "guard", "decision": decision.model_dump(), "retries_on_tier": 0,
+                "stage": "guard",
+                "decision": decision.model_dump(),
+                "retries_on_tier": 0,
                 **recorded,
             }
 
@@ -2390,8 +2427,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
             "decision": decision.model_dump(),
             "retries_on_tier": retries,
         }
-        if ctx.recipe.complexity.routing == "live" and \
-                retries >= ctx.recipe.complexity.escalate_after_retries:
+        if ctx.recipe.complexity.routing == "live" and retries >= ctx.recipe.complexity.escalate_after_retries:
             previous = state["complexity"]
             level = next_level(previous)
             if level != previous:
@@ -2402,9 +2438,14 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
                     complexity=level,
                     complexity_source="escalation",
                     retries_on_tier=0,
-                    escalations=[{
-                        "from": previous, "to": level, "iteration": iteration, "reason": reason,
-                    }],
+                    escalations=[
+                        {
+                            "from": previous,
+                            "to": level,
+                            "iteration": iteration,
+                            "reason": reason,
+                        }
+                    ],
                 )
         return update
 
@@ -2454,9 +2495,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         )
         critique = Critique(critic=payload["runner"], failed=not result.ok)
         if result.structured:
-            critique = Critique.model_validate(
-                {**result.structured, "critic": payload["runner"], "failed": False}
-            )
+            critique = Critique.model_validate({**result.structured, "critic": payload["runner"], "failed": False})
         elif result.ok:
             critique.root_cause = clip(result.text, 1500)
         else:
@@ -2470,8 +2509,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
             return {
                 "consiliums": state.get("consiliums", 0) + 1,
                 "critiques": None,
-                "instructions": "Consilium produced no usable opinions; "
-                "fix the most likely cause directly.",
+                "instructions": "Consilium produced no usable opinions; fix the most likely cause directly.",
                 "stage": "synthesize",
             }
         ctx.set_consiliums(state.get("consiliums", 0) + 1)
@@ -2507,9 +2545,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
                 "retry_at": decision.get("retry_at"),
             }
         )
-        instructions = payload if isinstance(payload, str) else (payload or {}).get(
-            "instructions", ""
-        )
+        instructions = payload if isinstance(payload, str) else (payload or {}).get("instructions", "")
         return {
             "instructions": instructions or "Continue; the human provided no extra guidance.",
             "human_note": instructions or "",
@@ -2528,9 +2564,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
 
     def finish(state: TddState) -> dict[str, Any]:
         ctx.set_stage("finished", iteration=state.get("iteration", 0))
-        decision = JudgeDecision.model_validate(
-            state.get("decision") or {"decision": "abort", "reason": "no decision"}
-        )
+        decision = JudgeDecision.model_validate(state.get("decision") or {"decision": "abort", "reason": "no decision"})
         outcome = Outcome.DONE if decision.decision == "done" else Outcome.FAILED
         if outcome is Outcome.DONE:
             remember_check_hints(state)
@@ -2599,8 +2633,13 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
             log.warning("harvest skipped", exc_info=True)
             return {}
         answer = await classify(
-            ctx, "harvest", spec, prompt,
-            model_cls=HarvestAnswer, default=default, iteration=state.get("iteration", 0),
+            ctx,
+            "harvest",
+            spec,
+            prompt,
+            model_cls=HarvestAnswer,
+            default=default,
+            iteration=state.get("iteration", 0),
         )
         if answer is default:
             log.info("harvest wrote nothing: %s", default.reason)
@@ -2627,13 +2666,10 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         if not key or not body:
             return
         try:
-            ctx.beads.remember(
-                key, with_provenance(body, ctx.run_id, ctx.bead.id, utcnow().date())
-            )
+            ctx.beads.remember(key, with_provenance(body, ctx.run_id, ctx.bead.id, utcnow().date()))
             ctx.beads.note(
                 ctx.bead.id,
-                f"alloy: run {ctx.run_id} harvested repository lesson {key} "
-                f"(confidence {answer.confidence:.2f})",
+                f"alloy: run {ctx.run_id} harvested repository lesson {key} (confidence {answer.confidence:.2f})",
             )
         except Exception:
             log.warning("could not remember %s", key, exc_info=True)
@@ -2670,30 +2706,30 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         "prove_red", route_after_prove_red, ["tests", "tests_review", "implement", "human_gate"]
     )
     graph.add_conditional_edges("tests_review", route_after_review, ["tests", "implement"])
+    graph.add_conditional_edges("implement", route_after_implement, ["triage", "verifier_step", "human_gate"])
     graph.add_conditional_edges(
-        "implement", route_after_implement, ["triage", "verifier_step", "human_gate"]
-    )
-    graph.add_conditional_edges(
-        "triage", route_after_triage,
+        "triage",
+        route_after_triage,
         ["remediate", "human_gate", "implement", "verifier_step"],
     )
     graph.add_conditional_edges("remediate", route_after_remediate, ["implement", "human_gate"])
     graph.add_conditional_edges(
-        "verifier_step", verify.route_after_verifier,
+        "verifier_step",
+        verify.route_after_verifier,
         ["run_check_step", "acceptance_gate", "guard", "human_gate"],
     )
     graph.add_conditional_edges(
-        "run_check_step", verify.route_after_check,
+        "run_check_step",
+        verify.route_after_check,
         ["verifier_step", "guard", "human_gate"],
     )
     graph.add_conditional_edges(
-        "acceptance_gate", verify.route_after_acceptance,
+        "acceptance_gate",
+        verify.route_after_acceptance,
         ["guard", "verifier_step", "judge"],
     )
     graph.add_edge("judge", "guard")
-    graph.add_conditional_edges(
-        "guard", route, ["implement", "critic", "human_gate", "finish"]
-    )
+    graph.add_conditional_edges("guard", route, ["implement", "critic", "human_gate", "finish"])
     graph.add_edge("critic", "synthesize")
     graph.add_edge("synthesize", "implement")
     graph.add_conditional_edges("human_gate", route_after_human, ["implement", "tests"])
@@ -2716,9 +2752,10 @@ def initial_state(ctx: RunContext) -> TddState:
         memory_keys=sorted(memory.entries) if memory is not None else [],
         memory_lessons=existing_lessons(memory),
         memory_regressions={
-            key: entry.body for key, entry in memory.entries.items()
-            if key.startswith(REGRESSION_KEY_PREFIX)
-        } if memory is not None else {},
+            key: entry.body for key, entry in memory.entries.items() if key.startswith(REGRESSION_KEY_PREFIX)
+        }
+        if memory is not None
+        else {},
         iteration=0,
         consiliums=0,
         retries_on_tier=0,
@@ -2772,7 +2809,8 @@ def flag_stale_embed_block(ctx: RunContext, memory: ProjectMemory | None) -> Non
     spec = ctx.recipe.memory
     reviewed = last_review_date(memory)
     stale = [
-        name for name in spec.instruction_files
+        name
+        for name in spec.instruction_files
         if (path := ctx.worktree.path / name).is_file()
         and is_block_stale(path.read_text(encoding="utf-8"), memory, reviewed, spec)
     ]
@@ -2786,7 +2824,8 @@ def flag_stale_embed_block(ctx: RunContext, memory: ProjectMemory | None) -> Non
     ctx.beads.note(
         ctx.bead.id,
         f"alloy: run {ctx.run_id} found a stale managed memory block in "
-        + ", ".join(stale) + f"; set {EMBED_STALE_KEY}=true for review",
+        + ", ".join(stale)
+        + f"; set {EMBED_STALE_KEY}=true for review",
     )
 
 
@@ -2824,8 +2863,9 @@ def _context_from(result) -> ContextPacket:
             return ContextPacket.model_validate(result.structured)
         except Exception:
             pass
-    return ContextPacket(summary=clip(result.text, 3000) if result.ok else
-                         f"(context gathering failed: {result.error})")
+    return ContextPacket(
+        summary=clip(result.text, 3000) if result.ok else f"(context gathering failed: {result.error})"
+    )
 
 
 def _tests_output_from(result) -> TestsOutput:

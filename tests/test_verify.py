@@ -93,17 +93,14 @@ async def test_passing_suite_is_reported_as_ok(project, tmp_path):
 
 
 async def test_a_hanging_suite_times_out_rather_than_blocking_the_run(project):
-    report = await run_suite(f"{sys.executable} -c 'import time; time.sleep(30)'",
-                             project, timeout_s=1.0)
+    report = await run_suite(f"{sys.executable} -c 'import time; time.sleep(30)'", project, timeout_s=1.0)
     assert report.timed_out
     assert not report.ok
     assert "timed out" in report.headline()
 
 
 async def test_output_kept_in_state_is_bounded(project, tmp_path):
-    (project / "tests" / "test_x.py").write_text(
-        "def test_x():\n    print('y' * 100000)\n    assert False\n"
-    )
+    (project / "tests" / "test_x.py").write_text("def test_x():\n    print('y' * 100000)\n    assert False\n")
     report = await run_suite(PYTEST, project, log_dir=tmp_path / "logs")
 
     assert len(report.output_tail) < 5000
@@ -144,7 +141,8 @@ def test_a_bare_python_is_repointed_at_an_interpreter_that_exists(monkeypatch):
 
     real_which = shutil.which
     monkeypatch.setattr(
-        shutil, "which",
+        shutil,
+        "which",
         lambda name, *a, **k: None if name == "python" else real_which(name, *a, **k),
     )
 

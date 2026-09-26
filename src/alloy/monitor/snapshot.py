@@ -171,14 +171,12 @@ def build_snapshot(engine: Engine) -> dict[str, Any]:
     if session_data and session_data.get("started_at"):
         finished_records = [
             record
-            for record in engine.store.finished_runs_since(
-                session_data["started_at"], engine.repo
-            )
+            for record in engine.store.finished_runs_since(session_data["started_at"], engine.repo)
             if record["run_id"] not in active_ids
         ]
-    runs = [
-        _run_entry(engine, record, limits, index) for record in active_records
-    ] + [_run_entry(engine, record, limits, index) for record in finished_records]
+    runs = [_run_entry(engine, record, limits, index) for record in active_records] + [
+        _run_entry(engine, record, limits, index) for record in finished_records
+    ]
     auxiliary_calls = [
         _call_entry(None, call, datetime.now(timezone.utc))
         for call in engine.store.active_calls()
@@ -316,9 +314,7 @@ def _epics(
         return []
 
 
-def _run_entry(
-    engine: Engine, record: dict[str, Any], limits: dict[str, Any], index: _BeadIndex
-) -> dict[str, Any]:
+def _run_entry(engine: Engine, record: dict[str, Any], limits: dict[str, Any], index: _BeadIndex) -> dict[str, Any]:
     run_id = record["run_id"]
     checkpoint = engine.graph_snapshot_for_run(run_id)
     state: dict[str, Any] = (checkpoint or {}).get("values") or {}
@@ -355,9 +351,7 @@ def _run_entry(
         "tests_summary": record["tests_summary"],
         "checks": checks_summary(state),
         "elapsed_minutes": _elapsed_minutes(record, now),
-        "current_calls": [
-            _call_entry(config, call, now) for call in engine.store.active_calls(run_id)
-        ],
+        "current_calls": [_call_entry(config, call, now) for call in engine.store.active_calls(run_id)],
         "tokens": engine.store.token_totals(run_id),
         "tokens_by_role": engine.store.token_totals_by_role(run_id),
         "judge": _judge(engine, run_id, state),
@@ -369,9 +363,7 @@ def _run_entry(
     }
 
 
-def _models_used(
-    engine: Engine, run_id: str, limits: dict[str, Any]
-) -> list[dict[str, Any]]:
+def _models_used(engine: Engine, run_id: str, limits: dict[str, Any]) -> list[dict[str, Any]]:
     """Store.models_used entries, each joined to its harness's cached windows.
 
     Account-wide windows (model=None) always attach; a per-model window

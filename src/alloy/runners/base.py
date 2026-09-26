@@ -270,9 +270,7 @@ class CLIRunner:
         try:
             if on_spawn is not None:
                 on_spawn(process.pid)
-            raw_out, raw_err = await asyncio.wait_for(
-                process.communicate(input=stdin_prompt), timeout=limit_s
-            )
+            raw_out, raw_err = await asyncio.wait_for(process.communicate(input=stdin_prompt), timeout=limit_s)
         except asyncio.TimeoutError:
             timed_out = True
             raw_out, raw_err = b"", b""
@@ -288,21 +286,26 @@ class CLIRunner:
         exit_code = -1 if timed_out else (process.returncode or 0)
         duration = time.monotonic() - clock
 
-        log_path = self._write_log(
-            digest, argv, effective_prompt, stdout, stderr, exit_code, started=started
-        )
+        log_path = self._write_log(digest, argv, effective_prompt, stdout, stderr, exit_code, started=started)
 
         if timed_out:
             return AgentResult(
-                runner=self.name, model=model, ok=False, exit_code=exit_code,
-                text="", structured=None, started_at=started, ended_at=utcnow(),
-                duration_s=duration, log_path=log_path, prompt_hash=digest, prefix_hash=prefix,
+                runner=self.name,
+                model=model,
+                ok=False,
+                exit_code=exit_code,
+                text="",
+                structured=None,
+                started_at=started,
+                ended_at=utcnow(),
+                duration_s=duration,
+                log_path=log_path,
+                prompt_hash=digest,
+                prefix_hash=prefix,
                 error=f"timed out after {limit_s:.0f}s",
             )
 
-        text, structured, usage, session_id, failed = self._normalise_parsed(
-            self.parse(stdout, stderr, exit_code)
-        )
+        text, structured, usage, session_id, failed = self._normalise_parsed(self.parse(stdout, stderr, exit_code))
         ok = exit_code == 0 and not failed
         if ok and structured_schema and structured is None:
             structured = extract_json_object(text)
@@ -318,7 +321,8 @@ class CLIRunner:
             duration_s=duration,
             usage=usage,
             log_path=log_path,
-            prompt_hash=digest, prefix_hash=prefix,
+            prompt_hash=digest,
+            prefix_hash=prefix,
             error=None if ok else _failure_message(text, stderr, exit_code),
             session_id=session_id,
         )

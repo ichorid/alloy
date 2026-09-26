@@ -58,9 +58,7 @@ class RunnerRegistry:
         factory = BUILTIN.get(factory_name)
         if factory is None:
             if "binary" not in config:
-                raise RunnerUnavailable(
-                    f"unknown runner '{name}'; define it under `runners:` with a binary"
-                )
+                raise RunnerUnavailable(f"unknown runner '{name}'; define it under `runners:` with a binary")
             factory = GenericCLIRunner
             config.setdefault("name", name)
         if self.log_dir is not None:

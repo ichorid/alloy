@@ -25,14 +25,27 @@ from typer.core import TyperCommand
 from alloy import beads as bd
 from alloy import recipes
 from alloy.config import (
-    ConfigError, MemorySpec, RecipeConfig, RoleSpec, discover_recipes, load_recipe,
+    ConfigError,
+    MemorySpec,
+    RecipeConfig,
+    RoleSpec,
+    discover_recipes,
+    load_recipe,
 )
 from alloy.engine import Engine, EngineError
 from alloy.memory_schedule import (
-    MEMORY_REVIEW_RECIPE, apply_review, embed_instruction_files, review_plan, review_run_id,
+    MEMORY_REVIEW_RECIPE,
+    apply_review,
+    embed_instruction_files,
+    review_plan,
+    review_run_id,
 )
 from alloy.models import (
-    ProjectMemory, ReviewPlan, memory_inventory, utcnow, with_provenance,
+    ProjectMemory,
+    ReviewPlan,
+    memory_inventory,
+    utcnow,
+    with_provenance,
 )
 from alloy.limits import probe_all
 from alloy.monitor import build_snapshot
@@ -182,13 +195,16 @@ def run(
         _fail(str(exc))
         return
     except asyncio.CancelledError:
-        err.print(f"[yellow]interrupted[/yellow] {bead_id}; resume with "
-                  f"[bold]alloy run {bead_id}[/bold]")
+        err.print(f"[yellow]interrupted[/yellow] {bead_id}; resume with [bold]alloy run {bead_id}[/bold]")
         raise typer.Exit(130)
 
     payload = {
-        "bead": result.bead_id, "run_id": result.run_id, "outcome": result.outcome,
-        "reason": result.reason, "worktree": result.worktree, "interrupt": result.interrupt,
+        "bead": result.bead_id,
+        "run_id": result.run_id,
+        "outcome": result.outcome,
+        "reason": result.reason,
+        "worktree": result.worktree,
+        "interrupt": result.interrupt,
     }
     if json:
         _emit(payload, True)
@@ -267,9 +283,11 @@ def resume(
     bead_id: str = typer.Argument(...),
     message: str = typer.Option("", "--message", "-m", help="Guidance for the human gate"),
     remember: Optional[str] = typer.Option(
-        None, "--remember", metavar="[KEY]",
+        None,
+        "--remember",
+        metavar="[KEY]",
         help="Store the -m message in project memory before resuming; "
-             "optional KEY overrides the default alloy:human:<bead-id>",
+        "optional KEY overrides the default alloy:human:<bead-id>",
     ),
     repo: Optional[Path] = RepoOption,
     root: Optional[Path] = RootOption,
@@ -288,8 +306,7 @@ def resume(
     except asyncio.CancelledError:
         err.print(f"[yellow]interrupted[/yellow] {bead_id}; it stays resumable")
         raise typer.Exit(130)
-    payload = {"bead": result.bead_id, "run_id": result.run_id,
-               "outcome": result.outcome, "reason": result.reason}
+    payload = {"bead": result.bead_id, "run_id": result.run_id, "outcome": result.outcome, "reason": result.reason}
     if json:
         _emit(payload, True)
         return
@@ -337,13 +354,15 @@ def start(
     root: Optional[Path] = RootOption,
     poll: float = typer.Option(15.0, "--poll", help="Seconds between Beads polls"),
     stall_minutes: float = typer.Option(
-        DEFAULT_STALL_MINUTES, "--stall-minutes",
+        DEFAULT_STALL_MINUTES,
+        "--stall-minutes",
         help="Announce a running run with no activity for this long (0 disables)",
     ),
     recipe: Optional[str] = typer.Option(
-        None, "--recipe",
+        None,
+        "--recipe",
         help="Force this recipe as the session default for unassigned beads "
-             "(overrides alloy:default:recipe memory; errors if unknown)",
+        "(overrides alloy:default:recipe memory; errors if unknown)",
     ),
     foreground: bool = typer.Option(False, "--foreground", help="Do not detach"),
 ) -> None:
@@ -359,13 +378,18 @@ def start(
         existing = read_pid(engine.paths.scheduler_pid)
         if existing:
             _fail(f"scheduler already running (pid {existing})")
-        pid = spawn_detached(engine.repo, engine.paths.root, poll, stall_minutes=stall_minutes,
-                             recipe=recipe, log_file=engine.paths.scheduler_log)
+        pid = spawn_detached(
+            engine.repo,
+            engine.paths.root,
+            poll,
+            stall_minutes=stall_minutes,
+            recipe=recipe,
+            log_file=engine.paths.scheduler_log,
+        )
         console.print(f"scheduler started (pid {pid}); log: {engine.paths.scheduler_log}")
         return
     _setup_logging()
-    scheduler = Scheduler(engine=engine, poll_seconds=poll, recipe_filter=recipe,
-                          stall_minutes=stall_minutes)
+    scheduler = Scheduler(engine=engine, poll_seconds=poll, recipe_filter=recipe, stall_minutes=stall_minutes)
     try:
         asyncio.run(scheduler.serve())
     except SchedulerBusy as exc:
@@ -379,11 +403,12 @@ def events(
     root: Optional[Path] = RootOption,
     follow: bool = typer.Option(False, "--follow", "-f", help="Stream new events as they happen"),
     since: Optional[str] = typer.Option(
-        None, "--since", help="History from this far back (30m, 2h, 1d) or an ISO time"),
+        None, "--since", help="History from this far back (30m, 2h, 1d) or an ISO time"
+    ),
     only: Optional[str] = typer.Option(
-        None, "--only", help="Comma-separated kinds: needs-human,failed,stalled,done,resumed,cancelled"),
-    attention: bool = typer.Option(
-        False, "--attention", help="Shortcut for --only needs-human,failed,stalled"),
+        None, "--only", help="Comma-separated kinds: needs-human,failed,stalled,done,resumed,cancelled"
+    ),
+    attention: bool = typer.Option(False, "--attention", help="Shortcut for --only needs-human,failed,stalled"),
     json: bool = typer.Option(False, "--json", help="One JSON object per line"),
 ) -> None:
     """The attention feed: what needs a human, failed, stalled or finished.
@@ -421,8 +446,7 @@ def events(
 @app.command()
 def stop(
     root: Optional[Path] = RootOption,
-    now: bool = typer.Option(False, "--now", help="Also cancel the task being run; "
-                                                   "it stays resumable"),
+    now: bool = typer.Option(False, "--now", help="Also cancel the task being run; it stays resumable"),
     json: bool = typer.Option(False, "--json"),
 ) -> None:
     """Signal the scheduler to stop after the current task (or right away)."""
@@ -431,8 +455,7 @@ def stop(
     if json:
         _emit({"stopped": pid is not None, "pid": pid, "now": now}, True)
         return
-    console.print(f"sent stop{' --now' if now else ''} to pid {pid}" if pid
-                  else "scheduler is not running")
+    console.print(f"sent stop{' --now' if now else ''} to pid {pid}" if pid else "scheduler is not running")
 
 
 @app.command()
@@ -458,8 +481,7 @@ def status(
         beads_list = engine.beads.alloy_beads()
 
     ready_ids = {b.id for b in engine.beads.ready(limit=max(limit, 1000))}
-    queue_order = sorted((b for b in beads_list if b.id in ready_ids),
-                         key=lambda b: (b.priority, b.id))
+    queue_order = sorted((b for b in beads_list if b.id in ready_ids), key=lambda b: (b.priority, b.id))
     queue_position = {b.id: index + 1 for index, b in enumerate(queue_order)}
 
     rows = [_bead_row(engine, b, ready_ids) for b in beads_list]
@@ -489,20 +511,41 @@ def status(
     table = Table(show_header=True, header_style="bold", expand=True)
     # One line per bead, whatever the terminal width: the title gives way
     # first, identifiers and numbers keep their minimum widths.
-    for column, min_width in (("parent", 10), ("bead", 12), ("title", 12), ("pri", 3), ("queue", 5),
-                              ("status", 9), ("stage", 9), ("agent", 14), ("iter", 4),
-                              ("tests", 18), ("elapsed", 7)):
-        table.add_column(column, no_wrap=True, overflow="ellipsis", min_width=min_width,
-                         ratio=4 if column == "title" else (2 if column == "agent" else None))
+    for column, min_width in (
+        ("parent", 10),
+        ("bead", 12),
+        ("title", 12),
+        ("pri", 3),
+        ("queue", 5),
+        ("status", 9),
+        ("stage", 9),
+        ("agent", 14),
+        ("iter", 4),
+        ("tests", 18),
+        ("elapsed", 7),
+    ):
+        table.add_column(
+            column,
+            no_wrap=True,
+            overflow="ellipsis",
+            min_width=min_width,
+            ratio=4 if column == "title" else (2 if column == "agent" else None),
+        )
     for row in rows:
         queue = str(row["queue_position"]) if row["queue_position"] else "-"
         max_iter = row["max_iterations"] if row["max_iterations"] is not None else "-"
         table.add_row(
-            row.get("parent_bead_id") or "-", row["bead"], _truncate(row["title"], 32),
-            str(row["priority"]), queue,
-            _coloured(row["status"] or row["bead_status"]), row["stage"] or "-",
-            _agent_label(row), f"{row['iteration']}/{max_iter}",
-            row["tests"] or "-", row["elapsed"],
+            row.get("parent_bead_id") or "-",
+            row["bead"],
+            _truncate(row["title"], 32),
+            str(row["priority"]),
+            queue,
+            _coloured(row["status"] or row["bead_status"]),
+            row["stage"] or "-",
+            _agent_label(row),
+            f"{row['iteration']}/{max_iter}",
+            row["tests"] or "-",
+            row["elapsed"],
         )
     console.print(table)
 
@@ -515,10 +558,13 @@ def monitor(
     json: bool = typer.Option(False, "--json", help="Machine-readable output"),
     interval: float = typer.Option(1.0, "--interval", help="Refresh interval in seconds"),
     limits_interval: float = typer.Option(
-        60.0, "--limits-interval", help="Limits probe interval in seconds",
+        60.0,
+        "--limits-interval",
+        help="Limits probe interval in seconds",
     ),
     limits_style: str = typer.Option(
-        "remaining", "--limits-style",
+        "remaining",
+        "--limits-style",
         help="Show harness capacity as remaining or spent",
     ),
     no_limits: bool = typer.Option(False, "--no-limits", help="Skip limits probing"),
@@ -539,7 +585,10 @@ def monitor(
         mode = resolve_mode(interactive=False)
         console.print(header_line(snapshot, mode))
         rendered_limits = limits_lines(
-            snapshot, mode=mode, width=console.width, usage_style=limits_style,
+            snapshot,
+            mode=mode,
+            width=console.width,
+            usage_style=limits_style,
         )
         if rendered_limits:
             console.print(f"limits ({limits_style})")
@@ -623,19 +672,23 @@ def logs(
     )[-tail:]
     checks = check_logs(record["log_dir"])
     if json:
-        _emit({"run_id": record["run_id"], "log_dir": record["log_dir"], "calls": calls,
-               "checks": checks}, True)
+        _emit({"run_id": record["run_id"], "log_dir": record["log_dir"], "calls": calls, "checks": checks}, True)
         return
     console.print(f"[bold]run[/bold] {record['run_id']}   [bold]logs[/bold] {record['log_dir']}")
     table = Table(show_header=True, header_style="bold")
-    for column in ("#", "bead", "role", "runner", "model", "iter", "secs", "exit", "prefix",
-                   "artifact"):
+    for column in ("#", "bead", "role", "runner", "model", "iter", "secs", "exit", "prefix", "artifact"):
         table.add_column(column)
     for index, call in enumerate(calls, 1):
         table.add_row(
-            str(index), call["bead_id"], call["role"], call["runner"], call["model"] or "-",
-            str(call["iteration"]), f"{call['duration_s']:.1f}",
-            str(call["exit_code"]), (call.get("prefix_hash") or "-")[:12],
+            str(index),
+            call["bead_id"],
+            call["role"],
+            call["runner"],
+            call["model"] or "-",
+            str(call["iteration"]),
+            f"{call['duration_s']:.1f}",
+            str(call["exit_code"]),
+            (call.get("prefix_hash") or "-")[:12],
             call["log_path"] or "-",
         )
     console.print(table)
@@ -647,14 +700,16 @@ def logs(
     for index, check in enumerate(checks, 1):
         exit_code = check["exit_code"]
         table.add_row(
-            str(index), check["kind"], "-" if exit_code is None else str(exit_code),
-            check["command"], check["log_path"],
+            str(index),
+            check["kind"],
+            "-" if exit_code is None else str(exit_code),
+            check["command"],
+            check["log_path"],
         )
     console.print(table)
 
 
-memory_app = typer.Typer(help="Inspect project memory (bd memories) as Alloy sees it.",
-                         no_args_is_help=True)
+memory_app = typer.Typer(help="Inspect project memory (bd memories) as Alloy sees it.", no_args_is_help=True)
 app.add_typer(memory_app, name="memory")
 
 
@@ -689,7 +744,10 @@ def memory_list(
         table.add_column(column, overflow="fold")
     for row in rows:
         table.add_row(
-            row["key"], row["owner"], row["run_id"] or "-", row["bead_id"] or "-",
+            row["key"],
+            row["owner"],
+            row["run_id"] or "-",
+            row["bead_id"] or "-",
             row["date"] or "-",
             str(row["age_days"]) if row["age_days"] is not None else "-",
             ", ".join(row["flags"]) or "-",
@@ -697,8 +755,7 @@ def memory_list(
     console.print(table)
 
 
-def _review_plan(engine: Engine, recipe_name: str, memory: ProjectMemory,
-                 run_id: str) -> ReviewPlan:
+def _review_plan(engine: Engine, recipe_name: str, memory: ProjectMemory, run_id: str) -> ReviewPlan:
     """Run the read-only memory review (see memory_schedule.review_plan)."""
     try:
         return _run_async(review_plan(engine, recipe_name, memory, run_id, today=utcnow().date()))
@@ -716,11 +773,14 @@ def _apply_review(engine: Engine, plan: ReviewPlan, run_id: str) -> dict[str, An
 def memory_review(
     repo: Optional[Path] = RepoOption,
     root: Optional[Path] = RootOption,
-    recipe: str = typer.Option(MEMORY_REVIEW_RECIPE, "--recipe",
-                               help="Recipe whose memory settings and memory_reviewer role to use"),
-    apply: bool = typer.Option(False, "--apply",
-                               help="Execute the plan: alloy-owned verdicts are applied, "
-                                    "human-owned ones become proposals on a review bead"),
+    recipe: str = typer.Option(
+        MEMORY_REVIEW_RECIPE, "--recipe", help="Recipe whose memory settings and memory_reviewer role to use"
+    ),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Execute the plan: alloy-owned verdicts are applied, human-owned ones become proposals on a review bead",
+    ),
     json: bool = typer.Option(False, "--json", help="Machine-readable output"),
 ) -> None:
     """Plan a project-memory review: deterministic hygiene (expired alloy
@@ -772,9 +832,11 @@ def memory_review(
             f"applied: forgot {len(applied['forgotten'])}, "
             f"remembered {len(applied['remembered'])}, "
             f"proposed {len(applied['proposals'])}"
-            + (f" (review bead {applied['review_bead']}"
-               f"{', new' if applied['review_bead_created'] else ', reused'})"
-               if applied["review_bead"] else "")
+            + (
+                f" (review bead {applied['review_bead']}{', new' if applied['review_bead_created'] else ', reused'})"
+                if applied["review_bead"]
+                else ""
+            )
         )
 
 
@@ -782,8 +844,7 @@ def memory_review(
 def memory_embed(
     repo: Optional[Path] = RepoOption,
     root: Optional[Path] = RootOption,
-    recipe: str = typer.Option(MEMORY_REVIEW_RECIPE, "--recipe",
-                               help="Recipe whose memory settings to use"),
+    recipe: str = typer.Option(MEMORY_REVIEW_RECIPE, "--recipe", help="Recipe whose memory settings to use"),
 ) -> None:
     """Render the alloy:meta:embed set into the managed block of every
     existing instruction file (memory.instruction_files) and print the files
@@ -825,8 +886,7 @@ def recipes_command(
     probes: list[dict[str, Any]] = []
     probed: set[tuple[str, str | None, str | None]] = set()
     for name, path in sorted(found.items()):
-        entry: dict[str, Any] = {"name": name, "config": str(path),
-                                 "graph": name in recipes.REGISTRY}
+        entry: dict[str, Any] = {"name": name, "config": str(path), "graph": name in recipes.REGISTRY}
         try:
             config = load_recipe(name, alloy_root=paths.shared_root, project=repo_path)
         except ConfigError as exc:
@@ -838,9 +898,12 @@ def recipes_command(
         registry = RunnerRegistry(config.runners, log_dir=paths.logs / "probes" / name)
 
         def describe(spec: "RoleSpec") -> dict[str, Any]:
-            info: dict[str, Any] = {"runner": spec.runner, "model": spec.model,
-                                    "effort": spec.effort,
-                                    "available": registry.available(spec.runner)}
+            info: dict[str, Any] = {
+                "runner": spec.runner,
+                "model": spec.model,
+                "effort": spec.effort,
+                "available": registry.available(spec.runner),
+            }
             if spec.fallback is not None:
                 info["fallback"] = describe(spec.fallback)
             return info
@@ -851,9 +914,14 @@ def recipes_command(
             chain = []
             spec = head
             while spec is not None:
-                chain.append({"runner": spec.runner, "model": spec.model,
-                              "effort": spec.effort,
-                              "available": registry.available(spec.runner)})
+                chain.append(
+                    {
+                        "runner": spec.runner,
+                        "model": spec.model,
+                        "effort": spec.effort,
+                        "available": registry.available(spec.runner),
+                    }
+                )
                 spec = spec.fallback
             tiers[tier] = chain
         entry["complexity"] = {
@@ -864,8 +932,7 @@ def recipes_command(
         if probe:
             probes.extend(_run_async(_probe_tiers(registry, tiers, repo_path, probed)))
         entry["critics"] = [
-            {"runner": spec.runner, "available": registry.available(spec.runner)}
-            for spec in config.consilium.critics
+            {"runner": spec.runner, "available": registry.available(spec.runner)} for spec in config.consilium.critics
         ]
         entry["limits"] = config.limits.__dict__
         entry["landing"] = {
@@ -892,13 +959,13 @@ def recipes_command(
         for role, info in entry.get("roles", {}).items():
             console.print(f"  {role:<10} {_role_label(info)}")
         complexity = entry["complexity"]
-        console.print(f"  complexity routing={complexity['routing']} "
-                      f"escalate_after_retries={complexity['escalate_after_retries']}")
+        console.print(
+            f"  complexity routing={complexity['routing']} "
+            f"escalate_after_retries={complexity['escalate_after_retries']}"
+        )
         for tier, chain in complexity["tiers"].items():
             console.print(f"    {tier:<8} " + " [dim]->[/dim] ".join(_role_label(info) for info in chain))
-        critics = ", ".join(
-            f"{c['runner']}{'' if c['available'] else '(missing)'}" for c in entry["critics"]
-        )
+        critics = ", ".join(f"{c['runner']}{'' if c['available'] else '(missing)'}" for c in entry["critics"])
         console.print(f"  critics    {critics or '(none)'}")
         console.print(f"  limits     {entry['limits']}")
     if probe:
@@ -906,8 +973,15 @@ def recipes_command(
         for column in ("Tier", "Runner", "Model", "Effort", "Result", "Error", "Seconds"):
             table.add_column(column)
         for row in probes:
-            table.add_row(row["tier"], row["runner"], row["model"] or "-", row["effort"] or "-",
-                          "ok" if row["ok"] else "error", row["error"] or "-", f"{row['duration_s']:.1f}")
+            table.add_row(
+                row["tier"],
+                row["runner"],
+                row["model"] or "-",
+                row["effort"] or "-",
+                "ok" if row["ok"] else "error",
+                row["error"] or "-",
+                f"{row['duration_s']:.1f}",
+            )
         console.print(table)
         if any(not row["ok"] for row in probes) or any("error" in e for e in entries):
             raise typer.Exit(1)
@@ -933,7 +1007,10 @@ async def _probe_tiers(
             started = time.monotonic()
             try:
                 result = await registry.get(key[0]).run(
-                    "Reply with the single word OK.", cwd=repo, model=key[1], effort=key[2],
+                    "Reply with the single word OK.",
+                    cwd=repo,
+                    model=key[1],
+                    effort=key[2],
                     timeout=timedelta(minutes=2),
                 )
                 row.update(ok=result.ok, error=result.error, duration_s=result.duration_s)
@@ -956,9 +1033,7 @@ def _role_label(info: dict[str, Any]) -> str:
 _STAGE_ROLES = ("context", "tests", "implement", "judge")
 
 
-def _current_agent(
-    engine: Engine, config: RecipeConfig | None, record: dict[str, Any]
-) -> dict[str, Any]:
+def _current_agent(engine: Engine, config: RecipeConfig | None, record: dict[str, Any]) -> dict[str, Any]:
     """The role/runner/model actually behind this run right now.
 
     `record["stage"]` names the *current* graph node (set by `ctx.set_stage`
@@ -996,8 +1071,10 @@ def _current_agent(
             calls = engine.store.agent_calls(record["run_id"])
             last = calls[-1] if calls else None
             while (
-                spec.fallback is not None and last is not None
-                and last["role"] == stage and not last["ok"]
+                spec.fallback is not None
+                and last is not None
+                and last["role"] == stage
+                and not last["ok"]
                 and last["iteration"] == record.get("iteration", 0)
                 and ALIASES.get(spec.runner, spec.runner) == ALIASES.get(last["runner"], last["runner"])
             ):
@@ -1038,9 +1115,7 @@ def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
     paused_at = _parse(record.get("paused_at")) if record.get("paused_at") else None
     reference = ended or paused_at or datetime.now(timezone.utc)
     paused_s = float(record.get("paused_s") or 0)  # time parked or dead: not work
-    elapsed = (
-        max(0, int(((reference - started).total_seconds() - paused_s) // 60)) if started else 0
-    )
+    elapsed = max(0, int(((reference - started).total_seconds() - paused_s) // 60)) if started else 0
 
     parent_run_id = record.get("parent_run_id")
     parent_bead_id = None
@@ -1055,10 +1130,7 @@ def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
         "parent_run_id": parent_run_id,
         "parent_bead_id": parent_bead_id,
         "children": [child["run_id"] for child in engine.store.children_of(record["run_id"])],
-        "remediating": (
-            record["stage"].split(":", 1)[1]
-            if (record["stage"] or "").startswith("remediate:") else None
-        ),
+        "remediating": (record["stage"].split(":", 1)[1] if (record["stage"] or "").startswith("remediate:") else None),
         "recipe": record["recipe"],
         "status": record["status"],
         "stage": record["stage"],
@@ -1085,14 +1157,32 @@ def _status_row(engine: Engine, record: dict[str, Any]) -> dict[str, Any]:
 
 
 _EMPTY_RUN_FIELDS: dict[str, Any] = {
-    "parent_run_id": None, "parent_bead_id": None, "children": [], "remediating": None,
-    "complexity": None, "complexity_source": None, "dispatch_tier": None,
-    "run_id": None, "status": None, "stage": None, "iteration": 0,
-    "max_iterations": None, "consiliums": 0, "agent_calls": 0, "tests": None,
+    "parent_run_id": None,
+    "parent_bead_id": None,
+    "children": [],
+    "remediating": None,
+    "complexity": None,
+    "complexity_source": None,
+    "dispatch_tier": None,
+    "run_id": None,
+    "status": None,
+    "stage": None,
+    "iteration": 0,
+    "max_iterations": None,
+    "consiliums": 0,
+    "agent_calls": 0,
+    "tests": None,
     "checks": None,
-    "elapsed": "-", "elapsed_minutes": 0, "agent_role": None, "runner": None,
-    "model": None, "worktree": None, "branch": None, "log_dir": None,
-    "outcome": None, "outcome_reason": None,
+    "elapsed": "-",
+    "elapsed_minutes": 0,
+    "agent_role": None,
+    "runner": None,
+    "model": None,
+    "worktree": None,
+    "branch": None,
+    "log_dir": None,
+    "outcome": None,
+    "outcome_reason": None,
 }
 
 # Beads not currently offered by `bd ready` (running, waiting on a human, or
@@ -1163,8 +1253,11 @@ def _parse(value: str | None):
 
 def _coloured(status: str) -> str:
     colour = {
-        "running": "cyan", "done": "green",
-        "waiting-human": "yellow", "failed": "red", "cancelled": "dim",
+        "running": "cyan",
+        "done": "green",
+        "waiting-human": "yellow",
+        "failed": "red",
+        "cancelled": "dim",
     }.get(status, "white")
     return f"[{colour}]{status}[/{colour}]"
 

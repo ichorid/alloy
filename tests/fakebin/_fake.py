@@ -87,8 +87,7 @@ def apply_side_effects(entry: dict) -> None:
         # Like codex's sandbox helper: a grandchild in its own process group.
         import subprocess
 
-        child = subprocess.Popen(["sleep", "300"], start_new_session=False,
-                                 preexec_fn=os.setpgrp)
+        child = subprocess.Popen(["sleep", "300"], start_new_session=False, preexec_fn=os.setpgrp)
         Path(entry["detached_child_pidfile"]).write_text(str(child.pid), encoding="utf-8")
     for spec in entry.get("write", []):
         path = Path(spec["path"])
@@ -114,8 +113,11 @@ def main() -> int:
         entry = {**entry, "structured": DEFAULT_ESTIMATE_STRUCTURED}
 
     record = {
-        "runner": runner, "role": role, "cwd": os.getcwd(),
-        "argv": argv, "prompt": prompt,
+        "runner": runner,
+        "role": role,
+        "cwd": os.getcwd(),
+        "argv": argv,
+        "prompt": prompt,
     }
     if resume is not None:
         record["resume"] = resume
@@ -138,8 +140,12 @@ def main() -> int:
 
     if runner.startswith("claude"):
         envelope = {
-            "type": "result", "subtype": "success", "is_error": envelope_is_error,
-            "result": text, "session_id": session_id, "num_turns": 1,
+            "type": "result",
+            "subtype": "success",
+            "is_error": envelope_is_error,
+            "result": text,
+            "session_id": session_id,
+            "num_turns": 1,
             "total_cost_usd": 0.01,
             "usage": {"input_tokens": 100, "output_tokens": 20},
         }
@@ -150,27 +156,47 @@ def main() -> int:
         thread_id = str(entry.get("session_id", "fake-thread"))
         print(json.dumps({"type": "thread.started", "thread_id": thread_id}))
         if entry.get("codex_error") is not None:
-            print(json.dumps({
-                "type": "error",
-                "message": str(entry["codex_error"]),
-            }))
+            print(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "message": str(entry["codex_error"]),
+                    }
+                )
+            )
         if not entry.get("codex_error_only"):
             body = text if structured is None else json.dumps(structured)
-            print(json.dumps({
-                "type": "item.completed",
-                "item": {"id": "item_0", "type": "agent_message", "text": body},
-            }))
-        print(json.dumps({
-            "type": "turn.completed",
-            "usage": {"input_tokens": 100, "output_tokens": 20},
-        }))
+            print(
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"id": "item_0", "type": "agent_message", "text": body},
+                    }
+                )
+            )
+        print(
+            json.dumps(
+                {
+                    "type": "turn.completed",
+                    "usage": {"input_tokens": 100, "output_tokens": 20},
+                }
+            )
+        )
     elif runner.startswith("cursor"):
         body = text if structured is None else json.dumps(structured)
-        print(json.dumps({
-            "type": "result", "subtype": "success", "is_error": envelope_is_error,
-            "duration_ms": 10, "result": body, "session_id": session_id,
-            "usage": {"inputTokens": 100, "outputTokens": 20},
-        }))
+        print(
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": envelope_is_error,
+                    "duration_ms": 10,
+                    "result": body,
+                    "session_id": session_id,
+                    "usage": {"inputTokens": 100, "outputTokens": 20},
+                }
+            )
+        )
     else:  # pi and any generic templated runner
         body = text if structured is None else json.dumps(structured)
         print(json.dumps({"result": body, "usage": {"input_tokens": 100}}))

@@ -165,14 +165,17 @@ def test_cli_memory_age_days_assertion_uses_utcnow_date() -> None:
 
 def test_memory_review_last_review_assertion_uses_utcnow_date() -> None:
     text = (Path(__file__).parent / "test_memory_review.py").read_text(encoding="utf-8")
-    assert 'assert remembers[LAST_REVIEW_KEY] == utcnow().date().isoformat()' in text
+    assert "assert remembers[LAST_REVIEW_KEY] == utcnow().date().isoformat()" in text
 
 
 # -- acceptance: CLI output matches UTC today under local/UTC skew ------------
 
 
 def test_memory_list_age_days_matches_utc_today_when_local_date_differs(
-    project, alloy_home, fake_bd, memory_utc_skew,
+    project,
+    alloy_home,
+    fake_bd,
+    memory_utc_skew,
 ):
     _configure_memories(fake_bd)
 
@@ -189,7 +192,10 @@ def test_memory_list_age_days_matches_utc_today_when_local_date_differs(
 
 
 def test_memory_review_apply_stamps_last_review_with_utc_today_when_local_date_differs(
-    project, alloy_home, fake_memory_review, memory_utc_skew,
+    project,
+    alloy_home,
+    fake_memory_review,
+    memory_utc_skew,
 ):
     _configure_review_apply(fake_memory_review)
 

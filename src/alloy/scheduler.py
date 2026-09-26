@@ -24,8 +24,14 @@ from alloy import beads as bd
 from alloy.config import ConfigError, MemorySpec
 from alloy.engine import Engine, EngineError, RunResult
 from alloy.memory_schedule import (
-    MEMORY_REVIEW_RECIPE, apply_review, dirty_instruction_files, embed_instruction_files,
-    review_bead_for_note, review_due, review_plan, review_run_id,
+    MEMORY_REVIEW_RECIPE,
+    apply_review,
+    dirty_instruction_files,
+    embed_instruction_files,
+    review_bead_for_note,
+    review_due,
+    review_plan,
+    review_run_id,
 )
 from alloy.events import EVENT_STALLED
 from alloy.models import DEFAULT_RECIPE_KEY, EMBED_STALE_KEY, Outcome, ProjectMemory, utcnow
@@ -75,8 +81,7 @@ class Scheduler:
         self._write_pidfile()
         self._write_session()
         self._install_signal_handlers()
-        log.info("scheduler up (pid %d, poll %.0fs, repo %s)",
-                 os.getpid(), self.poll_seconds, self.engine.repo)
+        log.info("scheduler up (pid %d, poll %.0fs, repo %s)", os.getpid(), self.poll_seconds, self.engine.repo)
         watcher = None if self.once else asyncio.create_task(self._stall_watch())
         try:
             await self.recover()
@@ -123,13 +128,10 @@ class Scheduler:
             if run["run_id"] in self._stalled:
                 continue
             calls = store.active_calls(run["run_id"])
-            what = (f"agent call {calls[0]['role']} still running" if calls
-                    else f"stage {run.get('stage') or '?'}")
-            why = ("run process is gone" if dead
-                   else f"no activity for {int(idle.total_seconds() // 60)} min ({what})")
+            what = f"agent call {calls[0]['role']} still running" if calls else f"stage {run.get('stage') or '?'}"
+            why = "run process is gone" if dead else f"no activity for {int(idle.total_seconds() // 60)} min ({what})"
             log.warning("%s: run %s stalled: %s", run["bead_id"], run["run_id"], why)
-            store.events.emit(EVENT_STALLED, bead=run["bead_id"], run=run["run_id"], reason=why,
-                              stage=run.get("stage"))
+            store.events.emit(EVENT_STALLED, bead=run["bead_id"], run=run["run_id"], reason=why, stage=run.get("stage"))
             flagged.append(run["run_id"])
         self._stalled = current
         return flagged
@@ -230,7 +232,8 @@ class Scheduler:
     ):
         """Run one bead as a task we can cancel from a signal handler."""
         coro = (
-            self.engine.resume(bead_id, resume_instructions) if resume
+            self.engine.resume(bead_id, resume_instructions)
+            if resume
             else self.engine.run(bead_id, recipe_name=recipe_name)
         )
         self._current = asyncio.ensure_future(coro)
@@ -260,7 +263,9 @@ class Scheduler:
             log.debug("memory maintenance skipped: %s", exc)
             return False
         reason = review_due(
-            memory, config.memory, today=today,
+            memory,
+            config.memory,
+            today=today,
             finished_runs=store.finished_runs_since_last_review(),
             last_ran_day=last_ran_day,
         )
@@ -413,7 +418,8 @@ class Scheduler:
     def due_human_resume(self) -> dict | None:
         """A ready bead whose run is parked at the human gate without a retry_at."""
         parked = [
-            run for run in self.engine.store.active_runs()
+            run
+            for run in self.engine.store.active_runs()
             if run["status"] == RUN_WAITING_HUMAN and not run.get("retry_at")
         ]
         if not parked:
@@ -496,9 +502,7 @@ class Scheduler:
                 due.append(bead.id)
         return due
 
-    def _auto_land_due(
-        self, bead: bd.Bead, recipe_name: str | None, result: RunResult
-    ) -> bool:
+    def _auto_land_due(self, bead: bd.Bead, recipe_name: str | None, result: RunResult) -> bool:
         """True when a just-settled standalone run's recipe opts into auto-landing."""
         if result.outcome != Outcome.DONE.value or not recipe_name:
             return False
@@ -659,8 +663,13 @@ def signal_stop(pidfile: Path, *, now: bool = False) -> int | None:
 
 
 def spawn_detached(
-    repo: Path, root: Path | None, poll_seconds: float, *, log_file: Path | None = None,
-    stall_minutes: float = DEFAULT_STALL_MINUTES, recipe: str | None = None,
+    repo: Path,
+    root: Path | None,
+    poll_seconds: float,
+    *,
+    log_file: Path | None = None,
+    stall_minutes: float = DEFAULT_STALL_MINUTES,
+    recipe: str | None = None,
 ) -> int:
     """Start `alloy start --foreground` as a background process.
 
@@ -668,9 +677,17 @@ def spawn_detached(
     leaves a trace, not silence.
     """
     argv = [
-        sys.executable, "-m", "alloy.cli", "start", "--foreground",
-        "--repo", str(repo), "--poll", str(poll_seconds),
-        "--stall-minutes", str(stall_minutes),
+        sys.executable,
+        "-m",
+        "alloy.cli",
+        "start",
+        "--foreground",
+        "--repo",
+        str(repo),
+        "--poll",
+        str(poll_seconds),
+        "--stall-minutes",
+        str(stall_minutes),
     ]
     if recipe:
         argv += ["--recipe", recipe]

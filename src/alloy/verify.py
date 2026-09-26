@@ -43,6 +43,7 @@ def verifier_check_requests(action: VerifierAction) -> list[CheckRequest]:
         return [action.to_request()]
     return []
 
+
 # Ordered: first marker file whose project layout matches wins.
 AUTODETECT: list[tuple[str, str]] = [
     ("pytest.ini", "python -m pytest -q"),
@@ -191,10 +192,7 @@ async def run_check(
     if log_dir is not None:
         log_dir.mkdir(parents=True, exist_ok=True)
         path = log_dir / f"check-{index}-{request.kind}-{int(time.time() * 1000)}.log"
-        header = (
-            f"$ {request.command}\npurpose={request.purpose}\nkind={request.kind}\n"
-            f"exit={exit_code}\n\n"
-        )
+        header = f"$ {request.command}\npurpose={request.purpose}\nkind={request.kind}\nexit={exit_code}\n\n"
         path.write_text(header + output, encoding="utf-8")
         log_path = str(path)
 
@@ -250,14 +248,19 @@ def check_logs(log_dir: Path | str | None) -> list[dict[str, Any]]:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[:4]
         header = dict(line.split("=", 1) for line in lines[1:] if "=" in line)
         command = lines[0] if lines else ""
-        entries.append((index, started_ms, {
-            "index": index,
-            "command": command[2:] if command.startswith("$ ") else command,
-            "kind": header.get("kind") or "-".join(parts[2:-1]) or "custom",
-            "exit_code": int(header["exit"]) if header.get("exit", "").lstrip("-").isdigit()
-            else None,
-            "log_path": str(path),
-        }))
+        entries.append(
+            (
+                index,
+                started_ms,
+                {
+                    "index": index,
+                    "command": command[2:] if command.startswith("$ ") else command,
+                    "kind": header.get("kind") or "-".join(parts[2:-1]) or "custom",
+                    "exit_code": int(header["exit"]) if header.get("exit", "").lstrip("-").isdigit() else None,
+                    "log_path": str(path),
+                },
+            )
+        )
     return [entry for _, _, entry in sorted(entries, key=lambda item: item[:2])]
 
 

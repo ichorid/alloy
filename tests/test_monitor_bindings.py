@@ -37,8 +37,14 @@ ALLOWED_ACTIONS = {
     "toggle_expand_all",
 }
 FORBIDDEN_TOKENS = (
-    "finish_run", "update_run", "create_run", "set_status", "set_metadata",
-    "claim", "cancel(", "note(",
+    "finish_run",
+    "update_run",
+    "create_run",
+    "set_status",
+    "set_metadata",
+    "claim",
+    "cancel(",
+    "note(",
 )
 
 

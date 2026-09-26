@@ -48,7 +48,11 @@ def script(**overrides):
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(
-        ["git", *args], cwd=str(repo), capture_output=True, text=True, check=False,
+        ["git", *args],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if check and proc.returncode != 0:
         raise AssertionError(f"git {' '.join(args)}: {proc.stderr.strip()}")
@@ -66,21 +70,26 @@ def _porcelain(cwd: Path) -> str:
 def _bead_notes(repo: Path, bead_id: str) -> str:
     proc = subprocess.run(
         ["bd", "show", bead_id, "--json"],
-        cwd=str(repo), capture_output=True, text=True, check=True,
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=True,
     )
     payload = json.loads(proc.stdout)
     if isinstance(payload, list):
         payload = payload[0]
     # `bd note` appends to the issue's `notes` field (see `bd note --help`).
     comments = payload.get("comments") or []
-    return "\n".join([
-        str(payload.get("notes") or ""),
-        *(c.get("body", "") if isinstance(c, dict) else str(c) for c in comments),
-    ])
+    return "\n".join(
+        [
+            str(payload.get("notes") or ""),
+            *(c.get("body", "") if isinstance(c, dict) else str(c) for c in comments),
+        ]
+    )
 
 
 WIP_TEST_PATH = "tests/test_parent_wip_feature.py"
-WIP_TEST_CONTENT = 'def test_parent_wip_marker():\n    assert True\n'
+WIP_TEST_CONTENT = "def test_parent_wip_marker():\n    assert True\n"
 
 
 async def _paused_parent_with_wip(
@@ -92,9 +101,7 @@ async def _paused_parent_with_wip(
 ) -> tuple[str, str, Path, str]:
     """Return parent bead id, parent run id, parent worktree path, base commit (pre-WIP)."""
     parent_id = bd_create(beads_project, "parent feature", alloy_recipe="tdd-loop")
-    fake_harnesses.configure(
-        script(judge=[judge_entry("human", "paused for remediation")])
-    )
+    fake_harnesses.configure(script(judge=[judge_entry("human", "paused for remediation")]))
     parent_result = await engine.run(parent_id)
     assert parent_result.outcome == "waiting-human"
 
@@ -117,7 +124,10 @@ async def _parent_context(engine: Engine, parent_id: str, parent_run_id: str, ch
     bead = engine.beads.show(parent_id)
     recipe = bead.recipe or "tdd-loop"
     return engine.build_context(
-        bead, recipe, run_id=parent_run_id, checkpointer=checkpointer,
+        bead,
+        recipe,
+        run_id=parent_run_id,
+        checkpointer=checkpointer,
     )
 
 
@@ -128,10 +138,14 @@ def _bug_script(**implement_overrides) -> dict:
 
 
 async def test_run_child_wip_commit_child_from_base_merges_fix_and_calls_gate(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     parent_id, parent_run_id, parent_wt, base_before_wip = await _paused_parent_with_wip(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
     bug_id = bd_create(beads_project, "fix pre-existing bug", alloy_recipe="tdd-loop")
     engine.beads.claim(bug_id)
@@ -148,15 +162,14 @@ async def test_run_child_wip_commit_child_from_base_merges_fix_and_calls_gate(
     async with open_checkpointer(engine.paths.workflows_db) as checkpointer:
         parent_ctx = await _parent_context(engine, parent_id, parent_run_id, checkpointer)
         child_result = await engine.run_child(
-            bug_id, parent=parent_ctx, merge_gate=gate_ok,
+            bug_id,
+            parent=parent_ctx,
+            merge_gate=gate_ok,
         )
 
     assert child_result.outcome == "done"
 
-    wip_commits = [
-        line for line in _git(parent_wt, "log", "--oneline", "-5").stdout.splitlines()
-        if bug_id in line
-    ]
+    wip_commits = [line for line in _git(parent_wt, "log", "--oneline", "-5").stdout.splitlines() if bug_id in line]
     assert wip_commits, "expected a WIP commit on the parent branch mentioning the bug id"
     wip_sha = _git(parent_wt, "rev-parse", "HEAD").stdout.strip()
 
@@ -186,10 +199,14 @@ async def test_run_child_wip_commit_child_from_base_merges_fix_and_calls_gate(
 
 
 async def test_run_child_guard_rejects_modifying_tests_added_in_parent_wip(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     parent_id, parent_run_id, parent_wt, _ = await _paused_parent_with_wip(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
     bug_id = bd_create(beads_project, "bad fix", alloy_recipe="tdd-loop")
     engine.beads.claim(bug_id)
@@ -221,10 +238,14 @@ async def test_run_child_guard_rejects_modifying_tests_added_in_parent_wip(
 
 
 async def test_run_child_failed_merge_gate_aborts_without_merge(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     parent_id, parent_run_id, parent_wt, _ = await _paused_parent_with_wip(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
     bug_id = bd_create(beads_project, "too broad fix", alloy_recipe="tdd-loop")
     engine.beads.claim(bug_id)
@@ -238,7 +259,9 @@ async def test_run_child_failed_merge_gate_aborts_without_merge(
     async with open_checkpointer(engine.paths.workflows_db) as checkpointer:
         parent_ctx = await _parent_context(engine, parent_id, parent_run_id, checkpointer)
         result = await engine.run_child(
-            bug_id, parent=parent_ctx, merge_gate=gate_reject,
+            bug_id,
+            parent=parent_ctx,
+            merge_gate=gate_reject,
         )
 
     assert result.outcome == "failed"
@@ -248,10 +271,14 @@ async def test_run_child_failed_merge_gate_aborts_without_merge(
 
 
 async def test_run_child_without_merge_gate_fails_with_explicit_reason(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     parent_id, parent_run_id, parent_wt, _ = await _paused_parent_with_wip(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
     bug_id = bd_create(beads_project, "fix without gate", alloy_recipe="tdd-loop")
     engine.beads.claim(bug_id)
@@ -269,11 +296,15 @@ async def test_run_child_without_merge_gate_fails_with_explicit_reason(
 
 
 async def test_run_child_merge_conflict_leaves_parent_at_wip_and_keeps_child_branch(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     conflict_path = "mypkg/__init__.py"
     parent_id, parent_run_id, parent_wt, _ = await _paused_parent_with_wip(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
         extra_wip_writes=[{"path": conflict_path, "content": "# parent wip line\n"}],
     )
     bug_id = bd_create(beads_project, "conflicting fix", alloy_recipe="tdd-loop")
@@ -303,10 +334,14 @@ async def test_run_child_merge_conflict_leaves_parent_at_wip_and_keeps_child_bra
 
 
 async def test_run_child_agent_calls_do_not_roll_up_into_parent_check_limits(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     parent_id, parent_run_id, _, _ = await _paused_parent_with_wip(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
     bug_id = bd_create(beads_project, "counted fix", alloy_recipe="tdd-loop")
     engine.beads.claim(bug_id)
@@ -344,21 +379,27 @@ async def test_run_child_agent_calls_do_not_roll_up_into_parent_check_limits(
 
 
 async def test_run_child_scope_merge_proceeds_when_gate_accepts(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     from alloy.recipes.tdd_loop import scope_merge_gate
 
     parent_id, parent_run_id, parent_wt, _ = await _paused_parent_with_wip(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
     bug_id = bd_create(beads_project, "scoped fix", alloy_recipe="tdd-loop")
     engine.beads.claim(bug_id)
 
     fake_harnesses.reset_calls()
-    fake_harnesses.configure({
-        **_bug_script(),
-        "scope": scope_entry("merge", "minimal auth fix"),
-    })
+    fake_harnesses.configure(
+        {
+            **_bug_script(),
+            "scope": scope_entry("merge", "minimal auth fix"),
+        }
+    )
 
     async with open_checkpointer(engine.paths.workflows_db) as checkpointer:
         parent_ctx = await _parent_context(engine, parent_id, parent_run_id, checkpointer)
@@ -368,7 +409,9 @@ async def test_run_child_scope_merge_proceeds_when_gate_accepts(
             return await scope_merge_gate(parent_ctx, bug, diff)
 
         child_result = await engine.run_child(
-            bug_id, parent=parent_ctx, merge_gate=merge_gate,
+            bug_id,
+            parent=parent_ctx,
+            merge_gate=merge_gate,
         )
 
     assert child_result.outcome == "done"
@@ -381,22 +424,28 @@ async def test_run_child_scope_merge_proceeds_when_gate_accepts(
 
 
 async def test_run_child_scope_too_broad_aborts_without_merge(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     from alloy.recipes.tdd_loop import scope_merge_gate
 
     parent_id, parent_run_id, parent_wt, _ = await _paused_parent_with_wip(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
     bug_id = bd_create(beads_project, "too broad fix", alloy_recipe="tdd-loop")
     engine.beads.claim(bug_id)
 
     reason = "rewrites the storage layer"
     fake_harnesses.reset_calls()
-    fake_harnesses.configure({
-        **_bug_script(),
-        "scope": scope_entry("too-broad", reason),
-    })
+    fake_harnesses.configure(
+        {
+            **_bug_script(),
+            "scope": scope_entry("too-broad", reason),
+        }
+    )
 
     async with open_checkpointer(engine.paths.workflows_db) as checkpointer:
         parent_ctx = await _parent_context(engine, parent_id, parent_run_id, checkpointer)
@@ -415,12 +464,16 @@ async def test_run_child_scope_too_broad_aborts_without_merge(
 
 
 async def test_run_child_scope_runner_missing_fails_without_merge(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     from alloy.recipes.tdd_loop import scope_merge_gate
 
     parent_id, parent_run_id, parent_wt, _ = await _paused_parent_with_wip(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
     bug_id = bd_create(beads_project, "unscoped fix", alloy_recipe="tdd-loop")
     engine.beads.claim(bug_id)
@@ -444,10 +497,14 @@ async def test_run_child_scope_runner_missing_fails_without_merge(
 
 
 async def test_run_child_refuses_when_parent_run_is_already_a_child(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     parent_id, parent_run_id, _, _ = await _paused_parent_with_wip(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
     engine.store.update_run(parent_run_id, parent_run_id="grandparent-run-id")
     bug_id = bd_create(beads_project, "nested fix", alloy_recipe="tdd-loop")

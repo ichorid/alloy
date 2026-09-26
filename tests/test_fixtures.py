@@ -48,8 +48,9 @@ def test_beads_project_copy_has_custom_statuses(beads_project: Path) -> None:
     `bd config set status.custom` stores the value in the embedded Dolt
     database, not in config.yaml, so read it back through bd.
     """
-    proc = subprocess.run(["bd", "config", "get", "status.custom"], cwd=str(beads_project),
-                          check=True, capture_output=True, text=True)
+    proc = subprocess.run(
+        ["bd", "config", "get", "status.custom"], cwd=str(beads_project), check=True, capture_output=True, text=True
+    )
     configured = proc.stdout.strip()
     for status in _custom_status_names():
         assert status in configured, f"expected custom status {status!r} in {configured!r}"

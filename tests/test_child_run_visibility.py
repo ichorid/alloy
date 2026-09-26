@@ -56,7 +56,9 @@ async def _parent_with_finished_child(
 ) -> tuple[str, str, str, str]:
     """Return parent bead id, parent run id, child bead id, child run id."""
     parent_id, parent_run_id, _, _ = await _paused_parent_with_wip(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
     bug_id = bd_create(beads_project, "fix pre-existing bug", alloy_recipe="tdd-loop")
     engine.beads.claim(bug_id)
@@ -70,7 +72,9 @@ async def _parent_with_finished_child(
     async with open_checkpointer(engine.paths.workflows_db) as checkpointer:
         parent_ctx = await _parent_context(engine, parent_id, parent_run_id, checkpointer)
         child_result = await engine.run_child(
-            bug_id, parent=parent_ctx, merge_gate=gate_ok,
+            bug_id,
+            parent=parent_ctx,
+            merge_gate=gate_ok,
         )
 
     assert child_result.outcome == "done"
@@ -83,10 +87,15 @@ async def _parent_with_finished_child(
 
 
 async def test_status_json_parent_lists_child_run_and_null_remediating_after_child_done(
-    engine, beads_project, alloy_home, fake_harnesses,
+    engine,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
 ):
     parent_id, parent_run_id, bug_id, child_run_id = await _parent_with_finished_child(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
 
     result = _invoke("status", parent_id, "--json", project=beads_project, alloy_home=alloy_home)
@@ -99,10 +108,15 @@ async def test_status_json_parent_lists_child_run_and_null_remediating_after_chi
 
 
 async def test_status_json_child_run_shows_parent_run_id(
-    engine, beads_project, alloy_home, fake_harnesses,
+    engine,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
 ):
     parent_id, parent_run_id, bug_id, child_run_id = await _parent_with_finished_child(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
 
     result = _invoke("status", bug_id, "--json", project=beads_project, alloy_home=alloy_home)
@@ -114,10 +128,15 @@ async def test_status_json_child_run_shows_parent_run_id(
 
 
 async def test_status_json_child_run_includes_parent_bead_id(
-    engine, beads_project, alloy_home, fake_harnesses,
+    engine,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
 ):
     parent_id, _, bug_id, _ = await _parent_with_finished_child(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
 
     result = _invoke("status", bug_id, "--json", project=beads_project, alloy_home=alloy_home)
@@ -128,10 +147,15 @@ async def test_status_json_child_run_includes_parent_bead_id(
 
 
 async def test_status_plain_table_shows_parent_column(
-    engine, beads_project, alloy_home, fake_harnesses,
+    engine,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
 ):
     parent_id, _, bug_id, _ = await _parent_with_finished_child(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
 
     result = _invoke("status", project=beads_project, alloy_home=alloy_home)
@@ -151,10 +175,15 @@ async def test_status_plain_table_shows_parent_column(
 
 
 async def test_logs_parent_includes_child_bead_id_and_runner_name(
-    engine, beads_project, alloy_home, fake_harnesses,
+    engine,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
 ):
     parent_id, _, bug_id, _ = await _parent_with_finished_child(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
 
     result = _invoke("logs", parent_id, project=beads_project, alloy_home=alloy_home)

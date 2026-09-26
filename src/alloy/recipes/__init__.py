@@ -43,8 +43,7 @@ REGISTRY: dict[str, Recipe] = {
         name="tdd-loop-sonnet-no-context",
         build_graph=partial(tdd_loop.build_graph, skip_context=True),
         initial_state=tdd_loop.initial_state,
-        description="tdd-loop-sonnet with the context-gathering phase removed: "
-        "estimate runs first, straight off START",
+        description="tdd-loop-sonnet with the context-gathering phase removed: estimate runs first, straight off START",
     ),
     "land": Recipe(
         name="land",

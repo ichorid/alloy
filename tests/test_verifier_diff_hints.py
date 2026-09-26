@@ -18,10 +18,7 @@ HINTS_SECTION = "## Hints from the repository (not yet verified)"
 
 
 def _monitor_test_paths() -> list[str]:
-    return sorted(
-        path.relative_to(REPO_ROOT).as_posix()
-        for path in (REPO_ROOT / "tests").glob("test_monitor*.py")
-    )
+    return sorted(path.relative_to(REPO_ROOT).as_posix() for path in (REPO_ROOT / "tests").glob("test_monitor*.py"))
 
 
 def _diff_touching_monitor_app() -> str:
@@ -73,10 +70,7 @@ def test_verifier_hints_list_every_monitor_test_file_when_diff_touches_monitor_a
     prompt = _verifier_prompt_for_monitor_touch()
     hints = _hints_body(prompt)
     missing = [path for path in _monitor_test_paths() if path not in hints]
-    assert missing == [], (
-        "expected diff-derived verifier hints for each tests/test_monitor*.py; "
-        f"missing: {missing}"
-    )
+    assert missing == [], f"expected diff-derived verifier hints for each tests/test_monitor*.py; missing: {missing}"
 
 
 def test_verifier_hints_derive_monitor_tests_without_context_check_hints():

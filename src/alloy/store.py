@@ -18,7 +18,12 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 from alloy.events import (
-    EVENT_CANCELLED, EVENT_DONE, EVENT_FAILED, EVENT_NEEDS_HUMAN, EVENT_RESUMED, EventLog,
+    EVENT_CANCELLED,
+    EVENT_DONE,
+    EVENT_FAILED,
+    EVENT_NEEDS_HUMAN,
+    EVENT_RESUMED,
+    EventLog,
 )
 from alloy.limits import harness_for_runner
 from alloy.models import UNAVAILABLE_KEY, AgentCallRecord, AgentResult, utcnow
@@ -115,20 +120,20 @@ TERMINAL_RUN_STATUSES = {RUN_DONE, RUN_FAILED, RUN_CANCELLED}
 MIGRATIONS: dict[str, dict[str, str]] = {
     "runs": {
         "complexity": "TEXT",
-        "paused_at": "TEXT",                       # set while waiting for a human
-        "paused_s": "REAL NOT NULL DEFAULT 0",     # total time spent paused
-        "parent_run_id": "TEXT",                   # set on a remediation child run (alloy-0uc.8)
-        "dispatch_tier": "TEXT",                   # tier used by live routing (alloy-0uc.3); None in shadow
+        "paused_at": "TEXT",  # set while waiting for a human
+        "paused_s": "REAL NOT NULL DEFAULT 0",  # total time spent paused
+        "parent_run_id": "TEXT",  # set on a remediation child run (alloy-0uc.8)
+        "dispatch_tier": "TEXT",  # tier used by live routing (alloy-0uc.3); None in shadow
         "escalations": "INTEGER DEFAULT 0",
-        "retry_at": "TEXT",                        # when a parked run may resume on its own (alloy-5wb.4)
-        "base_commit": "TEXT",                     # where this run's diff starts (alloy-vrh.4)
+        "retry_at": "TEXT",  # when a parked run may resume on its own (alloy-5wb.4)
+        "base_commit": "TEXT",  # where this run's diff starts (alloy-vrh.4)
     },
     "agent_calls": {
-        "structured_json": "TEXT",                 # the raw structured output, e.g. the judge's verdict
-        "prefix_hash": "TEXT",                     # sha256 of the prompt's stable layers (alloy-4ef.6)
+        "structured_json": "TEXT",  # the raw structured output, e.g. the judge's verdict
+        "prefix_hash": "TEXT",  # sha256 of the prompt's stable layers (alloy-4ef.6)
     },
     "inflight_calls": {
-        "pid": "INTEGER",                          # the harness process group, so a dead run's orphan can be killed
+        "pid": "INTEGER",  # the harness process group, so a dead run's orphan can be killed
     },
 }
 
@@ -179,10 +184,20 @@ class Store:
                 " status, stage, started_at, updated_at, log_dir, pid, parent_run_id, base_commit)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    run_id, bead_id, thread_id, recipe, str(repo),
-                    str(worktree) if worktree else None, branch,
-                    RUN_RUNNING, "starting", now, now,
-                    str(log_dir) if log_dir else None, os.getpid(), parent_run_id,
+                    run_id,
+                    bead_id,
+                    thread_id,
+                    recipe,
+                    str(repo),
+                    str(worktree) if worktree else None,
+                    branch,
+                    RUN_RUNNING,
+                    "starting",
+                    now,
+                    now,
+                    str(log_dir) if log_dir else None,
+                    os.getpid(),
+                    parent_run_id,
                     base_commit,
                 ),
             )
@@ -200,20 +215,15 @@ class Store:
         with self.connect() as conn:
             previous = None
             if "status" in fields:
-                previous = conn.execute(
-                    "SELECT status, bead_id FROM runs WHERE run_id = ?", (run_id,)
-                ).fetchone()
+                previous = conn.execute("SELECT status, bead_id FROM runs WHERE run_id = ?", (run_id,)).fetchone()
             conn.execute(
                 f"UPDATE runs SET {assignments} WHERE run_id = ?",
                 (*fields.values(), run_id),
             )
         if previous is not None and previous["status"] != fields["status"]:
-            self._announce(run_id, previous["bead_id"], previous["status"], fields["status"],
-                           event_reason)
+            self._announce(run_id, previous["bead_id"], previous["status"], fields["status"], event_reason)
 
-    def _announce(
-        self, run_id: str, bead_id: str, old: str, new: str, reason: str
-    ) -> None:
+    def _announce(self, run_id: str, bead_id: str, old: str, new: str, reason: str) -> None:
         event = _STATUS_EVENTS.get(new)
         if event is None and new == RUN_RUNNING and old == RUN_WAITING_HUMAN:
             event = EVENT_RESUMED
@@ -279,9 +289,7 @@ class Store:
             self.update_run(run_id, paused_at=None)
             return
         paused_for = max(0.0, (utcnow() - paused_at).total_seconds())
-        self.update_run(
-            run_id, paused_at=None, paused_s=float(record.get("paused_s") or 0) + paused_for
-        )
+        self.update_run(run_id, paused_at=None, paused_s=float(record.get("paused_s") or 0) + paused_for)
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:
@@ -328,9 +336,7 @@ class Store:
     def children_of(self, run_id: str) -> list[dict[str, Any]]:
         """Remediation runs started from `run_id` (see Engine.run_child)."""
         with self.connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM runs WHERE parent_run_id = ? ORDER BY started_at", (run_id,)
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM runs WHERE parent_run_id = ? ORDER BY started_at", (run_id,)).fetchall()
         return [dict(row) for row in rows]
 
     def last_activity(self, run: dict[str, Any]) -> datetime:
@@ -373,8 +379,14 @@ class Store:
     # -- agent call ledger ------------------------------------------------
 
     def start_call(
-        self, call_id: str, *, run_id: str, bead_id: str, role: str,
-        runner: str, model: str | None,
+        self,
+        call_id: str,
+        *,
+        run_id: str,
+        bead_id: str,
+        role: str,
+        runner: str,
+        model: str | None,
     ) -> None:
         with self.connect() as conn:
             conn.execute(
@@ -429,8 +441,14 @@ class Store:
         return removed
 
     def finish_call(
-        self, call_id: str, *, run_id: str, bead_id: str, role: str,
-        iteration: int, result: AgentResult,
+        self,
+        call_id: str,
+        *,
+        run_id: str,
+        bead_id: str,
+        role: str,
+        iteration: int,
+        result: AgentResult,
     ) -> None:
         record = AgentCallRecord(
             run_id=run_id,
@@ -458,24 +476,30 @@ class Store:
                 " prefix_hash, started_at, ended_at, duration_s, exit_code, ok, usage_json,"
                 " log_path, iteration, structured_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
-                    record.run_id, record.bead_id, record.role, record.runner, record.model,
-                    record.prompt_hash, record.prefix_hash,
-                    _iso(record.started_at), _iso(record.ended_at),
-                    record.duration_s, record.exit_code, int(record.ok),
-                    record.usage_json, record.log_path, record.iteration,
+                    record.run_id,
+                    record.bead_id,
+                    record.role,
+                    record.runner,
+                    record.model,
+                    record.prompt_hash,
+                    record.prefix_hash,
+                    _iso(record.started_at),
+                    _iso(record.ended_at),
+                    record.duration_s,
+                    record.exit_code,
+                    int(record.ok),
+                    record.usage_json,
+                    record.log_path,
+                    record.iteration,
                     json.dumps(result.structured) if result.structured is not None else None,
                 ),
             )
             if not (result.usage or {}).get(UNAVAILABLE_KEY):
-                conn.execute(
-                    "UPDATE runs SET agent_calls = agent_calls + 1 WHERE run_id = ?", (run_id,)
-                )
+                conn.execute("UPDATE runs SET agent_calls = agent_calls + 1 WHERE run_id = ?", (run_id,))
 
     def agent_calls(self, run_id: str) -> list[dict[str, Any]]:
         with self.connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM agent_calls WHERE run_id = ? ORDER BY id", (run_id,)
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM agent_calls WHERE run_id = ? ORDER BY id", (run_id,)).fetchall()
         return [dict(row) for row in rows]
 
     def call_count(self, run_id: str, *, include_children: bool = False) -> int:
@@ -499,9 +523,7 @@ class Store:
 
     def token_totals(self, run_id: str) -> dict:
         """Token sums for the run; `cost_usd` is None unless some call reported one."""
-        return _sum_usage(
-            normalize(json.loads(call["usage_json"])) for call in self.agent_calls(run_id)
-        )
+        return _sum_usage(normalize(json.loads(call["usage_json"])) for call in self.agent_calls(run_id))
 
     def models_used(self, run_id: str) -> list[dict[str, Any]]:
         """One entry per distinct (runner, model) across finished and inflight calls."""
@@ -518,9 +540,7 @@ class Store:
 
         for row in finished:
             key = (row["runner"], row["model"])
-            group = groups.setdefault(
-                key, {"first_at": row["started_at"], "usages": [], "calls": 0}
-            )
+            group = groups.setdefault(key, {"first_at": row["started_at"], "usages": [], "calls": 0})
             if row["started_at"] < group["first_at"]:
                 group["first_at"] = row["started_at"]
             group["calls"] += 1
@@ -528,9 +548,7 @@ class Store:
 
         for row in inflight:
             key = (row["runner"], row["model"])
-            group = groups.setdefault(
-                key, {"first_at": row["started_at"], "usages": [], "calls": 0}
-            )
+            group = groups.setdefault(key, {"first_at": row["started_at"], "usages": [], "calls": 0})
             if row["started_at"] < group["first_at"]:
                 group["first_at"] = row["started_at"]
 
@@ -552,8 +570,7 @@ class Store:
         placeholders = ",".join("?" * len(statuses))
         with self.connect() as conn:
             rows = conn.execute(
-                f"SELECT * FROM runs WHERE status IN ({placeholders})"
-                " AND ended_at >= ? AND repo = ? ORDER BY ended_at",
+                f"SELECT * FROM runs WHERE status IN ({placeholders}) AND ended_at >= ? AND repo = ? ORDER BY ended_at",
                 (*statuses, since, str(repo)),
             ).fetchall()
         return [dict(row) for row in rows]

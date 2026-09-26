@@ -41,24 +41,65 @@ from conftest import (
 from support import make_harness
 
 TOP_LEVEL_KEYS = {
-    "root", "repo", "scheduler", "ready_count", "ready_capped_at", "lifetime", "runs",
-    "limits", "session", "session_totals", "queue", "epics", "auxiliary_calls",
+    "root",
+    "repo",
+    "scheduler",
+    "ready_count",
+    "ready_capped_at",
+    "lifetime",
+    "runs",
+    "limits",
+    "session",
+    "session_totals",
+    "queue",
+    "epics",
+    "auxiliary_calls",
 }
 EPIC_ENTRY_KEYS = {
-    "epic_id", "title", "total", "done", "done_ids", "running", "judge",
+    "epic_id",
+    "title",
+    "total",
+    "done",
+    "done_ids",
+    "running",
+    "judge",
 }
 QUEUE_KEYS = {"ready", "ready_total", "blocked"}
 READY_ENTRY_KEYS = {"bead_id", "title", "recipe", "priority", "complexity", "epic_id"}
 BLOCKED_ENTRY_KEYS = {"bead_id", "title", "blocked_by", "epic_id"}
 RUN_ENTRY_KEYS = {
-    "bead_id", "run_id", "recipe", "status", "stage", "iteration", "max_iterations",
-    "consiliums", "max_consiliums", "tests_summary", "checks", "elapsed_minutes",
-    "current_calls", "tokens", "tokens_by_role", "judge", "worktree", "branch",
-    "parent_run_id", "parent_bead_id", "complexity", "models_used", "epic_id", "title",
+    "bead_id",
+    "run_id",
+    "recipe",
+    "status",
+    "stage",
+    "iteration",
+    "max_iterations",
+    "consiliums",
+    "max_consiliums",
+    "tests_summary",
+    "checks",
+    "elapsed_minutes",
+    "current_calls",
+    "tokens",
+    "tokens_by_role",
+    "judge",
+    "worktree",
+    "branch",
+    "parent_run_id",
+    "parent_bead_id",
+    "complexity",
+    "models_used",
+    "epic_id",
+    "title",
 }
 CURRENT_CALL_KEYS = {
-    "role", "requested_runner", "effective_runner", "requested_model",
-    "effective_model", "elapsed_seconds",
+    "role",
+    "requested_runner",
+    "effective_runner",
+    "requested_model",
+    "effective_model",
+    "elapsed_seconds",
 }
 TOKENS_KEYS = {"input_tokens", "output_tokens", "total_tokens", "cost_usd"}
 JUDGE_KEYS = {"raw", "effective", "matches_effective"}
@@ -202,13 +243,25 @@ def test_scheduler_running_reflects_a_live_pidfile(project, alloy_home):
 def test_lifetime_counts_every_terminal_status_from_run_status_totals(project, alloy_home):
     engine = _engine(project, alloy_home)
     engine.store.create_run(
-        run_id="r-done", bead_id="t-1", thread_id="r-done", recipe="tdd-loop", repo=project,
-        worktree=None, branch=None, log_dir=None,
+        run_id="r-done",
+        bead_id="t-1",
+        thread_id="r-done",
+        recipe="tdd-loop",
+        repo=project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )
     engine.store.finish_run("r-done", status="done", outcome="done")
     engine.store.create_run(
-        run_id="r-failed", bead_id="t-2", thread_id="r-failed", recipe="tdd-loop", repo=project,
-        worktree=None, branch=None, log_dir=None,
+        run_id="r-failed",
+        bead_id="t-2",
+        thread_id="r-failed",
+        recipe="tdd-loop",
+        repo=project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )
     engine.store.finish_run("r-failed", status="failed", outcome="failed")
 
@@ -230,17 +283,25 @@ def test_freshly_initialized_alloy_home_does_not_raise(project, alloy_home):
 
 def _run_with_bead(engine: Engine, run_id: str, bead_id: str) -> None:
     engine.store.create_run(
-        run_id=run_id, bead_id=bead_id, thread_id=run_id, recipe="tdd-loop",
-        repo=engine.repo, worktree=None, branch=None, log_dir=None,
+        run_id=run_id,
+        bead_id=bead_id,
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=engine.repo,
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )
     engine.store.update_run(run_id, status=RUN_RUNNING, pid=os.getpid())
 
 
 def test_run_entry_title_uses_bead_title_when_present(project, alloy_home):
     bead_id = "bead-run-titled"
-    beads = FakeBeads(shows={
-        bead_id: bd.Bead(id=bead_id, title="Fix the thing", description="Longer story."),
-    })
+    beads = FakeBeads(
+        shows={
+            bead_id: bd.Bead(id=bead_id, title="Fix the thing", description="Longer story."),
+        }
+    )
     engine = _engine(project, alloy_home, beads=beads)
     _run_with_bead(engine, "run-titled", bead_id)
 
@@ -250,12 +311,15 @@ def test_run_entry_title_uses_bead_title_when_present(project, alloy_home):
 
 
 def test_run_entry_title_falls_back_to_description_snippet_when_title_is_blank(
-    project, alloy_home,
+    project,
+    alloy_home,
 ):
     bead_id = "bead-run-untitled"
-    beads = FakeBeads(shows={
-        bead_id: bd.Bead(id=bead_id, title="", description="Fix the flaky retry loop.\nMore detail."),
-    })
+    beads = FakeBeads(
+        shows={
+            bead_id: bd.Bead(id=bead_id, title="", description="Fix the flaky retry loop.\nMore detail."),
+        }
+    )
     engine = _engine(project, alloy_home, beads=beads)
     _run_with_bead(engine, "run-untitled", bead_id)
 
@@ -358,7 +422,10 @@ def test_run_with_no_checkpoint_yet_has_null_judge_and_empty_current_calls(proje
     assert run["current_calls"] == []
     assert run["judge"] is None
     assert run["tokens"] == {
-        "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cost_usd": None,
     }
     assert run["tokens_by_role"] == {}
     assert run["consiliums"] == 0
@@ -370,8 +437,12 @@ def test_run_with_an_in_flight_call_reports_requested_vs_effective(project, allo
     engine = _engine(project, alloy_home)
     harness = make_harness(project, alloy_home)
     engine.store.start_call(
-        "call-1", run_id=harness.run_id, bead_id=harness.bead.id, role="implement",
-        runner="codex", model=None,
+        "call-1",
+        run_id=harness.run_id,
+        bead_id=harness.bead.id,
+        role="implement",
+        runner="codex",
+        model=None,
     )
 
     snapshot = build_snapshot(engine)
@@ -391,25 +462,26 @@ def test_run_with_an_in_flight_call_reports_requested_vs_effective(project, allo
 def test_repository_memory_review_call_is_visible_without_a_bead_run(project, alloy_home):
     engine = _engine(project, alloy_home)
     engine.store.start_call(
-        "memory-call", run_id="memory-review-test", bead_id="memory-review",
-        role="memory_reviewer", runner="codex", model="gpt-6-sol",
+        "memory-call",
+        run_id="memory-review-test",
+        bead_id="memory-review",
+        role="memory_reviewer",
+        runner="codex",
+        model="gpt-6-sol",
     )
     snapshot = build_snapshot(engine)
     assert snapshot["auxiliary_calls"][0]["effective_model"] == "gpt-6-sol"
     assert snapshot["auxiliary_calls"][0]["role"] == "memory_reviewer"
 
 
-async def test_judge_mismatch_when_the_guard_overrides_a_done_decision(
-    project, alloy_home, fake_harnesses
-):
+async def test_judge_mismatch_when_the_guard_overrides_a_done_decision(project, alloy_home, fake_harnesses):
     """Judge always says 'retry' on a green suite: once the iteration limit is
     breached the guard overrides it to 'human' -- raw and effective must
     disagree in the final state, and `matches_effective` must say so. (A red
     required check never reaches the judge any more; it goes straight to
     repair, so the override can only come from a limit.)"""
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=True)],
-               judge=[judge_entry("retry", "one more pass")])
+        script(implement=[implement_entry(succeed=True)], judge=[judge_entry("retry", "one more pass")])
     )
     harness = make_harness(project, alloy_home)
     try:
@@ -430,9 +502,7 @@ async def test_judge_mismatch_when_the_guard_overrides_a_done_decision(
 # -- a bead with two recorded runs -------------------------------------------
 
 
-async def test_two_runs_for_the_same_bead_each_show_their_own_state(
-    project, alloy_home, fake_harnesses
-):
+async def test_two_runs_for_the_same_bead_each_show_their_own_state(project, alloy_home, fake_harnesses):
     store = Store(alloy_home / "alloy.db")
 
     # Both runs share the bead's worktree. The parked run must not leave a
@@ -452,8 +522,10 @@ async def test_two_runs_for_the_same_bead_each_show_their_own_state(
 
     fake_harnesses.reset_calls()
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
-               judge=[judge_entry("retry"), judge_entry("done")])
+        script(
+            implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
+            judge=[judge_entry("retry"), judge_entry("done")],
+        )
     )
     finished = make_harness(project, alloy_home, store=store, run_id="run-finished")
     try:
@@ -512,12 +584,24 @@ def test_snapshot_child_run_carries_parent_run_id_and_parent_complexity(project,
     parent_run_id = "run-parent"
     child_run_id = "run-child"
     engine.store.create_run(
-        run_id=parent_run_id, bead_id="alloy-parent", thread_id=parent_run_id,
-        recipe="tdd-loop", repo=project, worktree=None, branch=None, log_dir=None,
+        run_id=parent_run_id,
+        bead_id="alloy-parent",
+        thread_id=parent_run_id,
+        recipe="tdd-loop",
+        repo=project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )
     engine.store.create_run(
-        run_id=child_run_id, bead_id="alloy-child", thread_id=child_run_id,
-        recipe="tdd-loop", repo=project, worktree=None, branch=None, log_dir=None,
+        run_id=child_run_id,
+        bead_id="alloy-child",
+        thread_id=child_run_id,
+        recipe="tdd-loop",
+        repo=project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
         parent_run_id=parent_run_id,
     )
     engine.store.update_run(parent_run_id, status=RUN_RUNNING, pid=os.getpid(), complexity="simple")
@@ -541,12 +625,24 @@ def test_snapshot_child_run_resolves_parent_bead_id(project, alloy_home):
     parent_run_id = "run-parent"
     child_run_id = "run-child"
     engine.store.create_run(
-        run_id=parent_run_id, bead_id="alloy-parent", thread_id=parent_run_id,
-        recipe="tdd-loop", repo=project, worktree=None, branch=None, log_dir=None,
+        run_id=parent_run_id,
+        bead_id="alloy-parent",
+        thread_id=parent_run_id,
+        recipe="tdd-loop",
+        repo=project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )
     engine.store.create_run(
-        run_id=child_run_id, bead_id="alloy-child", thread_id=child_run_id,
-        recipe="tdd-loop", repo=project, worktree=None, branch=None, log_dir=None,
+        run_id=child_run_id,
+        bead_id="alloy-child",
+        thread_id=child_run_id,
+        recipe="tdd-loop",
+        repo=project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
         parent_run_id=parent_run_id,
     )
     engine.store.update_run(parent_run_id, status=RUN_RUNNING, pid=os.getpid())
@@ -685,7 +781,9 @@ def _active_run(engine: Engine, run_id: str = "run-limits") -> None:
 
 
 def test_snapshot_limits_installed_harnesses_only_with_cache_miss_as_not_probed(
-    project, alloy_home, fake_harnesses,
+    project,
+    alloy_home,
+    fake_harnesses,
 ):
     """Acceptance: installed claude+codex only; cache has claude; codex is 'not probed yet'."""
     fake_harnesses.remove("cursor-agent")
@@ -703,7 +801,9 @@ def test_snapshot_limits_installed_harnesses_only_with_cache_miss_as_not_probed(
 
 
 def test_snapshot_models_used_joins_harness_windows_by_model_family(
-    project, alloy_home, fake_harnesses,
+    project,
+    alloy_home,
+    fake_harnesses,
 ):
     """Acceptance: fable gets account-wide + fable windows; codex gets both windows."""
     fake_harnesses.remove("cursor-agent")
@@ -742,7 +842,9 @@ def test_snapshot_models_used_joins_harness_windows_by_model_family(
     assert run["models_used"][0]["runner"] == "claude-write"
     assert run["models_used"][0]["model"] == "fable"
     assert list(run["models_used"][0]["windows"].keys()) == [
-        "five_hour", "seven_day", "seven_day_fable",
+        "five_hour",
+        "seven_day",
+        "seven_day_fable",
     ]
     assert run["models_used"][1]["runner"] == "codex"
     assert run["models_used"][1]["model"] == "gpt-5.6-luna"
@@ -750,7 +852,9 @@ def test_snapshot_models_used_joins_harness_windows_by_model_family(
 
 
 def test_snapshot_always_has_limits_and_run_models_used(
-    project, alloy_home, fake_harnesses,
+    project,
+    alloy_home,
+    fake_harnesses,
 ):
     """Acceptance: limits and models_used are always present; empty when absent."""
     for name in ("claude", "codex", "cursor-agent"):
@@ -768,7 +872,10 @@ def test_snapshot_always_has_limits_and_run_models_used(
 
 
 def test_build_snapshot_never_probes_limits(
-    project, alloy_home, fake_harnesses, monkeypatch: pytest.MonkeyPatch,
+    project,
+    alloy_home,
+    fake_harnesses,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     """Acceptance: build_snapshot reads cache only; harness fetchers must not run."""
     fake_harnesses.remove("cursor-agent")
@@ -927,11 +1034,7 @@ def _dispatchable_bead_ids(engine: Engine) -> list[str]:
     from alloy import recipes
 
     known = set(recipes.names())
-    default = (
-        engine.beads.memories().get(DEFAULT_RECIPE_KEY)
-        if scheduler.recipe_filter is None
-        else None
-    )
+    default = engine.beads.memories().get(DEFAULT_RECIPE_KEY) if scheduler.recipe_filter is None else None
     if default and default not in known:
         default = None
     default_recipe = default or None
@@ -1005,10 +1108,7 @@ def test_snapshot_queue_ready_matches_scheduler_dispatch_order(project, alloy_ho
 
 def test_snapshot_queue_ready_truncates_at_fifty_and_reports_ready_total(project, alloy_home):
     """Acceptance: 60 dispatchable ready beads -> 50 listed, ready_total == 60."""
-    ready = [
-        _queue_bead(f"alloy-q.{index:02d}", title=f"task {index}", priority=2)
-        for index in range(60)
-    ]
+    ready = [_queue_bead(f"alloy-q.{index:02d}", title=f"task {index}", priority=2) for index in range(60)]
     engine = _engine(project, alloy_home, beads=FakeBeads(ready))
 
     snapshot = build_snapshot(engine)

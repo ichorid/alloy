@@ -21,8 +21,13 @@ from alloy import beads as bd
 from alloy.config import ConfigError, MemorySpec
 from alloy.memory_embed import last_review_date, render_embed_block, splice_managed_block
 from alloy.models import (
-    EMBED_STALE_KEY, MEMORY_REVIEW_LABEL, ProjectMemory, ReviewApply, ReviewPlan,
-    plan_review_apply, review_bead_text,
+    EMBED_STALE_KEY,
+    MEMORY_REVIEW_LABEL,
+    ProjectMemory,
+    ReviewApply,
+    ReviewPlan,
+    plan_review_apply,
+    review_bead_text,
 )
 
 if TYPE_CHECKING:
@@ -92,7 +97,10 @@ def dirty_instruction_files(repo: Path, names: list[str]) -> list[str]:
     try:
         proc = subprocess.run(
             ["git", "status", "--porcelain", "--untracked-files=all", "--", *existing],
-            cwd=str(repo), capture_output=True, text=True, check=False,
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            check=False,
         )
     except OSError as exc:
         log.warning("git status failed in %s: %s", repo, exc)
@@ -113,8 +121,9 @@ def dirty_instruction_files(repo: Path, names: list[str]) -> list[str]:
 # -- execution steps ---------------------------------------------------------
 
 
-async def review_plan(engine: Engine, recipe_name: str, memory: ProjectMemory,
-                      run_id: str, *, today: date) -> ReviewPlan:
+async def review_plan(
+    engine: Engine, recipe_name: str, memory: ProjectMemory, run_id: str, *, today: date
+) -> ReviewPlan:
     """Run the read-only memory review under a throwaway RunContext bound to
     the repository itself (no worktree, no bead, no ledger run row)."""
     from alloy.recipes.tdd_loop import review_memory
@@ -147,7 +156,10 @@ def apply_review(engine: Engine, plan: ReviewPlan, run_id: str, *, today: date) 
     human-owned keys plus one open alloy-memory-review task bead listing
     them (reused when already open), then the meta keys."""
     apply: ReviewApply = plan_review_apply(
-        plan, run_id=run_id, bead_id=MEMORY_REVIEW_BEAD, today=today,
+        plan,
+        run_id=run_id,
+        bead_id=MEMORY_REVIEW_BEAD,
+        today=today,
     )
     for key in apply.forgets:
         engine.beads.forget(key)
@@ -162,7 +174,9 @@ def apply_review(engine: Engine, plan: ReviewPlan, run_id: str, *, today: date) 
         else:
             title, description = review_bead_text(apply.proposals)
             review_bead = engine.beads.create_task(
-                title=title, description=description, labels=[MEMORY_REVIEW_LABEL],
+                title=title,
+                description=description,
+                labels=[MEMORY_REVIEW_LABEL],
             )
             created = True
     return {

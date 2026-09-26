@@ -167,9 +167,7 @@ def test_recipes_table_shows_per_tier_max_agent_calls(project, alloy_home):
 # -- alloy recipes --probe ---------------------------------------------------
 
 
-def test_recipes_probe_json_smoke_tests_every_distinct_tier_entry(
-    project, alloy_home, fake_harnesses
-):
+def test_recipes_probe_json_smoke_tests_every_distinct_tier_entry(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(PROBE_OK_CONFIG)
 
     result = _invoke(
@@ -191,11 +189,7 @@ def test_recipes_probe_json_smoke_tests_every_distinct_tier_entry(
     assert seen == EXPECTED_PROBE_KEYS
     assert all(row["ok"] for row in probe)
 
-    haiku_calls = [
-        call
-        for call in fake_harnesses.calls
-        if call["runner"] == "claude" and "haiku" in call["argv"]
-    ]
+    haiku_calls = [call for call in fake_harnesses.calls if call["runner"] == "claude" and "haiku" in call["argv"]]
     assert haiku_calls
     assert "--effort" in haiku_calls[0]["argv"]
     assert "low" in haiku_calls[0]["argv"]
@@ -226,9 +220,7 @@ def test_recipes_probe_nonzero_exit_when_codex_missing(project, alloy_home, fake
 # -- alloy status --json complexity ------------------------------------------
 
 
-async def test_status_json_shows_complexity_and_dispatch_tier_in_live_mode(
-    beads_project, alloy_home, fake_harnesses
-):
+async def test_status_json_shows_complexity_and_dispatch_tier_in_live_mode(beads_project, alloy_home, fake_harnesses):
     from alloy.engine import Engine
 
     fake_harnesses.configure(_estimate_script())

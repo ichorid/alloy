@@ -18,8 +18,11 @@ from typer.testing import CliRunner
 
 from alloy.cli import app
 from alloy.models import (
-    CONTRADICTION_KEY_PREFIX, EMBED_KEY as META_EMBED_KEY, PROPOSAL_KEY_PREFIX,
-    utcnow, with_provenance,
+    CONTRADICTION_KEY_PREFIX,
+    EMBED_KEY as META_EMBED_KEY,
+    PROPOSAL_KEY_PREFIX,
+    utcnow,
+    with_provenance,
 )
 from conftest import FAKE_BD_SOURCE, FAKE_RUNNERS, FAKE_SOURCE, memory_reviewer_entry
 
@@ -105,11 +108,7 @@ class FakeMemoryReviewHarness:
         return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
     def bd_writes(self) -> list[dict]:
-        return [
-            call
-            for call in self.calls
-            if call.get("command") in {"remember", "forget"}
-        ]
+        return [call for call in self.calls if call.get("command") in {"remember", "forget"}]
 
     def bd_creates(self) -> list[dict]:
         return [call for call in self.calls if call.get("command") == "create"]
@@ -239,7 +238,9 @@ def _configure_review(
 
 
 def test_memory_review_json_emits_hygiene_and_reviewer_plan_items(
-    project, alloy_home, fake_memory_review,
+    project,
+    alloy_home,
+    fake_memory_review,
 ):
     _configure_review(
         fake_memory_review,
@@ -293,7 +294,9 @@ def test_memory_review_json_emits_hygiene_and_reviewer_plan_items(
 
 
 def test_memory_review_malformed_reviewer_emits_hygiene_only(
-    project, alloy_home, fake_memory_review,
+    project,
+    alloy_home,
+    fake_memory_review,
 ):
     _configure_review(fake_memory_review, malformed_reviewer=True)
 
@@ -313,7 +316,9 @@ def test_memory_review_malformed_reviewer_emits_hygiene_only(
 
 
 def test_memory_review_does_not_write_to_bd(
-    project, alloy_home, fake_memory_review,
+    project,
+    alloy_home,
+    fake_memory_review,
 ):
     _configure_review(
         fake_memory_review,
@@ -380,7 +385,9 @@ def _create_labels(argv: list[str]) -> list[str]:
 
 
 def test_memory_review_apply_executes_alloy_forget_proposals_human_and_writes_meta(
-    project, alloy_home, fake_memory_review,
+    project,
+    alloy_home,
+    fake_memory_review,
 ):
     _configure_review(
         fake_memory_review,
@@ -423,7 +430,9 @@ def test_memory_review_apply_executes_alloy_forget_proposals_human_and_writes_me
 
 
 def test_memory_review_apply_second_run_reuses_open_review_bead(
-    project, alloy_home, fake_memory_review,
+    project,
+    alloy_home,
+    fake_memory_review,
 ):
     _configure_review(
         fake_memory_review,

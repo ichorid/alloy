@@ -52,9 +52,7 @@ def script(**overrides):
     return base
 
 
-async def test_a_successful_run_updates_the_bead_and_leaves_a_branch(
-    engine, beads_project, fake_harnesses
-):
+async def test_a_successful_run_updates_the_bead_and_leaves_a_branch(engine, beads_project, fake_harnesses):
     fake_harnesses.configure(script())
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
 
@@ -68,9 +66,7 @@ async def test_a_successful_run_updates_the_bead_and_leaves_a_branch(
     assert bead.metadata[bd.META_WORKTREE] == result.worktree
 
 
-async def test_the_bead_is_claimed_before_any_agent_runs(
-    engine, beads_project, fake_harnesses
-):
+async def test_the_bead_is_claimed_before_any_agent_runs(engine, beads_project, fake_harnesses):
     fake_harnesses.configure(script())
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
 
@@ -93,9 +89,7 @@ async def test_agents_only_ever_touch_the_worktree(engine, beads_project, fake_h
         assert call["cwd"] == result.worktree
 
 
-async def test_a_run_is_recorded_with_every_agent_call(
-    engine, beads_project, fake_harnesses
-):
+async def test_a_run_is_recorded_with_every_agent_call(engine, beads_project, fake_harnesses):
     fake_harnesses.configure(script())
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
 
@@ -103,7 +97,13 @@ async def test_a_run_is_recorded_with_every_agent_call(
     calls = engine.store.agent_calls(result.run_id)
 
     assert [call["role"] for call in calls] == [
-        "context", "estimate", "tests", "implement", "verifier", "acceptance", "judge",
+        "context",
+        "estimate",
+        "tests",
+        "implement",
+        "verifier",
+        "acceptance",
+        "judge",
         "harvest",
     ]
     for call in calls:
@@ -115,12 +115,9 @@ async def test_a_run_is_recorded_with_every_agent_call(
     assert record["agent_calls"] == 8
 
 
-async def test_failure_marks_the_bead_failed_and_keeps_the_worktree(
-    engine, beads_project, fake_harnesses
-):
+async def test_failure_marks_the_bead_failed_and_keeps_the_worktree(engine, beads_project, fake_harnesses):
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)],
-               judge=[judge_entry("abort", "cannot be done as specified")])
+        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("abort", "cannot be done as specified")])
     )
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
 
@@ -133,9 +130,7 @@ async def test_failure_marks_the_bead_failed_and_keeps_the_worktree(
     assert Path(result.worktree).is_dir()  # left for inspection
 
 
-async def test_human_gate_parks_the_bead_and_resume_completes_it(
-    engine, beads_project, fake_harnesses
-):
+async def test_human_gate_parks_the_bead_and_resume_completes_it(engine, beads_project, fake_harnesses):
     fake_harnesses.configure(
         script(
             implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
@@ -159,9 +154,7 @@ async def test_human_gate_parks_the_bead_and_resume_completes_it(
     assert "use NFKD" in fake_harnesses.calls_for("implement")[1]["prompt"]
 
 
-async def test_tests_role_session_limit_parks_with_retry_at(
-    engine, beads_project, fake_harnesses
-):
+async def test_tests_role_session_limit_parks_with_retry_at(engine, beads_project, fake_harnesses):
     """A harness 'resets H:MMam/pm' message schedules timed auto-resume metadata."""
     limit_msg = "You've hit your session limit · resets 1:20am"
     fake_harnesses.configure(script(tests=[{"exit": 1, "stderr": limit_msg}]))
@@ -197,12 +190,9 @@ async def test_a_bead_that_is_not_ready_is_refused(engine, beads_project, fake_h
         await engine.run(bead_id)
 
 
-async def test_cancel_returns_the_bead_to_ready_and_keeps_the_worktree(
-    engine, beads_project, fake_harnesses
-):
+async def test_cancel_returns_the_bead_to_ready_and_keeps_the_worktree(engine, beads_project, fake_harnesses):
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)],
-               judge=[judge_entry("human", "need a decision")])
+        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("human", "need a decision")])
     )
     bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop")
     paused = await engine.run(bead_id)
@@ -229,10 +219,14 @@ async def test_two_beads_get_independent_worktrees(engine, beads_project, fake_h
 
 
 async def test_status_output_is_machine_readable(engine, beads_project, fake_harnesses):
-    fake_harnesses.configure(script(verifier=[
-        verifier_run_entry(f"{sys.executable} -m pytest -q", kind="regression"),
-        verifier_stop_entry("suite green"),
-    ]))
+    fake_harnesses.configure(
+        script(
+            verifier=[
+                verifier_run_entry(f"{sys.executable} -m pytest -q", kind="regression"),
+                verifier_stop_entry("suite green"),
+            ]
+        )
+    )
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
     result = await engine.run(bead_id)
 
@@ -255,13 +249,15 @@ async def test_status_output_is_machine_readable(engine, beads_project, fake_har
     assert row["elapsed"].endswith("m")
 
 
-async def test_status_json_includes_checks_for_finished_run(
-    engine, beads_project, alloy_home, fake_harnesses
-):
-    fake_harnesses.configure(script(verifier=[
-        verifier_run_entry(f"{sys.executable} -m pytest -q", kind="regression"),
-        verifier_stop_entry("suite green"),
-    ]))
+async def test_status_json_includes_checks_for_finished_run(engine, beads_project, alloy_home, fake_harnesses):
+    fake_harnesses.configure(
+        script(
+            verifier=[
+                verifier_run_entry(f"{sys.executable} -m pytest -q", kind="regression"),
+                verifier_stop_entry("suite green"),
+            ]
+        )
+    )
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
     result = await engine.run(bead_id)
 
@@ -284,13 +280,10 @@ async def test_status_json_includes_checks_for_finished_run(
     assert row["checks"]["last"]["headline"]
 
 
-async def test_rerunning_a_cancelled_bead_starts_from_a_clean_graph(
-    engine, beads_project, fake_harnesses
-):
+async def test_rerunning_a_cancelled_bead_starts_from_a_clean_graph(engine, beads_project, fake_harnesses):
     """A new run must not inherit the abandoned run's graph state."""
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)],
-               judge=[judge_entry("human", "need a decision")])
+        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("human", "need a decision")])
     )
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
     abandoned = await engine.run(bead_id)
@@ -304,20 +297,23 @@ async def test_rerunning_a_cancelled_bead_starts_from_a_clean_graph(
     assert result.run_id != abandoned.run_id
     assert result.outcome == "done"
     assert [call["role"] for call in fake_harnesses.calls] == [
-        "context", "estimate", "tests", "implement", "verifier", "acceptance", "judge",
+        "context",
+        "estimate",
+        "tests",
+        "implement",
+        "verifier",
+        "acceptance",
+        "judge",
         "harvest",
     ]
     assert engine.store.get_run(result.run_id)["iteration"] == 1
 
 
-async def test_graph_snapshot_for_run_returns_that_specific_runs_state(
-    engine, beads_project, fake_harnesses
-):
+async def test_graph_snapshot_for_run_returns_that_specific_runs_state(engine, beads_project, fake_harnesses):
     """A bead with two recorded runs must not have `graph_snapshot_for_run` collapse
     to whichever run happens to be latest -- each run keeps its own checkpoint."""
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)],
-               judge=[judge_entry("human", "need a decision")])
+        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("human", "need a decision")])
     )
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
     first = await engine.run(bead_id)
@@ -359,8 +355,7 @@ async def test_resume_reconciles_inflight_calls_before_reassigning_pid(
     process's pid -- otherwise a stale in-flight row becomes indistinguishable
     from a fresh one, since the run now looks alive again."""
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)],
-               judge=[judge_entry("human", "need a decision")])
+        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("human", "need a decision")])
     )
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
     await engine.run(bead_id)
@@ -407,7 +402,9 @@ def _bug_description_with_where(title: str, where: str) -> str:
 
 
 async def test_unmerged_remediation_remembers_alloy_regression_prefix(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     """Unmerged remediation writes alloy:regression:<top-level path> with bug title."""
     from test_engine_run_child import (
@@ -417,13 +414,18 @@ async def test_unmerged_remediation_remembers_alloy_regression_prefix(
     )
 
     parent_id, parent_run_id, _, _ = await _paused_parent_with_wip(
-        engine, beads_project, fake_harnesses,
+        engine,
+        beads_project,
+        fake_harnesses,
     )
     bug_id = bd_create(beads_project, BUG_TITLE, alloy_recipe="tdd-loop")
     engine.beads.claim(bug_id)
     subprocess.run(
         ["bd", "update", bug_id, "-d", _bug_description_with_where(BUG_TITLE, BUG_WHERE)],
-        cwd=str(beads_project), check=True, capture_output=True, text=True,
+        cwd=str(beads_project),
+        check=True,
+        capture_output=True,
+        text=True,
     )
 
     async def gate_reject(bead, diff: str):
@@ -435,15 +437,16 @@ async def test_unmerged_remediation_remembers_alloy_regression_prefix(
     async with open_checkpointer(engine.paths.workflows_db) as checkpointer:
         parent_ctx = await _parent_context(engine, parent_id, parent_run_id, checkpointer)
         result = await engine.run_child(
-            bug_id, parent=parent_ctx, merge_gate=gate_reject,
+            bug_id,
+            parent=parent_ctx,
+            merge_gate=gate_reject,
         )
 
     assert result.outcome == "failed"
 
     memories = engine.beads.memories()
     assert REGRESSION_PREFIX_KEY in memories, (
-        f"expected {REGRESSION_PREFIX_KEY} after unmerged remediation; "
-        f"got keys: {sorted(memories)}"
+        f"expected {REGRESSION_PREFIX_KEY} after unmerged remediation; got keys: {sorted(memories)}"
     )
     body, run_id, bead_id, at = parse_provenance(memories[REGRESSION_PREFIX_KEY])
     assert BUG_TITLE in body
@@ -513,7 +516,9 @@ def _worktree_from_run(
 
 
 async def test_epic_child_runs_in_shared_epic_worktree(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     """A child under an epic uses <worktrees>/<epic-id> on branch alloy/<epic-id>."""
     epic_id = _create_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
@@ -532,16 +537,16 @@ async def test_epic_child_runs_in_shared_epic_worktree(
 
 
 async def test_epic_child_base_commit_starts_after_sibling_commit(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     """After sibling Y commits on alloy/<epic>, child X's base_commit is Y's HEAD."""
     epic_id = _create_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
     child_y = _epic_child(engine.beads, epic_id, "wire callback route")
     child_x = _epic_child(engine.beads, epic_id, "add token endpoint")
 
-    fake_harnesses.configure(
-        script(implement=[_implement_write("mypkg/y_marker.py", "Y = 1\n")])
-    )
+    fake_harnesses.configure(script(implement=[_implement_write("mypkg/y_marker.py", "Y = 1\n")]))
     await engine.run(child_y)
 
     epic_worktree = engine.paths.worktree_for(epic_id)
@@ -550,9 +555,7 @@ async def test_epic_child_base_commit_starts_after_sibling_commit(
     sibling_head = manager.head(epic_worktree)
 
     fake_harnesses.reset_calls()
-    fake_harnesses.configure(
-        script(implement=[_implement_write("mypkg/x_marker.py", "X = 1\n")])
-    )
+    fake_harnesses.configure(script(implement=[_implement_write("mypkg/x_marker.py", "X = 1\n")]))
     x_result = await engine.run(child_x)
 
     record = engine.store.get_run(x_result.run_id)
@@ -561,23 +564,21 @@ async def test_epic_child_base_commit_starts_after_sibling_commit(
 
 
 async def test_epic_child_judge_diff_lists_only_this_childs_files(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     """Sibling files already on alloy/<epic> must not appear in X's changed_files/diff."""
     epic_id = _create_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
     child_y = _epic_child(engine.beads, epic_id, "wire callback route")
     child_x = _epic_child(engine.beads, epic_id, "add token endpoint")
 
-    fake_harnesses.configure(
-        script(implement=[_implement_write("mypkg/y_marker.py", "Y = 1\n")])
-    )
+    fake_harnesses.configure(script(implement=[_implement_write("mypkg/y_marker.py", "Y = 1\n")]))
     await engine.run(child_y)
     # _settle already committed Y's marker on alloy/<epic>; no manual commit.
 
     fake_harnesses.reset_calls()
-    fake_harnesses.configure(
-        script(implement=[_implement_write("mypkg/x_marker.py", "X = 1\n")])
-    )
+    fake_harnesses.configure(script(implement=[_implement_write("mypkg/x_marker.py", "X = 1\n")]))
     x_result = await engine.run(child_x)
 
     manager = WorktreeManager(repo=engine.repo, root=engine.paths.worktrees)
@@ -591,7 +592,9 @@ async def test_epic_child_judge_diff_lists_only_this_childs_files(
 
 
 async def test_worktree_owner_metadata_runs_in_owner_worktree(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     """A bead with alloy_worktree_owner=<id> runs in <worktrees>/<id>."""
     owner_id = bd_create(beads_project, "landed feature", alloy_recipe="tdd-loop")
@@ -622,8 +625,7 @@ async def test_worktree_owner_metadata_runs_in_owner_worktree(
     repair_tests["write"].append(
         {
             "path": "tests/test_shout.py",
-            "content": "from mypkg.shout import shout\n\n\n"
-            "def test_shout():\n    assert shout('hi') == 'HI!'\n",
+            "content": "from mypkg.shout import shout\n\n\ndef test_shout():\n    assert shout('hi') == 'HI!'\n",
         }
     )
     fake_harnesses.configure(
@@ -645,7 +647,9 @@ async def test_worktree_owner_metadata_runs_in_owner_worktree(
 
 
 async def test_standalone_bead_keeps_per_bead_worktree_path(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     """Beads without an epic ancestor still use <worktrees>/<own-id>."""
     bead_id = bd_create(beads_project, "standalone task", alloy_recipe="tdd-loop")
@@ -659,16 +663,16 @@ async def test_standalone_bead_keeps_per_bead_worktree_path(
 
 
 async def test_epic_child_resume_restores_recorded_base_commit(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     """Resume must not recompute base via merge-base after more commits land on alloy/<epic>."""
     epic_id = _create_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
     child_y = _epic_child(engine.beads, epic_id, "wire callback route")
     child_x = _epic_child(engine.beads, epic_id, "add token endpoint")
 
-    fake_harnesses.configure(
-        script(implement=[_implement_write("mypkg/y_marker.py", "Y = 1\n")])
-    )
+    fake_harnesses.configure(script(implement=[_implement_write("mypkg/y_marker.py", "Y = 1\n")]))
     await engine.run(child_y)
     # _settle committed Y's work on the owner branch; X's base is that HEAD.
     manager = WorktreeManager(repo=engine.repo, root=engine.paths.worktrees)
@@ -695,9 +699,7 @@ async def test_epic_child_resume_restores_recorded_base_commit(
     fake_harnesses.reset_calls()
     # Resuming from the human gate routes back to the implementer; keep its
     # rewrite on the child's own file so the diff stays exactly this child's.
-    fake_harnesses.configure(
-        script(implement=[_implement_write("mypkg/x_marker.py", "X = 3\n")])
-    )
+    fake_harnesses.configure(script(implement=[_implement_write("mypkg/x_marker.py", "X = 3\n")]))
     resumed = await engine.resume(child_x, "proceed")
 
     assert resumed.outcome == "done"
@@ -748,7 +750,9 @@ def _files_in_head_commit(worktree_path: Path) -> list[str]:
 
 
 async def test_epic_child_success_commits_on_owner_branch_and_closes(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     """Successful epic child: commit on alloy/<epic>, child closed, owner tree kept clean."""
     epic_id = _create_epic(engine.beads, "OAuth login", "Ship OAuth for the API")
@@ -758,9 +762,7 @@ async def test_epic_child_success_commits_on_owner_branch_and_closes(
 
     epic_worktree = engine.paths.worktree_for(epic_id)
 
-    fake_harnesses.configure(
-        script(implement=[_implement_write(child_path, child_content)])
-    )
+    fake_harnesses.configure(script(implement=[_implement_write(child_path, child_content)]))
     result = await engine.run(child_id)
 
     bead = engine.beads.show(child_id)
@@ -773,7 +775,9 @@ async def test_epic_child_success_commits_on_owner_branch_and_closes(
 
 
 async def test_worktree_owner_bead_success_commits_on_owner_branch_and_closes(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     """Beads with alloy_worktree_owner commit on the owner branch and close."""
     owner_id = bd_create(beads_project, "landed feature", alloy_recipe="tdd-loop")
@@ -801,8 +805,7 @@ async def test_worktree_owner_bead_success_commits_on_owner_branch_and_closes(
     repair_tests["write"].append(
         {
             "path": "tests/test_repair_marker.py",
-            "content": "from mypkg.repair import fixed\n\n\n"
-            "def test_repair_marker():\n    assert fixed() is True\n",
+            "content": "from mypkg.repair import fixed\n\n\ndef test_repair_marker():\n    assert fixed() is True\n",
         }
     )
     fake_harnesses.reset_calls()
@@ -830,7 +833,9 @@ async def test_worktree_owner_bead_success_commits_on_owner_branch_and_closes(
 
 
 async def test_standalone_bead_success_stays_review_ready(
-    engine, beads_project, fake_harnesses,
+    engine,
+    beads_project,
+    fake_harnesses,
 ):
     """Beads without a shared owner still land at review-ready with worktree kept."""
     bead_id = bd_create(beads_project, "standalone task", alloy_recipe="tdd-loop")

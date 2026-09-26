@@ -82,24 +82,37 @@ class RunContext:
         fallback attempt always starts cold.
         """
         result = await self._call_one(
-            role, spec, prompt, schema=schema, iteration=iteration,
+            role,
+            spec,
+            prompt,
+            schema=schema,
+            iteration=iteration,
             resume_session=resume_session,
         )
         while not result.ok and spec.fallback is not None:
             log.warning(
                 "%s: %s failed (%s); falling back to %s",
-                role, spec.label, (result.error or f"exit {result.exit_code}")[:200],
+                role,
+                spec.label,
+                (result.error or f"exit {result.exit_code}")[:200],
                 spec.fallback.label,
             )
             if resume_session is not None:
                 log.warning(
                     "%s: dropping resume session %s -- %s cannot resume a %s session",
-                    role, resume_session, spec.fallback.label, spec.label,
+                    role,
+                    resume_session,
+                    spec.fallback.label,
+                    spec.label,
                 )
                 resume_session = None
             spec = spec.fallback
             result = await self._call_one(
-                role, spec, prompt, schema=schema, iteration=iteration,
+                role,
+                spec,
+                prompt,
+                schema=schema,
+                iteration=iteration,
                 resume_session=None,
             )
         return result
@@ -119,8 +132,12 @@ class RunContext:
         log.info("%s: calling %s (iteration %d)", role, spec.label, iteration)
         call_id = uuid.uuid4().hex
         self.store.start_call(
-            call_id, run_id=self.run_id, bead_id=self.bead.id, role=role,
-            runner=spec.runner, model=spec.model,
+            call_id,
+            run_id=self.run_id,
+            bead_id=self.bead.id,
+            role=role,
+            runner=spec.runner,
+            model=spec.model,
         )
         finished = False
         try:
@@ -146,8 +163,14 @@ class RunContext:
             except RunnerUnavailable as exc:
                 now = utcnow()
                 result = AgentResult(
-                    runner=spec.runner, model=spec.model, ok=False, exit_code=127,
-                    started_at=now, ended_at=now, duration_s=0.0, error=str(exc),
+                    runner=spec.runner,
+                    model=spec.model,
+                    ok=False,
+                    exit_code=127,
+                    started_at=now,
+                    ended_at=now,
+                    duration_s=0.0,
+                    error=str(exc),
                 )
             # Recorded in usage_json so `alloy logs` can show which calls
             # continued an earlier session.
@@ -164,16 +187,23 @@ class RunContext:
                 # agent-call budget.
                 result.usage = {**result.usage, UNAVAILABLE_KEY: True}
             self.store.finish_call(
-                call_id, run_id=self.run_id, bead_id=self.bead.id, role=role,
-                iteration=iteration, result=result,
+                call_id,
+                run_id=self.run_id,
+                bead_id=self.bead.id,
+                role=role,
+                iteration=iteration,
+                result=result,
             )
             finished = True
         finally:
             if not finished:
                 self.store.discard_call(call_id)
         log.info(
-            "%s: %s %s in %.0fs%s", role, result.runner,
-            "ok" if result.ok else f"failed (exit {result.exit_code})", result.duration_s,
+            "%s: %s %s in %.0fs%s",
+            role,
+            result.runner,
+            "ok" if result.ok else f"failed (exit {result.exit_code})",
+            result.duration_s,
             f" -- {result.error[:200]}" if result.error else "",
         )
         return result
@@ -266,10 +296,7 @@ class RunContext:
     def available_critics(self) -> list[RoleSpec]:
         """Critics whose CLI is actually installed. A missing harness is skipped,
         not fatal -- the consilium simply runs narrower."""
-        return [
-            spec for spec in self.recipe.consilium.critics
-            if self.registry.available(spec.runner)
-        ]
+        return [spec for spec in self.recipe.consilium.critics if self.registry.available(spec.runner)]
 
     def critic_spec(self, runner: str, model: str | None) -> RoleSpec:
         for spec in self.recipe.consilium.critics:
@@ -289,9 +316,7 @@ class RunContext:
 
     def agent_call_limit(self, state: Mapping[str, Any]) -> int:
         """Tier-scaled agent-call ceiling for this run, before budget extensions."""
-        return resolve_max_agent_calls(
-            self.recipe, state.get("complexity"), state.get("memory_calibration", "")
-        )
+        return resolve_max_agent_calls(self.recipe, state.get("complexity"), state.get("memory_calibration", ""))
 
     def check_limits(self, state: dict[str, Any]) -> str | None:
         """Return a description of the first limit breached, else None."""
@@ -319,8 +344,7 @@ class RunContext:
         allowed_wall = timedelta(minutes=limits.max_wall_time_minutes * multiplier)
         if elapsed > allowed_wall:
             return (
-                f"max_wall_time reached ({elapsed.total_seconds() / 60:.0f}m/"
-                f"{allowed_wall.total_seconds() / 60:.0f}m)"
+                f"max_wall_time reached ({elapsed.total_seconds() / 60:.0f}m/{allowed_wall.total_seconds() / 60:.0f}m)"
             )
         return None
 
@@ -366,7 +390,9 @@ class RunContext:
         if iteration is not None:
             self._iteration = iteration
         self.store.update_run(
-            self.run_id, stage=stage, iteration=self._iteration,
+            self.run_id,
+            stage=stage,
+            iteration=self._iteration,
         )
         if self.beads is not None:
             try:

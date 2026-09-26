@@ -21,8 +21,7 @@ _RETRY_AFTER = re.compile(
 )
 _RATE_LIMIT = re.compile(r"rate[\s_-]*limit", re.IGNORECASE)
 
-_UNIT_SECONDS = {"s": 1, "sec": 1, "second": 1, "m": 60, "min": 60, "minute": 60,
-                 "h": 3600, "hr": 3600, "hour": 3600}
+_UNIT_SECONDS = {"s": 1, "sec": 1, "second": 1, "m": 60, "min": 60, "minute": 60, "h": 3600, "hr": 3600, "hour": 3600}
 
 
 def parse_retry_at(error: str, now: datetime) -> datetime | None:

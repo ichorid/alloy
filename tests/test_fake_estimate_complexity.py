@@ -44,9 +44,7 @@ def _structured_from_runner_output(
     runner,
     proc: subprocess.CompletedProcess[str],
 ) -> dict | None:
-    text, structured, _usage, _session_id, failed = runner.parse(
-        proc.stdout, proc.stderr, proc.returncode
-    )
+    text, structured, _usage, _session_id, failed = runner.parse(proc.stdout, proc.stderr, proc.returncode)
     assert not failed
     if structured is None and text:
         structured = extract_json_object(text)
@@ -153,9 +151,7 @@ async def test_engine_run_with_builtin_recipe_without_estimate_script_records_va
 
     bead = engine.beads.show(bead_id)
     notes = _bead_notes(engine, bead_id)
-    estimate_calls = [
-        c for c in harness.store.agent_calls(harness.run_id) if c["role"] == "estimate"
-    ]
+    estimate_calls = [c for c in harness.store.agent_calls(harness.run_id) if c["role"] == "estimate"]
 
     assert final["complexity_source"] == "estimate"
     assert "estimate failed" not in notes

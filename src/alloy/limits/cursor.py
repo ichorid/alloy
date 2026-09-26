@@ -26,9 +26,7 @@ from typing import Any
 from alloy.limits import unavailable, window
 
 HARNESS = "cursor"
-DASHBOARD_USAGE_URL = (
-    "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
-)
+DASHBOARD_USAGE_URL = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
 LEGACY_USAGE_URL = "https://cursor.com/api/usage"
 SOURCE = "dashboard-api"
 _LEGACY_SOURCE = "usage-api"

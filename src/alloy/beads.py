@@ -135,8 +135,7 @@ class BeadsClient:
         )
         if check and proc.returncode != 0:
             raise BeadsError(
-                f"bd {' '.join(args)} failed (exit {proc.returncode}): "
-                f"{proc.stderr.strip() or proc.stdout.strip()}"
+                f"bd {' '.join(args)} failed (exit {proc.returncode}): {proc.stderr.strip() or proc.stdout.strip()}"
             )
         return proc
 
@@ -183,7 +182,10 @@ class BeadsClient:
         return Bead.model_validate(rows[0])
 
     def ready(
-        self, *, recipe: str | None = None, limit: int = 50,
+        self,
+        *,
+        recipe: str | None = None,
+        limit: int = 50,
         include_unassigned: bool = False,
     ) -> list[Bead]:
         """Open beads with no active blockers, highest priority first."""
@@ -204,8 +206,7 @@ class BeadsClient:
 
     def alloy_beads(self) -> list[Bead]:
         """Every bead Alloy has ever touched or been assigned."""
-        rows = self._json(["list", "--all", "--limit", "0", "--flat",
-                           "--has-metadata-key", META_RECIPE])
+        rows = self._json(["list", "--all", "--limit", "0", "--flat", "--has-metadata-key", META_RECIPE])
         return [Bead.model_validate(row) for row in rows]
 
     def all_rows(self) -> list[dict[str, Any]]:
@@ -219,9 +220,17 @@ class BeadsClient:
     def children(self, parent_id: str) -> list[Bead]:
         if self._rows is not None:
             return [Bead.model_validate(r) for r in self._rows.values() if _parent_id(r) == parent_id]
-        rows = self._json([
-            "list", "--parent", parent_id, "--all", "--limit", "0", "--flat",
-        ])
+        rows = self._json(
+            [
+                "list",
+                "--parent",
+                parent_id,
+                "--all",
+                "--limit",
+                "0",
+                "--flat",
+            ]
+        )
         return [Bead.model_validate(row) for row in rows]
 
     def _show_rows(self, bead_id: str) -> list[dict[str, Any]]:
@@ -310,8 +319,7 @@ class BeadsClient:
                     _memories_unavailable_logged = True
                 return {}
             raise BeadsError(
-                f"bd memories --json failed (exit {proc.returncode}): "
-                f"{proc.stderr.strip() or proc.stdout.strip()}"
+                f"bd memories --json failed (exit {proc.returncode}): {proc.stderr.strip() or proc.stdout.strip()}"
             )
         payload = _first_json_value(proc.stdout)
         if payload is None:
@@ -462,18 +470,26 @@ class BeadsClient:
         so a polling scheduler cannot grab it before the parent's child run.
         """
         if str(priority).strip().upper() in ("0", "P0"):
-            raise ValueError("bug beads never get priority 0: an agent-filed bead "
-                             "must not outrank every human-prioritised bead")
+            raise ValueError(
+                "bug beads never get priority 0: an agent-filed bead must not outrank every human-prioritised bead"
+            )
         body = f"{description}\n\nReported by Alloy while running bead {discovered_from}."
         args = [
-            "create", title,
-            "--type", "bug",
+            "create",
+            title,
+            "--type",
+            "bug",
             "--silent",
-            "--priority", str(priority),
-            "--description", body,
-            "--acceptance", acceptance,
-            "--deps", f"discovered-from:{discovered_from}",
-            "--metadata", json.dumps(metadata),
+            "--priority",
+            str(priority),
+            "--description",
+            body,
+            "--acceptance",
+            acceptance,
+            "--deps",
+            f"discovered-from:{discovered_from}",
+            "--metadata",
+            json.dumps(metadata),
         ]
         if labels:
             args += ["--labels", ",".join(labels)]

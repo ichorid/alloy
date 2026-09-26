@@ -122,19 +122,25 @@ def extract_bug_reports(text: str) -> list[BugReport]:
         if not title or title in titles:
             continue
         titles.add(title)
-        reports.append(BugReport(
-            title=title,
-            where=fields.get("where", ""),
-            evidence=fields.get("evidence", ""),
-            blocks_task={"yes": True, "true": True, "no": False, "false": False}.get(
-                fields.get("blocks_task", "").lower()
-            ),
-        ))
+        reports.append(
+            BugReport(
+                title=title,
+                where=fields.get("where", ""),
+                evidence=fields.get("evidence", ""),
+                blocks_task={"yes": True, "true": True, "no": False, "false": False}.get(
+                    fields.get("blocks_task", "").lower()
+                ),
+            )
+        )
     return reports
 
 
 BUG_SEVERITIES: tuple[str, ...] = (
-    "not-a-bug", "duplicate", "non-blocking", "blocking", "needs-human",
+    "not-a-bug",
+    "duplicate",
+    "non-blocking",
+    "blocking",
+    "needs-human",
 )
 BugSeverity = Literal["not-a-bug", "duplicate", "non-blocking", "blocking", "needs-human"]
 
@@ -268,8 +274,7 @@ def is_unavailable(result: "AgentResult") -> bool:
     `retry_at`). `AgentResult.usage` carries `UNAVAILABLE_KEY` once recorded."""
     if result.ok:
         return False
-    return bool((result.usage or {}).get(UNAVAILABLE_KEY)) or \
-        result.exit_code == 127 or result.retry_at is not None
+    return bool((result.usage or {}).get(UNAVAILABLE_KEY)) or result.exit_code == 127 or result.retry_at is not None
 
 
 class ContextPacket(BaseModel):
@@ -381,7 +386,9 @@ class VerifierAction(BaseModel):
 
     def to_request(self) -> CheckRequest:
         return CheckRequest(
-            command=self.command.strip(), purpose=self.purpose, kind=self.kind,
+            command=self.command.strip(),
+            purpose=self.purpose,
+            kind=self.kind,
             required=self.required,
         )
 
@@ -413,7 +420,13 @@ class VerifierAction(BaseModel):
                 "remaining_risks": {"type": "array", "items": {"type": "string"}},
             },
             "required": [
-                "action", "command", "purpose", "kind", "required", "reason", "remaining_risks",
+                "action",
+                "command",
+                "purpose",
+                "kind",
+                "required",
+                "reason",
+                "remaining_risks",
             ],
             "additionalProperties": False,
         }
@@ -430,9 +443,7 @@ class TestsOutput(BaseModel):
     @field_validator("baseline_checks", mode="after")
     @classmethod
     def _targeted_and_required(cls, checks: list[CheckRequest]) -> list[CheckRequest]:
-        return [
-            check.model_copy(update={"kind": "targeted", "required": True}) for check in checks
-        ]
+        return [check.model_copy(update={"kind": "targeted", "required": True}) for check in checks]
 
     @classmethod
     def schema_for_agents(cls) -> dict[str, Any]:
@@ -525,9 +536,7 @@ class Attempt(BaseModel):
     changed_tests: list[str] = Field(default_factory=list)
 
     def render(self) -> str:
-        edited = (
-            f"   tests edited: {', '.join(self.changed_tests)}\n" if self.changed_tests else ""
-        )
+        edited = f"   tests edited: {', '.join(self.changed_tests)}\n" if self.changed_tests else ""
         return (
             f"#{self.iteration} via {self.implementer}: {clip(self.change_summary, 300)}\n"
             f"   checks: {self.checks}\n"
@@ -622,11 +631,7 @@ def regression_key(where: str) -> str | None:
 def format_regression_areas(memories: dict[str, str], relevant_files: list[str]) -> str:
     """Render only regression memories matching the context's path prefixes."""
     keys = {regression_key(path) for path in relevant_files}
-    rows = [
-        f"### {key}\n{parse_provenance(body)[0]}"
-        for key, body in sorted(memories.items())
-        if key in keys
-    ]
+    rows = [f"### {key}\n{parse_provenance(body)[0]}" for key, body in sorted(memories.items()) if key in keys]
     return "## Known regression areas\n\n" + "\n\n".join(rows) if rows else ""
 
 
@@ -646,9 +651,7 @@ class MemoryEntry:
     def included(self) -> bool:
         """Whether this entry may appear in the prompt block at all."""
 
-        return not (
-            self.key in _MEMORY_EXCLUDED_KEYS or self.key.startswith(_MEMORY_EXCLUDED_PREFIXES)
-        )
+        return not (self.key in _MEMORY_EXCLUDED_KEYS or self.key.startswith(_MEMORY_EXCLUDED_PREFIXES))
 
     @property
     def cap_group(self) -> int:
@@ -783,16 +786,19 @@ def memory_inventory(memory: ProjectMemory, today: date) -> list[dict[str, Any]]
             flags.append(FLAG_EMBEDDED)
         if PROPOSAL_KEY_PREFIX + key in entries:
             flags.append(FLAG_PROPOSAL)
-        rows.append({
-            "key": key,
-            "owner": entry.owner,
-            "run_id": entry.run_id,
-            "bead_id": entry.bead_id,
-            "date": entry.date.isoformat() if entry.date else None,
-            "age_days": (today - entry.date).days if entry.date else None,
-            "flags": flags,
-        })
+        rows.append(
+            {
+                "key": key,
+                "owner": entry.owner,
+                "run_id": entry.run_id,
+                "bead_id": entry.bead_id,
+                "date": entry.date.isoformat() if entry.date else None,
+                "age_days": (today - entry.date).days if entry.date else None,
+                "flags": flags,
+            }
+        )
     return rows
+
 
 # ---------------------------------------------------------------------------
 # alloy memory review (alloy-4ef.16)
@@ -883,8 +889,7 @@ def memory_hygiene(memory: ProjectMemory, ttl_days: int, today: date) -> list[Re
     items: dict[str, ReviewPlanItem] = {}
 
     def forget(key: str, reason: str) -> None:
-        items.setdefault(key, ReviewPlanItem(key=key, action="forget", reason=reason,
-                                             source="hygiene"))
+        items.setdefault(key, ReviewPlanItem(key=key, action="forget", reason=reason, source="hygiene"))
 
     for key, entry in entries.items():
         if entry.owner == "alloy" and entry.date is not None:
@@ -892,7 +897,7 @@ def memory_hygiene(memory: ProjectMemory, ttl_days: int, today: date) -> list[Re
             if age > ttl_days:
                 forget(key, f"alloy-owned memory is {age} days old (ttl {ttl_days})")
         if key.startswith(CONTRADICTION_KEY_PREFIX):
-            subject = key[len(CONTRADICTION_KEY_PREFIX):]
+            subject = key[len(CONTRADICTION_KEY_PREFIX) :]
             if subject not in entries:
                 forget(key, f"contradiction flag for missing key {subject!r}")
 
@@ -903,9 +908,7 @@ def memory_hygiene(memory: ProjectMemory, ttl_days: int, today: date) -> list[Re
     for group in by_body.values():
         if len(group) < 2:
             continue
-        ordered = sorted(
-            group, key=lambda entry: (entry.date is not None, entry.date or date.min, entry.key)
-        )
+        ordered = sorted(group, key=lambda entry: (entry.date is not None, entry.date or date.min, entry.key))
         keeper = ordered[0]
         for entry in ordered[1:]:
             forget(entry.key, f"byte-identical to older key {keeper.key!r}")
@@ -931,12 +934,16 @@ def merge_review_plan(
             if verdict.key not in known_keys or verdict.key in taken:
                 continue
             taken.add(verdict.key)
-            items.append(ReviewPlanItem(
-                key=verdict.key, action=verdict.action, reason=verdict.reason,
-                source="reviewer", new_content=verdict.new_content,
-            ))
-    return ReviewPlan(items=items, reviewer_ok=verdicts is not None,
-                      reviewer_reason=reviewer_reason)
+            items.append(
+                ReviewPlanItem(
+                    key=verdict.key,
+                    action=verdict.action,
+                    reason=verdict.reason,
+                    source="reviewer",
+                    new_content=verdict.new_content,
+                )
+            )
+    return ReviewPlan(items=items, reviewer_ok=verdicts is not None, reviewer_reason=reviewer_reason)
 
 
 # ---------------------------------------------------------------------------
@@ -1013,9 +1020,7 @@ def plan_review_apply(plan: ReviewPlan, *, run_id: str, bead_id: str, today: dat
         if item.action == "forget":
             apply.forgets.append(item.key)
         elif item.new_content is not None:
-            apply.remembers.append(
-                (item.key, with_provenance(item.new_content, run_id, bead_id, today))
-            )
+            apply.remembers.append((item.key, with_provenance(item.new_content, run_id, bead_id, today)))
     apply.embed_keys = sorted(embed)
     apply.remembers.append((EMBED_KEY, json.dumps(apply.embed_keys)))
     apply.remembers.append((LAST_REVIEW_KEY, today.isoformat()))
@@ -1051,16 +1056,10 @@ def _load_calibration(body: str) -> dict[str, dict[str, Any]]:
         return {}
     if not isinstance(data, dict):
         return {}
-    return {
-        level: entry
-        for level, entry in data.items()
-        if level in COMPLEXITY_LEVELS and isinstance(entry, dict)
-    }
+    return {level: entry for level, entry in data.items() if level in COMPLEXITY_LEVELS and isinstance(entry, dict)}
 
 
-def update_calibration(
-    previous_json: str, level: str, iterations: int, agent_calls: int, overrun: bool
-) -> str:
+def update_calibration(previous_json: str, level: str, iterations: int, agent_calls: int, overrun: bool) -> str:
     """Fold one finished run into the stored alloy:calibration JSON: per level
     ``runs``, ``mean_iterations``, ``mean_agent_calls`` (one decimal) and
     ``overruns`` (runs that hit a limit). An unreadable previous body starts over."""
@@ -1100,6 +1099,7 @@ def format_calibration(body: str) -> str:
             f" {int(entry.get('overruns', 0) or 0)} overruns"
         )
     return f"calibration: {', '.join(parts)}" if parts else ""
+
 
 # ---------------------------------------------------------------------------
 # alloy:lesson:<key> (alloy-4ef.10)
@@ -1142,6 +1142,7 @@ class HarvestAnswer(BaseModel):
 
         key = self.key.strip().removeprefix(LESSON_KEY_PREFIX).strip()
         return f"{LESSON_KEY_PREFIX}{key}" if key else ""
+
 
 MAX_CHECK_HINTS = 8
 

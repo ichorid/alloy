@@ -62,9 +62,7 @@ def build_graph(ctx: RunContext):
         proposed = JudgeDecision.model_validate(
             state.get("decision") or {"decision": "retry", "reason": "no decision recorded"}
         )
-        tests_green = not any(
-            _is_red(check) for check in _checks_of(state, state.get("iteration", 0))
-        )
+        tests_green = not any(_is_red(check) for check in _checks_of(state, state.get("iteration", 0)))
         if proposed.decision == "done" and tests_green:
             return {
                 "stage": "guard",
@@ -105,15 +103,18 @@ def build_graph(ctx: RunContext):
     graph.add_edge(START, "trial_merge")
     graph.add_conditional_edges("trial_merge", route_after_trial_merge, ["verifier_step", END])
     graph.add_conditional_edges(
-        "verifier_step", _guard_instead_of_human(verify.route_after_verifier),
+        "verifier_step",
+        _guard_instead_of_human(verify.route_after_verifier),
         ["run_check_step", "acceptance_gate", "guard"],
     )
     graph.add_conditional_edges(
-        "run_check_step", _guard_instead_of_human(verify.route_after_check),
+        "run_check_step",
+        _guard_instead_of_human(verify.route_after_check),
         ["verifier_step", "guard"],
     )
     graph.add_conditional_edges(
-        "acceptance_gate", verify.route_after_acceptance,
+        "acceptance_gate",
+        verify.route_after_acceptance,
         ["guard", "verifier_step", "judge"],
     )
     graph.add_edge("judge", "guard")

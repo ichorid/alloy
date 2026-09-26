@@ -187,5 +187,7 @@ def test_scope_verdict_schema_puts_verdict_first_for_jev():
     schema = ScopeVerdict.schema_for_agents()
     assert list(schema["properties"].keys())[0] == "verdict"
     assert set(schema["properties"]["verdict"]["enum"]) == {
-        "merge", "too-broad", "subverts-task",
+        "merge",
+        "too-broad",
+        "subverts-task",
     }

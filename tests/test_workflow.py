@@ -67,9 +67,7 @@ def script(**overrides):
 # -- the happy path ---------------------------------------------------------
 
 
-async def test_done_decision_finishes_after_one_iteration(
-    project, alloy_home, fake_harnesses
-):
+async def test_done_decision_finishes_after_one_iteration(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(script())
     harness = make_harness(project, alloy_home)
     try:
@@ -80,14 +78,18 @@ async def test_done_decision_finishes_after_one_iteration(
     assert final["outcome"] == "done"
     assert final["iteration"] == 1
     assert [call["role"] for call in fake_harnesses.calls] == [
-        "context", "estimate", "tests", "implement", "verifier", "acceptance", "judge",
+        "context",
+        "estimate",
+        "tests",
+        "implement",
+        "verifier",
+        "acceptance",
+        "judge",
         "harvest",
     ]
 
 
-async def test_stages_run_in_order_and_tests_precede_implementation(
-    project, alloy_home, fake_harnesses
-):
+async def test_stages_run_in_order_and_tests_precede_implementation(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(script())
     harness = make_harness(project, alloy_home)
     try:
@@ -99,9 +101,7 @@ async def test_stages_run_in_order_and_tests_precede_implementation(
     assert roles.index("tests") < roles.index("implement")
 
 
-async def test_baseline_records_that_the_new_tests_fail_first(
-    project, alloy_home, fake_harnesses
-):
+async def test_baseline_records_that_the_new_tests_fail_first(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(verification_script())
     harness = make_harness(project, alloy_home)
     try:
@@ -113,17 +113,13 @@ async def test_baseline_records_that_the_new_tests_fail_first(
     assert final["last_check"]["exit_code"] == 0  # and passing after
 
 
-async def test_implement_change_summary_extracts_marked_summary_block(
-    project, alloy_home, fake_harnesses
-):
+async def test_implement_change_summary_extracts_marked_summary_block(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
         script(
             implement=[
                 {
                     **implement_entry(succeed=True),
-                    "text": (
-                        "noise <summary>Implemented slugify.</summary> trailing chatter"
-                    ),
+                    "text": ("noise <summary>Implemented slugify.</summary> trailing chatter"),
                 }
             ],
         )
@@ -140,9 +136,7 @@ async def test_implement_change_summary_extracts_marked_summary_block(
 # -- targeted baseline (prove_red) ------------------------------------------
 
 
-async def test_prove_red_runs_targeted_baseline_checks_from_tests_role(
-    project, alloy_home, fake_harnesses
-):
+async def test_prove_red_runs_targeted_baseline_checks_from_tests_role(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(script())
     harness = make_harness(project, alloy_home)
     try:
@@ -163,9 +157,7 @@ async def test_prove_red_runs_targeted_baseline_checks_from_tests_role(
     assert targeted_logs[0].read_text(encoding="utf-8").splitlines()[0] == f"$ {command}"
 
 
-async def test_implement_prompt_lists_baseline_checks_not_whole_suite_command(
-    project, alloy_home, fake_harnesses
-):
+async def test_implement_prompt_lists_baseline_checks_not_whole_suite_command(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(script())
     harness = make_harness(project, alloy_home)
     try:
@@ -179,12 +171,8 @@ async def test_implement_prompt_lists_baseline_checks_not_whole_suite_command(
     assert "## Test command" not in first_implement
 
 
-async def test_green_baseline_reruns_tests_then_proceeds_when_red(
-    project, alloy_home, fake_harnesses
-):
-    fake_harnesses.configure(
-        script(tests=[write_tests_entry(passing=True), write_tests_entry()])
-    )
+async def test_green_baseline_reruns_tests_then_proceeds_when_red(project, alloy_home, fake_harnesses):
+    fake_harnesses.configure(script(tests=[write_tests_entry(passing=True), write_tests_entry()]))
     harness = make_harness(project, alloy_home)
     try:
         final = await harness.start()
@@ -199,16 +187,12 @@ async def test_green_baseline_reruns_tests_then_proceeds_when_red(
     assert f"{sys.executable} -m pytest -q tests/test_slugify.py" in tests_calls[1]["prompt"]
 
 
-async def test_always_green_baseline_parks_at_human_gate(
-    project, alloy_home, fake_harnesses
-):
+async def test_always_green_baseline_parks_at_human_gate(project, alloy_home, fake_harnesses):
     config = replace(
         load_config(),
         verification=replace(load_config().verification, max_baseline_repairs=1),
     )
-    fake_harnesses.configure(
-        script(tests=[write_tests_entry(passing=True), write_tests_entry(passing=True)])
-    )
+    fake_harnesses.configure(script(tests=[write_tests_entry(passing=True), write_tests_entry(passing=True)]))
     harness = make_harness(project, alloy_home, config=config)
     try:
         final = await harness.start()
@@ -222,9 +206,7 @@ async def test_always_green_baseline_parks_at_human_gate(
     assert fake_harnesses.calls_for("implement") == []
 
 
-async def test_unrunnable_baseline_reruns_tests_with_command_not_found(
-    project, alloy_home, fake_harnesses
-):
+async def test_unrunnable_baseline_reruns_tests_with_command_not_found(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
         script(
             tests=[
@@ -256,9 +238,7 @@ async def test_unrunnable_baseline_reruns_tests_with_command_not_found(
 # -- retry ------------------------------------------------------------------
 
 
-async def test_retry_loops_back_through_implementation_and_verification(
-    project, alloy_home, fake_harnesses
-):
+async def test_retry_loops_back_through_implementation_and_verification(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
         script(
             implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
@@ -280,14 +260,11 @@ async def test_retry_loops_back_through_implementation_and_verification(
     assert len(final["attempts"]) == 2
 
 
-async def test_retry_instructions_reach_the_next_implementation(
-    project, alloy_home, fake_harnesses
-):
+async def test_retry_instructions_reach_the_next_implementation(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
         script(
             implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
-            judge=[judge_entry("retry", "wrong return", "return the slug string"),
-                   judge_entry("done")],
+            judge=[judge_entry("retry", "wrong return", "return the slug string"), judge_entry("done")],
         )
     )
     harness = make_harness(project, alloy_home)
@@ -301,9 +278,7 @@ async def test_retry_instructions_reach_the_next_implementation(
     assert "Previous attempts" in second
 
 
-async def test_history_given_to_agents_is_compact_not_a_transcript(
-    project, alloy_home, fake_harnesses
-):
+async def test_history_given_to_agents_is_compact_not_a_transcript(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
         script(
             implement=[
@@ -326,9 +301,7 @@ async def test_history_given_to_agents_is_compact_not_a_transcript(
 # -- Alloy overruling the judge --------------------------------------------
 
 
-async def test_done_is_refused_while_tests_are_failing(
-    project, alloy_home, fake_harnesses
-):
+async def test_done_is_refused_while_tests_are_failing(project, alloy_home, fake_harnesses):
     """The judge does not get to declare victory over a red suite."""
     fake_harnesses.configure(
         verification_script(
@@ -344,13 +317,10 @@ async def test_done_is_refused_while_tests_are_failing(
 
     assert final["outcome"] == "done"
     assert final["iteration"] == 2  # the premature "done" was turned into a retry
-    assert "overridden by Alloy" in final["attempts"][0]["reason"] or \
-           len(fake_harnesses.calls_for("implement")) == 2
+    assert "overridden by Alloy" in final["attempts"][0]["reason"] or len(fake_harnesses.calls_for("implement")) == 2
 
 
-async def test_unparseable_judge_output_becomes_a_retry_not_a_crash(
-    project, alloy_home, fake_harnesses
-):
+async def test_unparseable_judge_output_becomes_a_retry_not_a_crash(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
         script(
             implement=[implement_entry(succeed=True)],
@@ -384,14 +354,10 @@ async def test_judge_runner_failure_is_survived(project, alloy_home, fake_harnes
     assert "judge runner failed" in final["attempts"][0]["reason"]
 
 
-async def test_unavailable_judge_parks_at_the_human_gate_instead_of_retrying(
-    project, alloy_home, fake_harnesses
-):
+async def test_unavailable_judge_parks_at_the_human_gate_instead_of_retrying(project, alloy_home, fake_harnesses):
     """A spend/session limit on the judge is not a verdict: no retry iteration,
     and the failed call does not spend the run's agent-call budget."""
-    fake_harnesses.configure(
-        script(judge=[{"exit": 1, "stderr": "session limit resets 6:20pm"}, judge_entry("done")])
-    )
+    fake_harnesses.configure(script(judge=[{"exit": 1, "stderr": "session limit resets 6:20pm"}, judge_entry("done")]))
     harness = make_harness(project, alloy_home)
     try:
         paused = await harness.start()
@@ -406,12 +372,8 @@ async def test_unavailable_judge_parks_at_the_human_gate_instead_of_retrying(
         harness.close()
 
 
-async def test_unavailable_implement_parks_at_the_human_gate(
-    project, alloy_home, fake_harnesses
-):
-    fake_harnesses.configure(
-        script(implement=[{"exit": 1, "stderr": "session limit resets 6:20pm"}])
-    )
+async def test_unavailable_implement_parks_at_the_human_gate(project, alloy_home, fake_harnesses):
+    fake_harnesses.configure(script(implement=[{"exit": 1, "stderr": "session limit resets 6:20pm"}]))
     harness = make_harness(project, alloy_home)
     try:
         paused = await harness.start()
@@ -429,8 +391,7 @@ async def test_failing_tests_role_pauses_for_a_human_before_burning_an_implement
     don't fail, and re-run the tests stage on resume."""
     from langgraph.types import Command
 
-    fake_harnesses.configure(script(tests=[{"exit": 1, "stderr": "claude: session limit"},
-                                           write_tests_entry()]))
+    fake_harnesses.configure(script(tests=[{"exit": 1, "stderr": "claude: session limit"}, write_tests_entry()]))
     harness = make_harness(project, alloy_home)
     try:
         paused = await harness.start()
@@ -444,21 +405,25 @@ async def test_failing_tests_role_pauses_for_a_human_before_burning_an_implement
 
     assert final["outcome"] == "done"
     assert [call["role"] for call in fake_harnesses.calls] == [
-        "context", "estimate", "tests", "tests", "tests", "implement", "verifier",
-        "acceptance", "judge", "harvest",
+        "context",
+        "estimate",
+        "tests",
+        "tests",
+        "tests",
+        "implement",
+        "verifier",
+        "acceptance",
+        "judge",
+        "harvest",
     ]
     # Cursor and its fallback fail before the gate; resume retries Cursor.
-    assert [call["runner"] for call in fake_harnesses.calls_for("tests")] == [
-        "cursor-agent", "claude", "cursor-agent"
-    ]
+    assert [call["runner"] for call in fake_harnesses.calls_for("tests")] == ["cursor-agent", "claude", "cursor-agent"]
 
 
 # -- consilium --------------------------------------------------------------
 
 
-async def test_consilium_runs_every_critic_then_synthesizes(
-    project, alloy_home, fake_harnesses
-):
+async def test_consilium_runs_every_critic_then_synthesizes(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
         script(
             implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
@@ -478,9 +443,7 @@ async def test_consilium_runs_every_critic_then_synthesizes(
     assert final["outcome"] == "done"
 
 
-async def test_critics_never_see_each_others_opinions(
-    project, alloy_home, fake_harnesses
-):
+async def test_critics_never_see_each_others_opinions(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
         script(
             implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
@@ -497,9 +460,7 @@ async def test_critics_never_see_each_others_opinions(
     for call in fake_harnesses.calls_for("critic"):
         assert "a very distinctive root cause" not in call["prompt"]
     # ...but the synthesizer sees all of them
-    assert fake_harnesses.calls_for("synthesize")[0]["prompt"].count(
-        "a very distinctive root cause"
-    ) == 3
+    assert fake_harnesses.calls_for("synthesize")[0]["prompt"].count("a very distinctive root cause") == 3
 
 
 async def test_critics_are_read_only_harnesses(project, alloy_home, fake_harnesses):
@@ -515,15 +476,11 @@ async def test_critics_are_read_only_harnesses(project, alloy_home, fake_harness
     finally:
         harness.close()
 
-    codex_critic = next(
-        call for call in fake_harnesses.calls_for("critic") if call["runner"] == "codex"
-    )
+    codex_critic = next(call for call in fake_harnesses.calls_for("critic") if call["runner"] == "codex")
     assert "read-only" in codex_critic["argv"]
 
 
-async def test_synthesized_instructions_drive_the_next_implementation(
-    project, alloy_home, fake_harnesses
-):
+async def test_synthesized_instructions_drive_the_next_implementation(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
         script(
             implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
@@ -540,9 +497,7 @@ async def test_synthesized_instructions_drive_the_next_implementation(
     assert "Return the slug, not None." in fake_harnesses.calls_for("implement")[1]["prompt"]
 
 
-async def test_missing_critic_harness_narrows_the_consilium_instead_of_failing(
-    project, alloy_home, fake_harnesses
-):
+async def test_missing_critic_harness_narrows_the_consilium_instead_of_failing(project, alloy_home, fake_harnesses):
     fake_harnesses.remove("pi")
     fake_harnesses.configure(
         script(
@@ -560,9 +515,7 @@ async def test_missing_critic_harness_narrows_the_consilium_instead_of_failing(
     assert final["outcome"] == "done"
 
 
-async def test_a_failing_critic_does_not_sink_the_consilium(
-    project, alloy_home, fake_harnesses
-):
+async def test_a_failing_critic_does_not_sink_the_consilium(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
         script(
             implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
@@ -583,15 +536,11 @@ async def test_a_failing_critic_does_not_sink_the_consilium(
 # -- limits -----------------------------------------------------------------
 
 
-async def test_max_iterations_stops_an_endless_retry_loop(
-    project, alloy_home, fake_harnesses
-):
+async def test_max_iterations_stops_an_endless_retry_loop(project, alloy_home, fake_harnesses):
     """The judge asks for retry forever; Alloy stops anyway."""
-    config = replace(load_config(), limits=Limits(max_iterations=3, max_consiliums=0,
-                                                  max_agent_calls=100))
+    config = replace(load_config(), limits=Limits(max_iterations=3, max_consiliums=0, max_agent_calls=100))
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)],
-               judge=[judge_entry("retry", "still broken")])
+        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("retry", "still broken")])
     )
     harness = make_harness(project, alloy_home, config=config)
     try:
@@ -606,11 +555,9 @@ async def test_max_iterations_stops_an_endless_retry_loop(
 
 
 async def test_max_agent_calls_stops_the_loop(project, alloy_home, fake_harnesses):
-    config = replace(load_config(), limits=Limits(max_iterations=50, max_consiliums=0,
-                                                  max_agent_calls=6))
+    config = replace(load_config(), limits=Limits(max_iterations=50, max_consiliums=0, max_agent_calls=6))
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)],
-               judge=[judge_entry("retry", "still broken")])
+        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("retry", "still broken")])
     )
     harness = make_harness(project, alloy_home, config=config)
     try:
@@ -622,12 +569,12 @@ async def test_max_agent_calls_stops_the_loop(project, alloy_home, fake_harnesse
 
 
 async def test_max_wall_time_stops_the_loop(project, alloy_home, fake_harnesses):
-    config = replace(load_config(), limits=Limits(max_iterations=50, max_consiliums=0,
-                                                  max_agent_calls=100,
-                                                  max_wall_time_minutes=0.0))
+    config = replace(
+        load_config(),
+        limits=Limits(max_iterations=50, max_consiliums=0, max_agent_calls=100, max_wall_time_minutes=0.0),
+    )
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)],
-               judge=[judge_entry("retry", "still broken")])
+        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("retry", "still broken")])
     )
     harness = make_harness(project, alloy_home, config=config)
     try:
@@ -638,11 +585,8 @@ async def test_max_wall_time_stops_the_loop(project, alloy_home, fake_harnesses)
     assert "max_wall_time" in final["limit_hit"]
 
 
-async def test_consilium_budget_downgrades_to_a_plain_retry(
-    project, alloy_home, fake_harnesses
-):
-    config = replace(load_config(), limits=Limits(max_iterations=5, max_consiliums=1,
-                                                  max_agent_calls=100))
+async def test_consilium_budget_downgrades_to_a_plain_retry(project, alloy_home, fake_harnesses):
+    config = replace(load_config(), limits=Limits(max_iterations=5, max_consiliums=1, max_agent_calls=100))
     fake_harnesses.configure(
         script(
             implement=[
@@ -670,8 +614,7 @@ async def test_consilium_budget_downgrades_to_a_plain_retry(
 
 async def test_abort_fails_the_task_cleanly(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)],
-               judge=[judge_entry("abort", "the spec contradicts itself")])
+        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("abort", "the spec contradicts itself")])
     )
     harness = make_harness(project, alloy_home)
     try:
@@ -688,8 +631,10 @@ async def test_abort_fails_the_task_cleanly(project, alloy_home, fake_harnesses)
 
 async def test_human_decision_pauses_at_a_checkpoint(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)],
-               judge=[judge_entry("human", "which unicode form?", "ask the author")])
+        script(
+            implement=[implement_entry(succeed=False)],
+            judge=[judge_entry("human", "which unicode form?", "ask the author")],
+        )
     )
     harness = make_harness(project, alloy_home)
     try:
@@ -704,9 +649,7 @@ async def test_human_decision_pauses_at_a_checkpoint(project, alloy_home, fake_h
         harness.close()
 
 
-async def test_resume_delivers_the_humans_answer_to_the_implementer(
-    project, alloy_home, fake_harnesses
-):
+async def test_resume_delivers_the_humans_answer_to_the_implementer(project, alloy_home, fake_harnesses):
     from langgraph.types import Command
 
     fake_harnesses.configure(
@@ -726,20 +669,15 @@ async def test_resume_delivers_the_humans_answer_to_the_implementer(
     assert "use NFKD" in fake_harnesses.calls_for("implement")[1]["prompt"]
 
 
-async def test_resuming_past_a_limit_grants_a_fresh_budget(
-    project, alloy_home, fake_harnesses
-):
+async def test_resuming_past_a_limit_grants_a_fresh_budget(project, alloy_home, fake_harnesses):
     """Otherwise the run would pause again immediately and never progress."""
     from langgraph.types import Command
 
-    config = replace(load_config(), limits=Limits(max_iterations=2, max_consiliums=0,
-                                                  max_agent_calls=100))
+    config = replace(load_config(), limits=Limits(max_iterations=2, max_consiliums=0, max_agent_calls=100))
     fake_harnesses.configure(
         script(
-            implement=[implement_entry(succeed=False), implement_entry(succeed=False),
-                       implement_entry(succeed=True)],
-            judge=[judge_entry("retry", "broken"), judge_entry("retry", "broken"),
-                   judge_entry("done")],
+            implement=[implement_entry(succeed=False), implement_entry(succeed=False), implement_entry(succeed=True)],
+            judge=[judge_entry("retry", "broken"), judge_entry("retry", "broken"), judge_entry("done")],
         )
     )
     harness = make_harness(project, alloy_home, config=config)
@@ -754,12 +692,9 @@ async def test_resuming_past_a_limit_grants_a_fresh_budget(
     assert final["budget_extensions"] == 1
 
 
-async def test_a_judge_that_always_says_done_on_a_red_suite_still_hits_the_limit(
-    project, alloy_home, fake_harnesses
-):
+async def test_a_judge_that_always_says_done_on_a_red_suite_still_hits_the_limit(project, alloy_home, fake_harnesses):
     """The premature-done override must not become a way around max_iterations."""
-    config = replace(load_config(), limits=Limits(max_iterations=3, max_consiliums=0,
-                                                  max_agent_calls=100))
+    config = replace(load_config(), limits=Limits(max_iterations=3, max_consiliums=0, max_agent_calls=100))
     fake_harnesses.configure(
         verification_script(
             implement=[implement_entry(succeed=False)],
@@ -798,9 +733,7 @@ def verification_script(**overrides):
     return base
 
 
-async def test_red_required_check_routes_to_implement_without_judge(
-    project, alloy_home, fake_harnesses
-):
+async def test_red_required_check_routes_to_implement_without_judge(project, alloy_home, fake_harnesses):
     """A required check that fails skips the judge and routes straight to repair."""
     fake_harnesses.configure(
         verification_script(
@@ -829,9 +762,7 @@ async def test_red_required_check_routes_to_implement_without_judge(
     assert "Current diff" in second_prompt
 
 
-async def test_verifier_builds_on_green_targeted_before_regression_and_judge(
-    project, alloy_home, fake_harnesses
-):
+async def test_verifier_builds_on_green_targeted_before_regression_and_judge(project, alloy_home, fake_harnesses):
     """After a green targeted check the verifier sees it, runs regression, then stops."""
     fake_harnesses.configure(
         verification_script(
@@ -864,9 +795,7 @@ async def test_verifier_builds_on_green_targeted_before_regression_and_judge(
     assert kinds.index("targeted") < kinds.index("regression")
 
 
-async def test_verifier_check_kinds_recorded_in_order_across_iterations(
-    project, alloy_home, fake_harnesses
-):
+async def test_verifier_check_kinds_recorded_in_order_across_iterations(project, alloy_home, fake_harnesses):
     """Each iteration's verifier-chosen check kind is stored on the run."""
     fake_harnesses.configure(
         verification_script(
@@ -893,9 +822,7 @@ async def test_verifier_check_kinds_recorded_in_order_across_iterations(
     assert kinds.index("targeted") < kinds.index("lint")
 
 
-async def test_max_checks_per_iteration_forces_verifier_stop(
-    project, alloy_home, fake_harnesses
-):
+async def test_max_checks_per_iteration_forces_verifier_stop(project, alloy_home, fake_harnesses):
     """Hard per-iteration check budget stops the verifier and records the exhaustion."""
     config = replace(
         load_config(),
@@ -913,20 +840,13 @@ async def test_max_checks_per_iteration_forces_verifier_stop(
         harness.close()
 
     assert fake_harnesses.calls_for("judge")
-    verifier_checks = [
-        check for check in final["checks"] if check["kind"] == "custom"
-    ]
+    verifier_checks = [check for check in final["checks"] if check["kind"] == "custom"]
     assert len(verifier_checks) == 2
     assert final["verifier_stop"] is not None
-    assert any(
-        "verifier check budget exhausted" in risk
-        for risk in final["verifier_stop"]["remaining_risks"]
-    )
+    assert any("verifier check budget exhausted" in risk for risk in final["verifier_stop"]["remaining_risks"])
 
 
-async def test_max_total_checks_parks_at_human_gate(
-    project, alloy_home, fake_harnesses
-):
+async def test_max_total_checks_parks_at_human_gate(project, alloy_home, fake_harnesses):
     """A run-wide check cap parks at the human gate like max_iterations."""
     config = replace(
         load_config(),
@@ -953,9 +873,7 @@ async def test_max_total_checks_parks_at_human_gate(
     assert len(list(log_dir.glob("check-*.log"))) <= 3
 
 
-async def test_verifier_runs_arbitrary_project_script(
-    project, alloy_home, fake_harnesses
-):
+async def test_verifier_runs_arbitrary_project_script(project, alloy_home, fake_harnesses):
     """The verifier can name any shell command; Alloy runs it without autodetect changes."""
     scripts = project / "scripts"
     scripts.mkdir()
@@ -983,9 +901,7 @@ async def test_verifier_runs_arbitrary_project_script(
     assert final["checks"][-1]["exit_code"] == 0
 
 
-async def test_unrunnable_verifier_command_surfaces_in_next_prompt(
-    project, alloy_home, fake_harnesses
-):
+async def test_unrunnable_verifier_command_surfaces_in_next_prompt(project, alloy_home, fake_harnesses):
     """An unrunnable verifier command is reported back on the next verifier turn."""
     fake_harnesses.configure(
         verification_script(
@@ -1020,9 +936,7 @@ def acceptance_script(**overrides):
     return base
 
 
-async def test_verifier_stop_calls_acceptance_before_judge(
-    project, alloy_home, fake_harnesses
-):
+async def test_verifier_stop_calls_acceptance_before_judge(project, alloy_home, fake_harnesses):
     """(a) After the verifier stops, the acceptance role runs next."""
     fake_harnesses.configure(acceptance_script())
     harness = make_harness(project, alloy_home)
@@ -1039,9 +953,7 @@ async def test_verifier_stop_calls_acceptance_before_judge(
     assert final["acceptance"]["decision"] == "accept"
 
 
-async def test_acceptance_verify_more_returns_to_verifier_with_reason(
-    project, alloy_home, fake_harnesses
-):
+async def test_acceptance_verify_more_returns_to_verifier_with_reason(project, alloy_home, fake_harnesses):
     """(b) verify_more re-enters the verifier with the gate's reason in its prompt."""
     gate_reason = "unicode normalization is still unverified"
     fake_harnesses.configure(
@@ -1071,9 +983,7 @@ async def test_acceptance_verify_more_returns_to_verifier_with_reason(
     assert gate_reason in fake_harnesses.calls[second_verifier]["prompt"]
 
 
-async def test_verify_more_without_new_evidence_escalates_to_judge(
-    project, alloy_home, fake_harnesses
-):
+async def test_verify_more_without_new_evidence_escalates_to_judge(project, alloy_home, fake_harnesses):
     """A verifier that stops without running anything cannot loop acceptance forever."""
     fake_harnesses.configure(
         acceptance_script(
@@ -1083,7 +993,8 @@ async def test_verify_more_without_new_evidence_escalates_to_judge(
                 verifier_stop_entry("first stop"),
                 verifier_stop_entry("nothing new to run"),
                 verifier_stop_entry("still nothing"),
-            ] + [verifier_stop_entry("still nothing")] * 6,
+            ]
+            + [verifier_stop_entry("still nothing")] * 6,
             judge=[judge_entry("done")],
         )
     )
@@ -1100,9 +1011,7 @@ async def test_verify_more_without_new_evidence_escalates_to_judge(
     assert "asked for more verification 1 time(s)" in second
 
 
-async def test_acceptance_repair_routes_to_implement_with_gate_reason(
-    project, alloy_home, fake_harnesses
-):
+async def test_acceptance_repair_routes_to_implement_with_gate_reason(project, alloy_home, fake_harnesses):
     """(c) repair sends the implementer back with the acceptance gate's ask."""
     repair_reason = "slugify must reject empty input"
     fake_harnesses.configure(
@@ -1129,9 +1038,7 @@ async def test_acceptance_repair_routes_to_implement_with_gate_reason(
     assert repair_reason in prompt
 
 
-async def test_low_confidence_accept_escalates_to_judge(
-    project, alloy_home, fake_harnesses
-):
+async def test_low_confidence_accept_escalates_to_judge(project, alloy_home, fake_harnesses):
     """(d) accept below min_acceptance_confidence escalates to the judge."""
     fake_harnesses.configure(
         acceptance_script(
@@ -1152,9 +1059,7 @@ async def test_low_confidence_accept_escalates_to_judge(
     assert fake_harnesses.calls_for("judge")
 
 
-async def test_acceptance_escalate_reaches_judge_and_human_gate(
-    project, alloy_home, fake_harnesses
-):
+async def test_acceptance_escalate_reaches_judge_and_human_gate(project, alloy_home, fake_harnesses):
     """(e) escalate routes to the judge; a human decision still parks the run."""
     human_reason = "which unicode normalization form?"
     fake_harnesses.configure(
@@ -1176,9 +1081,7 @@ async def test_acceptance_escalate_reaches_judge_and_human_gate(
     assert final["__interrupt__"][0].value["reason"] == human_reason
 
 
-async def test_acceptance_accept_with_empty_diff_is_overridden_to_retry(
-    project, alloy_home, fake_harnesses
-):
+async def test_acceptance_accept_with_empty_diff_is_overridden_to_retry(project, alloy_home, fake_harnesses):
     """(f) accept cannot finish on an empty diff; guard overrides to retry."""
     fake_harnesses.configure(
         acceptance_script(
@@ -1197,15 +1100,10 @@ async def test_acceptance_accept_with_empty_diff_is_overridden_to_retry(
         harness.close()
 
     assert final["outcome"] == "done"
-    assert any(
-        "overridden by Alloy" in attempt.get("reason", "")
-        for attempt in final["attempts"]
-    )
+    assert any("overridden by Alloy" in attempt.get("reason", "") for attempt in final["attempts"])
 
 
-async def test_failed_acceptance_call_escalates_with_default_verdict(
-    project, alloy_home, fake_harnesses
-):
+async def test_failed_acceptance_call_escalates_with_default_verdict(project, alloy_home, fake_harnesses):
     """(g) A non-zero acceptance harness exit routes to the judge as escalate."""
     fake_harnesses.configure(
         acceptance_script(
@@ -1237,9 +1135,7 @@ def verifier_modify_worktree_entry() -> dict:
     return entry
 
 
-async def test_verifier_calls_resume_tests_session_on_happy_path(
-    project, alloy_home, fake_harnesses
-):
+async def test_verifier_calls_resume_tests_session_on_happy_path(project, alloy_home, fake_harnesses):
     """(a) Verifier resumes the tests writer's session; resumed prompts omit repo context."""
     fake_harnesses.configure(verification_script())
     harness = make_harness(project, alloy_home)
@@ -1260,13 +1156,9 @@ async def test_verifier_calls_resume_tests_session_on_happy_path(
         assert REPOSITORY_CONTEXT_HEADING not in call["prompt"]
 
 
-async def test_green_baseline_repair_resumes_tests_session(
-    project, alloy_home, fake_harnesses
-):
+async def test_green_baseline_repair_resumes_tests_session(project, alloy_home, fake_harnesses):
     """(b) A tests repair pass after a green baseline resumes the tests session."""
-    fake_harnesses.configure(
-        script(tests=[write_tests_entry(passing=True), write_tests_entry()])
-    )
+    fake_harnesses.configure(script(tests=[write_tests_entry(passing=True), write_tests_entry()]))
     harness = make_harness(project, alloy_home)
     try:
         final = await harness.start()
@@ -1281,9 +1173,7 @@ async def test_green_baseline_repair_resumes_tests_session(
     assert REPOSITORY_CONTEXT_HEADING not in tests_calls[1]["prompt"]
 
 
-async def test_tests_fallback_clears_session_for_later_calls(
-    project, alloy_home, fake_harnesses
-):
+async def test_tests_fallback_clears_session_for_later_calls(project, alloy_home, fake_harnesses):
     """(c) After tests fallback, no later harness call attempts session resume."""
     config = load_config()
     roles = dict(config.roles)
@@ -1321,17 +1211,13 @@ async def test_tests_fallback_clears_session_for_later_calls(
     verifier_calls = fake_harnesses.calls_for("verifier")
     assert verifier_calls
     assert all("resume" not in call for call in verifier_calls)
-    verifier_ledger = [
-        row for row in harness.store.agent_calls(harness.run_id) if row["role"] == "verifier"
-    ]
+    verifier_ledger = [row for row in harness.store.agent_calls(harness.run_id) if row["role"] == "verifier"]
     assert json.loads(verifier_ledger[0]["usage_json"])["resumed"] is False
     for fn in (tests_prompt, verifier_prompt):
         assert "resumed" in inspect.signature(fn).parameters
 
 
-async def test_verifier_resume_failure_retries_fresh_then_completes(
-    project, alloy_home, fake_harnesses
-):
+async def test_verifier_resume_failure_retries_fresh_then_completes(project, alloy_home, fake_harnesses):
     """(d) A failed resumed verifier call retries fresh; ledger records resumed true then false."""
     fake_harnesses.configure(
         verification_script(
@@ -1356,18 +1242,13 @@ async def test_verifier_resume_failure_retries_fresh_then_completes(
     assert verifier_calls[0].get("resume") == FAKE_SESSION
     assert "resume" not in verifier_calls[1]
 
-    ledger = [
-        call for call in harness.store.agent_calls(harness.run_id)
-        if call["role"] == "verifier"
-    ]
+    ledger = [call for call in harness.store.agent_calls(harness.run_id) if call["role"] == "verifier"]
     assert len(ledger) >= 2
     assert json.loads(ledger[0]["usage_json"])["resumed"] is True
     assert json.loads(ledger[1]["usage_json"])["resumed"] is False
 
 
-async def test_verifier_worktree_mutation_parks_at_human_gate(
-    project, alloy_home, fake_harnesses
-):
+async def test_verifier_worktree_mutation_parks_at_human_gate(project, alloy_home, fake_harnesses):
     """(e) A verifier that edits the worktree parks the run for a human decision."""
     fake_harnesses.configure(
         verification_script(
@@ -1395,9 +1276,7 @@ def _prefix_hashes(store, run_id: str, role: str) -> list[str]:
     return [row["prefix_hash"] for row in store.agent_calls(run_id) if row["role"] == role]
 
 
-async def test_implement_and_judge_calls_share_prefix_hash_within_one_run(
-    project, alloy_home, fake_harnesses
-):
+async def test_implement_and_judge_calls_share_prefix_hash_within_one_run(project, alloy_home, fake_harnesses):
     """Every implement and judge call in one run records the same prefix_hash."""
     fake_harnesses.configure(
         script(
@@ -1533,11 +1412,7 @@ def _bd_remember_calls(fake_workflow: FakeWorkflow) -> list[dict]:
 
 
 def _check_hints_remember_calls(fake_workflow: FakeWorkflow) -> list[dict]:
-    return [
-        call
-        for call in _bd_remember_calls(fake_workflow)
-        if CHECK_HINTS_KEY in call.get("argv", [])
-    ]
+    return [call for call in _bd_remember_calls(fake_workflow) if CHECK_HINTS_KEY in call.get("argv", [])]
 
 
 def _remember_key_and_body(call: dict) -> tuple[str, str]:
@@ -1548,10 +1423,7 @@ def _remember_key_and_body(call: dict) -> tuple[str, str]:
 
 def _expected_check_hints_body() -> str:
     """Runnable verifier checks, newest first, excluding exit-127 commands."""
-    return (
-        f"regression: {REGRESSION_PYTEST}\n"
-        f"targeted: {TARGETED_PYTEST}"
-    )
+    return f"regression: {REGRESSION_PYTEST}\ntargeted: {TARGETED_PYTEST}"
 
 
 def _check_hints_done_script(**overrides):
@@ -1581,9 +1453,7 @@ def _hints_section(prompt: str) -> str:
     return rest[:next_heading] if next_heading != -1 else rest
 
 
-async def test_done_run_remembers_runnable_verifier_checks_as_alloy_check_hints(
-    project, alloy_home, fake_workflow
-):
+async def test_done_run_remembers_runnable_verifier_checks_as_alloy_check_hints(project, alloy_home, fake_workflow):
     """DONE finish writes alloy:check-hints once with runnable verifier commands only."""
     fake_workflow.configure(_check_hints_done_script())
     beads = _workflow_beads(project, fake_workflow)
@@ -1606,9 +1476,7 @@ async def test_done_run_remembers_runnable_verifier_checks_as_alloy_check_hints(
     assert "definitely-not-a-program" not in body
 
 
-async def test_failed_run_writes_no_alloy_check_hints(
-    project, alloy_home, fake_workflow
-):
+async def test_failed_run_writes_no_alloy_check_hints(project, alloy_home, fake_workflow):
     """FAILED runs must not persist alloy:check-hints even when checks ran."""
     fake_workflow.configure(
         _check_hints_done_script(judge=[judge_entry("abort", "cannot finish")]),
@@ -1624,9 +1492,7 @@ async def test_failed_run_writes_no_alloy_check_hints(
     assert _check_hints_remember_calls(fake_workflow) == []
 
 
-async def test_done_run_skips_remember_when_alloy_check_hints_unchanged(
-    project, alloy_home, fake_workflow
-):
+async def test_done_run_skips_remember_when_alloy_check_hints_unchanged(project, alloy_home, fake_workflow):
     """A second DONE run with the same checks does not rewrite alloy:check-hints."""
     fake_workflow.configure(_check_hints_done_script())
     beads = _workflow_beads(project, fake_workflow)
@@ -1649,7 +1515,11 @@ async def test_done_run_skips_remember_when_alloy_check_hints_unchanged(
     # A fresh bead gets a fresh worktree: the first run's fix already lives in
     # t-1's worktree, so a second run there would find its baseline green.
     second_harness = make_harness(
-        project, alloy_home, bead=make_bead("t-2"), beads=beads, run_id="run-second",
+        project,
+        alloy_home,
+        bead=make_bead("t-2"),
+        beads=beads,
+        run_id="run-second",
     )
     try:
         second_final = await second_harness.start()
@@ -1662,9 +1532,7 @@ async def test_done_run_skips_remember_when_alloy_check_hints_unchanged(
     assert _check_hints_remember_calls(fake_workflow) == []
 
 
-async def test_verifier_prompt_lists_remembered_check_hints_before_autodetect(
-    project, alloy_home, fake_workflow
-):
+async def test_verifier_prompt_lists_remembered_check_hints_before_autodetect(project, alloy_home, fake_workflow):
     """alloy:check-hints commands precede autodetected hints in the verifier prompt."""
     fake_workflow.configure(
         script(
@@ -1707,11 +1575,7 @@ def _calibration_imports():
 
 def _calibration_remember_calls(fake_workflow: FakeWorkflow) -> list[dict]:
     calibration_key, _, _ = _calibration_imports()
-    return [
-        call
-        for call in _bd_remember_calls(fake_workflow)
-        if calibration_key in call.get("argv", [])
-    ]
+    return [call for call in _bd_remember_calls(fake_workflow) if calibration_key in call.get("argv", [])]
 
 
 def _medium_calibration_body() -> str:
@@ -1726,9 +1590,7 @@ def _calibration_done_script(**overrides):
     return base
 
 
-async def test_finish_remembers_calibration_as_alloy_calibration(
-    project, alloy_home, fake_workflow
-):
+async def test_finish_remembers_calibration_as_alloy_calibration(project, alloy_home, fake_workflow):
     """Finish writes alloy:calibration once with per-level aggregate JSON."""
     calibration_key, _, _ = _calibration_imports()
     fake_workflow.configure(_calibration_done_script())
@@ -1752,9 +1614,7 @@ async def test_finish_remembers_calibration_as_alloy_calibration(
     assert json.loads(body)["medium"]["runs"] == 1
 
 
-async def test_estimate_prompt_shows_calibration_from_memory(
-    project, alloy_home, fake_workflow
-):
+async def test_estimate_prompt_shows_calibration_from_memory(project, alloy_home, fake_workflow):
     """Stored alloy:calibration renders as one line in the estimate project layer."""
     calibration_key, format_calibration, _ = _calibration_imports()
     seeded = _medium_calibration_body()
@@ -1784,11 +1644,7 @@ LESSON_BODY = "Always verify slugify with targeted tests before the full suite."
 
 
 def _lesson_remember_calls(fake_workflow: FakeWorkflow) -> list[dict]:
-    return [
-        call
-        for call in _bd_remember_calls(fake_workflow)
-        if LESSON_MEMORY_KEY in call.get("argv", [])
-    ]
+    return [call for call in _bd_remember_calls(fake_workflow) if LESSON_MEMORY_KEY in call.get("argv", [])]
 
 
 def _bd_note_calls(fake_workflow: FakeWorkflow) -> list[dict]:
@@ -1813,9 +1669,7 @@ def _harvest_two_iteration_script(**overrides):
     return base
 
 
-async def test_done_two_iteration_run_remembers_repo_lesson_with_provenance(
-    project, alloy_home, fake_workflow
-):
+async def test_done_two_iteration_run_remembers_repo_lesson_with_provenance(project, alloy_home, fake_workflow):
     """High-confidence repo harvest after DONE with iteration>=2 writes one lesson."""
     fake_workflow.configure(_harvest_two_iteration_script())
     beads = _workflow_beads(project, fake_workflow)
@@ -1839,15 +1693,11 @@ async def test_done_two_iteration_run_remembers_repo_lesson_with_provenance(
     assert at is not None
     assert body == LESSON_BODY
 
-    notes = [
-        note for note in _bd_note_calls(fake_workflow) if HARVEST_LESSON_KEY in note["argv"][2]
-    ]
+    notes = [note for note in _bd_note_calls(fake_workflow) if HARVEST_LESSON_KEY in note["argv"][2]]
     assert len(notes) == 1
 
 
-async def test_harvest_task_scope_writes_no_lesson(
-    project, alloy_home, fake_workflow
-):
+async def test_harvest_task_scope_writes_no_lesson(project, alloy_home, fake_workflow):
     """scope 'task' must not persist alloy:lesson:* even after two iterations."""
     fake_workflow.configure(
         _harvest_two_iteration_script(
@@ -1866,9 +1716,7 @@ async def test_harvest_task_scope_writes_no_lesson(
     assert _lesson_remember_calls(fake_workflow) == []
 
 
-async def test_harvest_low_confidence_writes_no_lesson(
-    project, alloy_home, fake_workflow
-):
+async def test_harvest_low_confidence_writes_no_lesson(project, alloy_home, fake_workflow):
     """confidence below harvest_min_confidence must not write a repo lesson."""
     fake_workflow.configure(
         _harvest_two_iteration_script(
@@ -1887,9 +1735,7 @@ async def test_harvest_low_confidence_writes_no_lesson(
     assert _lesson_remember_calls(fake_workflow) == []
 
 
-async def test_done_single_iteration_run_writes_no_lesson(
-    project, alloy_home, fake_workflow
-):
+async def test_done_single_iteration_run_writes_no_lesson(project, alloy_home, fake_workflow):
     """A DONE run with only one implement iteration must not harvest a lesson."""
     fake_workflow.configure(
         script(
@@ -1909,9 +1755,7 @@ async def test_done_single_iteration_run_writes_no_lesson(
     assert _lesson_remember_calls(fake_workflow) == []
 
 
-async def test_harvest_runner_failure_writes_no_lesson_and_outcome_stays_done(
-    project, alloy_home, fake_workflow
-):
+async def test_harvest_runner_failure_writes_no_lesson_and_outcome_stays_done(project, alloy_home, fake_workflow):
     """A failed harvest call must not write memory or change the run outcome."""
     fake_workflow.configure(
         _harvest_two_iteration_script(
@@ -1950,7 +1794,10 @@ def _embed_run_memories() -> dict[str, str]:
         LAST_REVIEW_KEY: EMBED_LAST_REVIEW.isoformat(),
         EMBED_HUMAN_KEY: EMBED_HUMAN_VALUE,
         EMBED_LESSON_KEY: with_provenance(
-            EMBED_LESSON_BODY, EMBED_RUN_ID, EMBED_BEAD_ID, date(2026, 9, 20),
+            EMBED_LESSON_BODY,
+            EMBED_RUN_ID,
+            EMBED_BEAD_ID,
+            date(2026, 9, 20),
         ),
     }
 
@@ -1982,11 +1829,7 @@ def _stale_embed_agents_text() -> str:
 
 
 def _embed_stale_remember_calls(fake_workflow: FakeWorkflow) -> list[dict]:
-    return [
-        call
-        for call in _bd_remember_calls(fake_workflow)
-        if EMBED_STALE_KEY in call.get("argv", [])
-    ]
+    return [call for call in _bd_remember_calls(fake_workflow) if EMBED_STALE_KEY in call.get("argv", [])]
 
 
 def _embed_stale_note_calls(fake_workflow: FakeWorkflow) -> list[dict]:
@@ -1998,7 +1841,9 @@ def _embed_stale_note_calls(fake_workflow: FakeWorkflow) -> list[dict]:
 
 
 async def test_run_start_flags_stale_embed_block_with_one_remember_and_note(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """A stale managed block in the worktree sets alloy:meta:embed-stale once at run start."""
     fake_workflow.configure(script(), memories=_embed_run_memories())
@@ -2020,7 +1865,9 @@ async def test_run_start_flags_stale_embed_block_with_one_remember_and_note(
 
 
 async def test_run_start_writes_no_embed_stale_flag_when_block_is_fresh(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """A matching managed block must not set alloy:meta:embed-stale at run start."""
     fake_workflow.configure(script(), memories=_embed_run_memories())
@@ -2038,7 +1885,9 @@ async def test_run_start_writes_no_embed_stale_flag_when_block_is_fresh(
 
 
 async def test_run_start_writes_no_embed_stale_flag_when_instruction_file_has_no_block(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """Instruction files without a managed block are skipped at run start."""
     fake_workflow.configure(script(), memories=_embed_run_memories())
@@ -2061,7 +1910,10 @@ async def test_run_start_writes_no_embed_stale_flag_when_instruction_file_has_no
 REGRESSION_PREFIX_KEY = "alloy:regression:src"
 REGRESSION_TITLE = "verify() mishandles empty input"
 REGRESSION_BODY = with_provenance(
-    REGRESSION_TITLE, "prior-run-id", "bug-bead-id", date(2026, 9, 20),
+    REGRESSION_TITLE,
+    "prior-run-id",
+    "bug-bead-id",
+    date(2026, 9, 20),
 )
 KNOWN_REGRESSION_HEADING = "## Known regression areas"
 
@@ -2082,7 +1934,9 @@ def _context_with_relevant_files(files: list[str]) -> dict:
 
 
 async def test_consilium_evidence_packet_lists_matching_regression_areas(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """Critics see regression memories whose prefix matches a relevant_files path."""
     fake_workflow.configure(
@@ -2107,7 +1961,9 @@ async def test_consilium_evidence_packet_lists_matching_regression_areas(
 
 
 async def test_consilium_evidence_packet_omits_regression_areas_without_prefix_match(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """No regression section when relevant_files share no top-level prefix."""
     fake_workflow.configure(

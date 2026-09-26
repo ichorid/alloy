@@ -70,7 +70,11 @@ async def test_jev_classifies_into_the_schema_enum_and_returns_confidence(tmp_pa
     assert captured["auth"] == "Bearer test-key"
     assert captured["payload"]["questions"]["decision"]["type"] == "choice"
     assert set(captured["payload"]["questions"]["decision"]["criteria"]) == {
-        "done", "retry", "consilium", "human", "abort",
+        "done",
+        "retry",
+        "consilium",
+        "human",
+        "abort",
     }
     assert Path(result.log_path).exists()
     logged = json.loads(Path(result.log_path).read_text())
@@ -95,7 +99,8 @@ async def test_jev_requires_a_schema_with_an_enum_field():
         await runner.run("state", Path("."), structured_schema=None)
     with pytest.raises(RunnerUnavailable):
         await runner.run(
-            "state", Path("."),
+            "state",
+            Path("."),
             structured_schema={"type": "object", "properties": {"reason": {"type": "string"}}},
         )
 
@@ -202,7 +207,9 @@ async def test_jev_classifies_scope_verdict_schema(tmp_path):
     questions = captured["payload"]["questions"]
     assert list(questions.keys()) == ["verdict"]
     assert set(questions["verdict"]["criteria"]) == {
-        "merge", "too-broad", "subverts-task",
+        "merge",
+        "too-broad",
+        "subverts-task",
     }
 
 
@@ -248,5 +255,8 @@ async def test_jev_classifies_acceptance_verdict_schema(tmp_path):
     questions = captured["payload"]["questions"]
     assert list(questions.keys()) == ["decision"]
     assert set(questions["decision"]["criteria"]) == {
-        "accept", "verify_more", "repair", "escalate",
+        "accept",
+        "verify_more",
+        "repair",
+        "escalate",
     }

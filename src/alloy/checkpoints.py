@@ -54,9 +54,7 @@ class _ThreadedSqliteSaver(SqliteSaver):
         before: RunnableConfig | None = None,
         limit: int | None = None,
     ) -> AsyncIterator[CheckpointTuple]:
-        tuples = await asyncio.to_thread(
-            lambda: list(self.list(config, filter=filter, before=before, limit=limit))
-        )
+        tuples = await asyncio.to_thread(lambda: list(self.list(config, filter=filter, before=before, limit=limit)))
         for checkpoint_tuple in tuples:
             yield checkpoint_tuple
 
@@ -67,9 +65,7 @@ class _ThreadedSqliteSaver(SqliteSaver):
         metadata: CheckpointMetadata,
         new_versions: ChannelVersions,
     ) -> RunnableConfig:
-        return await asyncio.to_thread(
-            self.put, config, checkpoint, metadata, new_versions
-        )
+        return await asyncio.to_thread(self.put, config, checkpoint, metadata, new_versions)
 
     async def aput_writes(
         self,
@@ -146,10 +142,7 @@ def read_checkpoint(path: Path, thread_id: str) -> dict[str, Any] | None:
         return {
             "values": snapshot.checkpoint.get("channel_values", {}),
             "checkpoint_id": snapshot.config.get("configurable", {}).get("checkpoint_id"),
-            "interrupts": [
-                write for write in (snapshot.pending_writes or [])
-                if write[1] == "__interrupt__"
-            ],
+            "interrupts": [write for write in (snapshot.pending_writes or []) if write[1] == "__interrupt__"],
             "metadata": dict(snapshot.metadata or {}),
         }
     finally:

@@ -111,11 +111,7 @@ def _git(args: list[str], repo: Path) -> str:
 
 
 def _bd_writes(fake_bd) -> list[dict]:
-    return [
-        call
-        for call in fake_bd.calls
-        if call.get("command") in {"remember", "forget"}
-    ]
+    return [call for call in fake_bd.calls if call.get("command") in {"remember", "forget"}]
 
 
 # -- pure render -------------------------------------------------------------

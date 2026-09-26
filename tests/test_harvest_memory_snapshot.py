@@ -221,10 +221,10 @@ def test_harvest_wires_existing_lessons_from_state_memory_lessons():
     assert "ctx.project_memory()" not in body
 
 
-
-
 def test_initial_state_snapshots_lesson_bodies_in_memory_lessons(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """initial_state must stash provenance-stripped alloy:lesson:* bodies on state."""
     beads = _memory_beads(project, fake_workflow)
@@ -242,7 +242,9 @@ def test_initial_state_snapshots_lesson_bodies_in_memory_lessons(
 
 
 async def test_harvest_uses_run_start_lessons_when_bd_lessons_change_before_harvest(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """Harvest prompt must list run-start lessons even if bd memories change late."""
     fake_workflow.configure(
@@ -269,7 +271,9 @@ async def test_harvest_uses_run_start_lessons_when_bd_lessons_change_before_harv
 
 
 async def test_harvest_respects_empty_memory_lessons_override_over_live_bd(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """Harvest must read memory_lessons from state, not live bd, when they differ."""
     fake_workflow.configure(
@@ -296,7 +300,9 @@ async def test_harvest_respects_empty_memory_lessons_override_over_live_bd(
 
 
 async def test_bd_memories_invoked_once_when_harvest_reads_existing_lessons(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """A DONE run through harvest with stored lessons must hit bd memories once."""
     fake_workflow.configure(

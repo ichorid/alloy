@@ -115,9 +115,7 @@ async def test_cancelled_harness_start_leaves_resumable_checkpoint(
     harness = make_harness(project, alloy_home)
     await _cancel_harness_at_implement(harness, fake_harnesses)
 
-    assert [call["role"] for call in fake_harnesses.calls] == [
-        "context", "estimate", "tests", "implement"
-    ]
+    assert [call["role"] for call in fake_harnesses.calls] == ["context", "estimate", "tests", "implement"]
 
     snapshot = read_checkpoint(alloy_home / "workflows.db", harness.thread_id)
     assert snapshot is not None
@@ -130,5 +128,9 @@ async def test_cancelled_harness_start_leaves_resumable_checkpoint(
 
     assert final["outcome"] == "done"
     assert [call["role"] for call in fake_harnesses.calls] == [
-        "implement", "verifier", "acceptance", "judge", "harvest"
+        "implement",
+        "verifier",
+        "acceptance",
+        "judge",
+        "harvest",
     ]

@@ -43,6 +43,7 @@ from alloy.monitor.render import (
     visible_columns,
 )
 
+
 class MonitorFooter(Footer):
     """Footer with key chips and a right-aligned ``icons: <mode>`` marker."""
 
@@ -280,7 +281,9 @@ class MonitorApp(App[None]):
             effective.update(self._probed_limits)
         mode = resolve_mode(interactive=True)
         lines = limits_lines(
-            {"limits": effective}, mode=mode, width=self.size.width,
+            {"limits": effective},
+            mode=mode,
+            width=self.size.width,
             usage_style=self.limits_style,
         )
         if not lines:
@@ -350,8 +353,7 @@ class MonitorApp(App[None]):
                 return None
             run_id = row_key.removeprefix("run/")
             run = next(
-                (entry for entry in self._snapshot.get("runs") or []
-                 if entry["run_id"] == run_id),
+                (entry for entry in self._snapshot.get("runs") or [] if entry["run_id"] == run_id),
                 None,
             )
             if run is None:
@@ -439,8 +441,7 @@ class MonitorApp(App[None]):
             bead_id = row_key.rsplit("/", 1)[-1]
             queue = snapshot.get("queue") or {}
             bead = next(
-                (b for b in (queue.get("ready") or []) + (queue.get("blocked") or [])
-                 if b.get("bead_id") == bead_id),
+                (b for b in (queue.get("ready") or []) + (queue.get("blocked") or []) if b.get("bead_id") == bead_id),
                 None,
             )
             if bead is None:
@@ -459,8 +460,7 @@ class MonitorApp(App[None]):
             epic_id = row_key.removeprefix("epic/")
             if "/" not in epic_id:
                 epic = next(
-                    (entry for entry in snapshot.get("epics") or []
-                     if entry.get("epic_id") == epic_id),
+                    (entry for entry in snapshot.get("epics") or [] if entry.get("epic_id") == epic_id),
                     None,
                 )
                 if epic is not None:
@@ -474,9 +474,7 @@ class MonitorApp(App[None]):
             return
         root = snapshot.get("root")
         log_dir = None if root is None else f"{root}/logs/{run['run_id']}"
-        detail.update(format_detail(
-            run, table_width, log_dir, mode=mode, usage_style=self.limits_style
-        ))
+        detail.update(format_detail(run, table_width, log_dir, mode=mode, usage_style=self.limits_style))
         detail.border_title = detail_panel_border_title(run)
         detail.border_subtitle = detail_panel_border_subtitle(run)
 

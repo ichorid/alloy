@@ -85,9 +85,7 @@ def signal_tree(root: int, sig: int) -> set[int]:
     return pids
 
 
-async def terminate_process_tree(
-    process: asyncio.subprocess.Process, *, grace_s: float = DEFAULT_GRACE_S
-) -> None:
+async def terminate_process_tree(process: asyncio.subprocess.Process, *, grace_s: float = DEFAULT_GRACE_S) -> None:
     """SIGTERM the tree, wait `grace_s`, SIGKILL what is left, reap the leader."""
     if process.returncode is not None:
         return

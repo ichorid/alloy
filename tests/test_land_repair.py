@@ -54,7 +54,11 @@ def _bug_ids(client: BeadsClient) -> list[str]:
 
 def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False,
+        ["git", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if check and proc.returncode != 0:
         raise AssertionError(f"git {' '.join(args)}: {proc.stderr.strip()}")
@@ -82,7 +86,8 @@ def _prepare_clean_merge(project: Path, worktree: Worktree) -> str:
     (worktree.path / "feature.txt").write_text("bead work\n", encoding="utf-8")
     (worktree.path / "tests").mkdir(exist_ok=True)
     (worktree.path / "tests" / "test_placeholder.py").write_text(
-        "def test_placeholder():\n    assert True\n", encoding="utf-8",
+        "def test_placeholder():\n    assert True\n",
+        encoding="utf-8",
     )
     _git(worktree.path, "add", "-A")
     _git(worktree.path, "commit", "-m", "bead commit")
@@ -135,25 +140,26 @@ def land_engine(beads_project, alloy_home):
 
 def _assert_blocks_edge(client: BeadsClient, landed_id: str, bug_id: str) -> None:
     deps = _show_json(client, landed_id).get("dependencies") or []
-    assert any(
-        dep.get("id") == bug_id and dep.get("dependency_type") == "blocks"
-        for dep in deps
-    ), f"expected {landed_id} blocked by {bug_id}, got {deps}"
+    assert any(dep.get("id") == bug_id and dep.get("dependency_type") == "blocks" for dep in deps), (
+        f"expected {landed_id} blocked by {bug_id}, got {deps}"
+    )
 
 
 def _assert_discovered_from(client: BeadsClient, bug_id: str, landed_id: str) -> None:
     deps = _show_json(client, bug_id).get("dependencies") or []
-    assert any(
-        dep.get("id") == landed_id and dep.get("dependency_type") == "discovered-from"
-        for dep in deps
-    ), f"expected {bug_id} discovered-from {landed_id}, got {deps}"
+    assert any(dep.get("id") == landed_id and dep.get("dependency_type") == "discovered-from" for dep in deps), (
+        f"expected {bug_id} discovered-from {landed_id}, got {deps}"
+    )
 
 
 # -- conflict files exactly one repair bug -----------------------------------
 
 
 def test_cli_land_conflict_files_one_repair_bug_blocking_landed_bead(
-    land_engine, beads_project, alloy_home, fake_harnesses,
+    land_engine,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
 ):
     """Conflict on B files one bug with worktree_owner=B, blocks B, repairing state."""
     conflict_path = "mypkg/__init__.py"
@@ -197,7 +203,10 @@ def test_cli_land_conflict_files_one_repair_bug_blocking_landed_bead(
 
 
 def test_cli_land_conflict_retry_does_not_file_second_repair_bug(
-    land_engine, beads_project, alloy_home, fake_harnesses,
+    land_engine,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
 ):
     """Landing B again while its repair bug is open creates no second bug."""
     conflict_path = "mypkg/__init__.py"
@@ -225,7 +234,10 @@ def test_cli_land_conflict_retry_does_not_file_second_repair_bug(
 
 
 def test_cli_land_red_files_repair_bug_acceptance_names_failing_check(
-    land_engine, beads_project, alloy_home, fake_harnesses,
+    land_engine,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
 ):
     """Red post-merge checks file a bug whose acceptance names the failing command."""
     fake_harnesses.configure(

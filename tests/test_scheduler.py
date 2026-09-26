@@ -78,9 +78,7 @@ def test_selection_makes_no_agent_calls(scheduler, beads_project, fake_harnesses
     assert fake_harnesses.calls == []
 
 
-async def test_a_tick_claims_and_runs_exactly_one_task(
-    scheduler, beads_project, fake_harnesses
-):
+async def test_a_tick_claims_and_runs_exactly_one_task(scheduler, beads_project, fake_harnesses):
     fake_harnesses.configure(script())
     first = bd_create(beads_project, "first", priority=0, alloy_recipe="tdd-loop")
     second = bd_create(beads_project, "second", priority=1, alloy_recipe="tdd-loop")
@@ -103,17 +101,21 @@ async def test_concurrency_one_means_one(scheduler, beads_project, fake_harnesse
     fake_harnesses.configure(script())
     bd_create(beads_project, "task", alloy_recipe="tdd-loop")
     scheduler.engine.store.create_run(
-        run_id="busy", bead_id="other", thread_id="other", recipe="tdd-loop",
-        repo=beads_project, worktree=None, branch=None, log_dir=None,
+        run_id="busy",
+        bead_id="other",
+        thread_id="other",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )  # created with this process's pid, so it counts as alive
 
     assert await scheduler.tick() is False
     assert fake_harnesses.calls == []
 
 
-async def test_recover_adopts_runs_whose_process_died(
-    scheduler, beads_project, fake_harnesses
-):
+async def test_recover_adopts_runs_whose_process_died(scheduler, beads_project, fake_harnesses):
     """Start a run, lose the process, and let the next scheduler finish it."""
     engine = scheduler.engine
     fake_harnesses.configure(script(implement=[{"sleep": 60}]))
@@ -136,7 +138,13 @@ async def test_recover_adopts_runs_whose_process_died(
 
     assert recovered == [bead_id]
     assert engine.beads.show(bead_id).status == bd.STATUS_REVIEW_READY
-    assert [call["role"] for call in fake_harnesses.calls] == ["implement", "verifier", "acceptance", "judge", "harvest"]
+    assert [call["role"] for call in fake_harnesses.calls] == [
+        "implement",
+        "verifier",
+        "acceptance",
+        "judge",
+        "harvest",
+    ]
 
 
 async def test_serve_writes_and_removes_its_pidfile(scheduler):
@@ -236,9 +244,7 @@ async def _park_at_session_limit(engine, beads_project):
     return bead_id, paused
 
 
-async def test_scheduler_tick_auto_resumes_when_retry_at_is_past(
-    scheduler, beads_project, fake_harnesses
-):
+async def test_scheduler_tick_auto_resumes_when_retry_at_is_past(scheduler, beads_project, fake_harnesses):
     """One tick resumes a parked run whose retry_at has elapsed and clears it."""
     fake_harnesses.configure(
         script(
@@ -265,13 +271,19 @@ async def test_scheduler_tick_auto_resumes_when_retry_at_is_past(
 
 
 def test_due_human_resume_returns_ready_parked_run_without_retry_at(
-    scheduler, beads_project,
+    scheduler,
+    beads_project,
 ):
     bead_id = bd_create(beads_project, "human resume", alloy_recipe="tdd-loop")
     run_id = "human-resume-1"
     scheduler.engine.store.create_run(
-        run_id=run_id, bead_id=bead_id, thread_id=run_id, recipe="tdd-loop",
-        repo=beads_project, worktree=str(beads_project), branch=f"alloy/{bead_id}",
+        run_id=run_id,
+        bead_id=bead_id,
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=str(beads_project),
+        branch=f"alloy/{bead_id}",
         log_dir=None,
     )
     scheduler.engine.store.update_run(run_id, status="waiting-human", stage="waiting-human")
@@ -283,13 +295,9 @@ def test_due_human_resume_returns_ready_parked_run_without_retry_at(
     assert due.get("retry_at") is None
 
 
-async def test_scheduler_tick_leaves_parked_run_when_retry_at_is_future(
-    scheduler, beads_project, fake_harnesses
-):
+async def test_scheduler_tick_leaves_parked_run_when_retry_at_is_future(scheduler, beads_project, fake_harnesses):
     """A future retry_at must not be resumed early."""
-    fake_harnesses.configure(
-        script(tests=[{"exit": 1, "stderr": SESSION_LIMIT_MSG}])
-    )
+    fake_harnesses.configure(script(tests=[{"exit": 1, "stderr": SESSION_LIMIT_MSG}]))
     bead_id, paused = await _park_at_session_limit(scheduler.engine, beads_project)
     future = (utcnow() + timedelta(hours=1)).isoformat()
     scheduler.engine.store.update_run(paused.run_id, retry_at=future)
@@ -368,7 +376,8 @@ def memory_scheduler_setup(beads_project, alloy_home, fake_harnesses):
 
 
 async def test_scheduler_tick_runs_memory_review_and_embed_when_last_review_is_stale_by_days(
-    memory_scheduler_setup, fake_harnesses,
+    memory_scheduler_setup,
+    fake_harnesses,
 ):
     scheduler, agents = memory_scheduler_setup
     stale = (MEMORY_CLOCK.date() - timedelta(days=8)).isoformat()
@@ -381,7 +390,8 @@ async def test_scheduler_tick_runs_memory_review_and_embed_when_last_review_is_s
 
 
 async def test_scheduler_tick_does_not_repeat_memory_review_same_calendar_day(
-    memory_scheduler_setup, fake_harnesses,
+    memory_scheduler_setup,
+    fake_harnesses,
 ):
     scheduler, _agents = memory_scheduler_setup
     stale = (MEMORY_CLOCK.date() - timedelta(days=8)).isoformat()
@@ -395,7 +405,9 @@ async def test_scheduler_tick_does_not_repeat_memory_review_same_calendar_day(
 
 
 async def test_scheduler_tick_runs_memory_review_when_finished_runs_exceed_threshold(
-    beads_project, alloy_home, fake_harnesses,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
 ):
     _configure_memory_reviewer(fake_harnesses)
     scheduler = _memory_scheduler(beads_project, alloy_home)
@@ -411,7 +423,9 @@ async def test_scheduler_tick_runs_memory_review_when_finished_runs_exceed_thres
 
 
 async def test_scheduler_tick_skips_memory_review_when_not_due_by_days_or_runs(
-    beads_project, alloy_home, fake_harnesses,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
 ):
     _configure_memory_reviewer(fake_harnesses)
     scheduler = _memory_scheduler(beads_project, alloy_home)
@@ -427,7 +441,9 @@ async def test_scheduler_tick_skips_memory_review_when_not_due_by_days_or_runs(
 
 
 async def test_scheduler_tick_runs_memory_review_when_embed_stale_flag_set(
-    beads_project, alloy_home, fake_harnesses,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
 ):
     _configure_memory_reviewer(fake_harnesses)
     scheduler = _memory_scheduler(beads_project, alloy_home)
@@ -442,7 +458,9 @@ async def test_scheduler_tick_runs_memory_review_when_embed_stale_flag_set(
 
 
 async def test_scheduler_tick_skips_memory_review_while_a_run_is_active(
-    beads_project, alloy_home, fake_harnesses,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
 ):
     _configure_memory_reviewer(fake_harnesses)
     scheduler = _memory_scheduler(beads_project, alloy_home)
@@ -466,7 +484,8 @@ async def test_scheduler_tick_skips_memory_review_while_a_run_is_active(
 
 
 async def test_scheduler_tick_skips_embed_and_notes_uncommitted_when_instruction_file_dirty(
-    memory_scheduler_setup, fake_harnesses,
+    memory_scheduler_setup,
+    fake_harnesses,
 ):
     scheduler, agents = memory_scheduler_setup
     stale = (MEMORY_CLOCK.date() - timedelta(days=8)).isoformat()
@@ -491,7 +510,8 @@ DEFAULT_RECIPE_KEY = "alloy:default:recipe"
 
 
 def test_next_task_selects_unassigned_bead_when_default_recipe_memory_set(
-    scheduler, beads_project,
+    scheduler,
+    beads_project,
 ):
     bead_id = bd_create(beads_project, "needs default recipe")
     scheduler.engine.beads.remember(DEFAULT_RECIPE_KEY, "tdd-loop")
@@ -504,7 +524,8 @@ def test_next_task_selects_unassigned_bead_when_default_recipe_memory_set(
 
 
 def test_next_task_skips_unassigned_bead_without_default_recipe_memory(
-    scheduler, beads_project,
+    scheduler,
+    beads_project,
 ):
     bd_create(beads_project, "needs default recipe")
 
@@ -512,7 +533,8 @@ def test_next_task_skips_unassigned_bead_without_default_recipe_memory(
 
 
 def test_next_task_skips_unassigned_bead_when_default_recipe_is_unknown(
-    scheduler, beads_project,
+    scheduler,
+    beads_project,
 ):
     bd_create(beads_project, "needs default recipe")
     scheduler.engine.beads.remember(DEFAULT_RECIPE_KEY, "no-such-recipe")
@@ -521,7 +543,9 @@ def test_next_task_skips_unassigned_bead_when_default_recipe_is_unknown(
 
 
 def test_next_task_logs_once_when_default_recipe_is_unknown(
-    scheduler, beads_project, caplog,
+    scheduler,
+    beads_project,
+    caplog,
 ):
     bd_create(beads_project, "needs default recipe")
     scheduler.engine.beads.remember(DEFAULT_RECIPE_KEY, "no-such-recipe")
@@ -540,14 +564,18 @@ def test_next_task_logs_once_when_default_recipe_is_unknown(
 def test_scheduler_rejects_unknown_recipe_filter(beads_project, alloy_home):
     with pytest.raises(EngineError):
         Scheduler(
-            engine=Engine.open(beads_project, alloy_home), poll_seconds=0.01, once=True,
+            engine=Engine.open(beads_project, alloy_home),
+            poll_seconds=0.01,
+            once=True,
             recipe_filter="no-such-recipe",
         )
 
 
 def test_next_task_selects_unassigned_bead_with_recipe_filter(beads_project, alloy_home):
     scheduler = Scheduler(
-        engine=Engine.open(beads_project, alloy_home), poll_seconds=0.01, once=True,
+        engine=Engine.open(beads_project, alloy_home),
+        poll_seconds=0.01,
+        once=True,
         recipe_filter="tdd-loop",
     )
     bead_id = bd_create(beads_project, "needs a recipe")
@@ -562,7 +590,9 @@ def test_next_task_selects_unassigned_bead_with_recipe_filter(beads_project, all
 
 def test_recipe_filter_overrides_memory_default(beads_project, alloy_home):
     scheduler = Scheduler(
-        engine=Engine.open(beads_project, alloy_home), poll_seconds=0.01, once=True,
+        engine=Engine.open(beads_project, alloy_home),
+        poll_seconds=0.01,
+        once=True,
         recipe_filter="tdd-loop",
     )
     bd_create(beads_project, "needs a recipe")
@@ -575,7 +605,9 @@ def test_recipe_filter_overrides_memory_default(beads_project, alloy_home):
 
 def test_recipe_filter_still_yields_to_a_beads_own_recipe(beads_project, alloy_home):
     scheduler = Scheduler(
-        engine=Engine.open(beads_project, alloy_home), poll_seconds=0.01, once=True,
+        engine=Engine.open(beads_project, alloy_home),
+        poll_seconds=0.01,
+        once=True,
         recipe_filter="tdd-loop",
     )
     bead_id = bd_create(beads_project, "already assigned", alloy_recipe="tdd-loop-jev")
@@ -588,7 +620,9 @@ def test_recipe_filter_still_yields_to_a_beads_own_recipe(beads_project, alloy_h
 
 
 async def test_tick_runs_unassigned_bead_when_default_recipe_memory_set(
-    scheduler, beads_project, fake_harnesses,
+    scheduler,
+    beads_project,
+    fake_harnesses,
 ):
     fake_harnesses.configure(script())
     bead_id = bd_create(beads_project, "needs default recipe")
@@ -603,7 +637,10 @@ async def test_tick_runs_unassigned_bead_when_default_recipe_memory_set(
 
 
 async def test_default_recipe_tick_uses_yaml_limits_not_memory(
-    scheduler, beads_project, fake_harnesses, monkeypatch,
+    scheduler,
+    beads_project,
+    fake_harnesses,
+    monkeypatch,
 ):
     fake_harnesses.configure(script())
     bead_id = bd_create(beads_project, "needs default recipe")
@@ -690,14 +727,23 @@ def _seed_parked_run(
 
 
 def test_next_task_skips_everything_else_when_epic_child_has_waiting_human_run(
-    scheduler, beads_project,
+    scheduler,
+    beads_project,
 ):
     epic_id = _create_epic(beads_project, "shared epic worktree")
     child_x = _create_epic_child(
-        beads_project, "epic child X", epic_id, priority=0, alloy_recipe="tdd-loop",
+        beads_project,
+        "epic child X",
+        epic_id,
+        priority=0,
+        alloy_recipe="tdd-loop",
     )
     child_y = _create_epic_child(
-        beads_project, "epic child Y", epic_id, priority=1, alloy_recipe="tdd-loop",
+        beads_project,
+        "epic child Y",
+        epic_id,
+        priority=1,
+        alloy_recipe="tdd-loop",
     )
     bd_create(beads_project, "standalone S", priority=2, alloy_recipe="tdd-loop")
     _seed_parked_run(scheduler, beads_project, child_x, "epic-x-waiting")
@@ -708,15 +754,23 @@ def test_next_task_skips_everything_else_when_epic_child_has_waiting_human_run(
 
 
 def test_next_task_never_dispatches_epic_itself_while_child_run_is_parked(
-    scheduler, beads_project,
+    scheduler,
+    beads_project,
 ):
     epic_id = _create_epic(beads_project, "epic with paused child")
     subprocess.run(
         ["bd", "update", epic_id, "--set-metadata", "alloy_recipe=tdd-loop"],
-        cwd=str(beads_project), check=True, capture_output=True, text=True,
+        cwd=str(beads_project),
+        check=True,
+        capture_output=True,
+        text=True,
     )
     child = _create_epic_child(
-        beads_project, "paused child", epic_id, priority=1, alloy_recipe="tdd-loop",
+        beads_project,
+        "paused child",
+        epic_id,
+        priority=1,
+        alloy_recipe="tdd-loop",
     )
     _seed_parked_run(scheduler, beads_project, child, "epic-child-paused")
 
@@ -725,24 +779,43 @@ def test_next_task_never_dispatches_epic_itself_while_child_run_is_parked(
 
 
 def test_next_task_never_dispatches_epic_with_open_children_and_no_runs_yet(
-    scheduler, beads_project,
+    scheduler,
+    beads_project,
 ):
     epic_id = _create_epic(beads_project, "epic with idle children")
     subprocess.run(
         ["bd", "update", epic_id, "--set-metadata", "alloy_recipe=tdd-loop"],
-        cwd=str(beads_project), check=True, capture_output=True, text=True,
+        cwd=str(beads_project),
+        check=True,
+        capture_output=True,
+        text=True,
     )
     child = _create_epic_child(
-        beads_project, "idle child", epic_id, priority=1, alloy_recipe="tdd-loop",
+        beads_project,
+        "idle child",
+        epic_id,
+        priority=1,
+        alloy_recipe="tdd-loop",
     )
     # The children wait on another epic's bead, so the epic alone is "ready".
-    gate = subprocess.run(
-        ["bd", "create", "cross-epic gate", "--silent"],
-        cwd=str(beads_project), check=True, capture_output=True, text=True,
-    ).stdout.strip().splitlines()[-1].strip()
+    gate = (
+        subprocess.run(
+            ["bd", "create", "cross-epic gate", "--silent"],
+            cwd=str(beads_project),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        .stdout.strip()
+        .splitlines()[-1]
+        .strip()
+    )
     subprocess.run(
         ["bd", "dep", "add", child, gate],
-        cwd=str(beads_project), check=True, capture_output=True, text=True,
+        cwd=str(beads_project),
+        check=True,
+        capture_output=True,
+        text=True,
     )
 
     picked = scheduler.next_task()
@@ -750,14 +823,23 @@ def test_next_task_never_dispatches_epic_with_open_children_and_no_runs_yet(
 
 
 def test_next_task_returns_next_epic_child_after_blocking_sibling_run_is_done(
-    scheduler, beads_project,
+    scheduler,
+    beads_project,
 ):
     epic_id = _create_epic(beads_project, "serial epic children")
     child_x = _create_epic_child(
-        beads_project, "first epic child", epic_id, priority=0, alloy_recipe="tdd-loop",
+        beads_project,
+        "first epic child",
+        epic_id,
+        priority=0,
+        alloy_recipe="tdd-loop",
     )
     child_y = _create_epic_child(
-        beads_project, "second epic child", epic_id, priority=1, alloy_recipe="tdd-loop",
+        beads_project,
+        "second epic child",
+        epic_id,
+        priority=1,
+        alloy_recipe="tdd-loop",
     )
     run_id = "epic-x-done"
     _seed_parked_run(scheduler, beads_project, child_x, run_id)
@@ -771,14 +853,24 @@ def test_next_task_returns_next_epic_child_after_blocking_sibling_run_is_done(
 
 
 def test_next_task_logs_once_when_epic_sibling_blocks_dispatch(
-    scheduler, beads_project, caplog,
+    scheduler,
+    beads_project,
+    caplog,
 ):
     epic_id = _create_epic(beads_project, "blocked epic")
     child_x = _create_epic_child(
-        beads_project, "blocking sibling", epic_id, priority=0, alloy_recipe="tdd-loop",
+        beads_project,
+        "blocking sibling",
+        epic_id,
+        priority=0,
+        alloy_recipe="tdd-loop",
     )
     _create_epic_child(
-        beads_project, "blocked sibling", epic_id, priority=1, alloy_recipe="tdd-loop",
+        beads_project,
+        "blocked sibling",
+        epic_id,
+        priority=1,
+        alloy_recipe="tdd-loop",
     )
     _seed_parked_run(scheduler, beads_project, child_x, "epic-block-log")
 
@@ -791,20 +883,33 @@ def test_next_task_logs_once_when_epic_sibling_blocks_dispatch(
 
 
 def test_next_task_skips_epic_children_when_sibling_has_failed_run_with_dirty_worktree(
-    scheduler, beads_project,
+    scheduler,
+    beads_project,
 ):
     epic_id = _create_epic(beads_project, "dirty epic worktree")
     child_x = _create_epic_child(
-        beads_project, "failed sibling", epic_id, priority=0, alloy_recipe="tdd-loop",
+        beads_project,
+        "failed sibling",
+        epic_id,
+        priority=0,
+        alloy_recipe="tdd-loop",
     )
     child_y = _create_epic_child(
-        beads_project, "waiting sibling", epic_id, priority=1, alloy_recipe="tdd-loop",
+        beads_project,
+        "waiting sibling",
+        epic_id,
+        priority=1,
+        alloy_recipe="tdd-loop",
     )
     standalone = bd_create(beads_project, "standalone after dirty fail", priority=2, alloy_recipe="tdd-loop")
     dirty_marker = beads_project / "epic-dirty-marker.txt"
     dirty_marker.write_text("uncommitted epic work\n", encoding="utf-8")
     _seed_parked_run(
-        scheduler, beads_project, child_x, "epic-x-failed-dirty", status=RUN_FAILED,
+        scheduler,
+        beads_project,
+        child_x,
+        "epic-x-failed-dirty",
+        status=RUN_FAILED,
     )
 
     picked = scheduler.next_task()
@@ -858,7 +963,11 @@ def _auto_land_script(**overrides):
 
 def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False,
+        ["git", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if check and proc.returncode != 0:
         raise AssertionError(f"git {' '.join(args)}: {proc.stderr.strip()}")
@@ -917,7 +1026,11 @@ def _seed_review_ready(
 
 
 async def test_scheduler_tick_auto_lands_standalone_tdd_loop_after_success(
-    scheduler, beads_project, alloy_home, fake_harnesses, monkeypatch,
+    scheduler,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
+    monkeypatch,
 ):
     """Standalone bead with landing.mode auto closes with a merge commit on main after one tick."""
     _patch_engine_recipes(monkeypatch, scheduler.engine)
@@ -937,14 +1050,22 @@ async def test_scheduler_tick_auto_lands_standalone_tdd_loop_after_success(
 
 
 async def test_scheduler_tick_lands_completed_epic_on_next_tick(
-    scheduler, beads_project, alloy_home, fake_harnesses, monkeypatch,
+    scheduler,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
+    monkeypatch,
 ):
     """When an epic's last child closes, the next tick lands the epic into main."""
     _patch_engine_recipes(monkeypatch, scheduler.engine)
     fake_harnesses.configure(script())
     epic_id = _create_epic(beads_project, "auto land epic")
     child_id = _create_epic_child(
-        beads_project, "only epic child", epic_id, priority=0, alloy_recipe="tdd-loop",
+        beads_project,
+        "only epic child",
+        epic_id,
+        priority=0,
+        alloy_recipe="tdd-loop",
     )
 
     await scheduler.engine.run(child_id)
@@ -963,21 +1084,43 @@ async def test_scheduler_tick_lands_completed_epic_on_next_tick(
     assert epic.metadata.get(bd.META_LAND_STATE) == "landed"
     assert _head(beads_project) != primary_before
     assert _head_parent_count(beads_project) >= 2
-    merge_parents = _git(
-        beads_project, "rev-list", "--parents", "-n", "1", "HEAD",
-    ).stdout.strip().split()[1:]
+    merge_parents = (
+        _git(
+            beads_project,
+            "rev-list",
+            "--parents",
+            "-n",
+            "1",
+            "HEAD",
+        )
+        .stdout.strip()
+        .split()[1:]
+    )
     # The merge's second parent is the trial-merge commit the land recipe
     # verified on alloy/E -- the branch itself is deleted after landing
     # (docs/plans/auto-land.md), so the epic's own tip arrives as that
     # commit's parent, not as a branch name (same pattern as test_cli_land.py).
-    trial_merge_parents = _git(
-        beads_project, "rev-list", "--parents", "-n", "1", merge_parents[1],
-    ).stdout.strip().split()[1:]
+    trial_merge_parents = (
+        _git(
+            beads_project,
+            "rev-list",
+            "--parents",
+            "-n",
+            "1",
+            merge_parents[1],
+        )
+        .stdout.strip()
+        .split()[1:]
+    )
     assert epic_tip in trial_merge_parents
 
 
 async def test_scheduler_tick_relands_bead_in_repairing_when_repair_bug_closed(
-    scheduler, beads_project, alloy_home, fake_harnesses, monkeypatch,
+    scheduler,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
+    monkeypatch,
 ):
     """A review-ready bead in repairing state is re-landed once its repair bug closes."""
     _patch_engine_recipes(monkeypatch, scheduler.engine)
@@ -1005,7 +1148,8 @@ async def test_scheduler_tick_relands_bead_in_repairing_when_repair_bug_closed(
     (worktree.path / conflict_path).write_text("resolved = 1\n", encoding="utf-8")
     (worktree.path / "tests").mkdir(exist_ok=True)
     (worktree.path / "tests" / "test_placeholder.py").write_text(
-        "def test_placeholder():\n    assert True\n", encoding="utf-8",
+        "def test_placeholder():\n    assert True\n",
+        encoding="utf-8",
     )
     _git(worktree.path, "add", "-A")
     _git(worktree.path, "commit", "-m", "resolve landing conflict")
@@ -1022,7 +1166,10 @@ async def test_scheduler_tick_relands_bead_in_repairing_when_repair_bug_closed(
 
 
 async def test_scheduler_tick_leaves_landing_off_bead_review_ready(
-    scheduler, beads_project, fake_harnesses, monkeypatch,
+    scheduler,
+    beads_project,
+    fake_harnesses,
+    monkeypatch,
 ):
     """A bead whose finished recipe has landing.mode off stays review-ready; main unchanged."""
     import inspect
@@ -1055,7 +1202,10 @@ async def test_scheduler_tick_leaves_landing_off_bead_review_ready(
 
 
 async def test_scheduler_auto_land_disabled_by_root_flag_file(
-    scheduler, beads_project, fake_harnesses, monkeypatch,
+    scheduler,
+    beads_project,
+    fake_harnesses,
+    monkeypatch,
 ):
     """``<alloy-root>/disable-auto-land`` skips auto-landing even when mode is auto."""
     _patch_engine_recipes(monkeypatch, scheduler.engine, landing_off=False)
@@ -1085,8 +1235,13 @@ async def test_scheduler_auto_land_disabled_by_root_flag_file(
 def _park_run(scheduler, beads_project, bead_id, status=RUN_WAITING_HUMAN):
     run_id = f"run-{bead_id}"
     scheduler.engine.store.create_run(
-        run_id=run_id, bead_id=bead_id, thread_id=run_id, recipe="tdd-loop",
-        repo=scheduler.engine.repo, worktree=str(beads_project), branch=f"alloy/{bead_id}",
+        run_id=run_id,
+        bead_id=bead_id,
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=scheduler.engine.repo,
+        worktree=str(beads_project),
+        branch=f"alloy/{bead_id}",
         log_dir=None,
     )
     scheduler.engine.store.update_run(run_id, status=status, stage=status)

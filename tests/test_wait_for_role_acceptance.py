@@ -29,9 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 TESTS_DIR = REPO_ROOT / "tests"
 PYTHON = sys.executable
 
-FAST_INTERRUPT_TEST = (
-    "tests/test_recovery.py::test_an_interrupted_run_resumes_without_repeating_finished_stages"
-)
+FAST_INTERRUPT_TEST = "tests/test_recovery.py::test_an_interrupted_run_resumes_without_repeating_finished_stages"
 RECOVER_TESTS = [
     "tests/test_scheduler.py::test_recover_adopts_runs_whose_process_died",
     "tests/test_scheduler.py::test_recover_reconciles_inflight_before_adopting_orphaned_runs",

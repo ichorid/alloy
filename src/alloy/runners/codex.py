@@ -32,8 +32,13 @@ class CodexRunner(CLIRunner):
             # codex-cli 0.155.1). The subcommand takes --json, --model and -c
             # but not --sandbox, so the sandbox rides on the config key.
             args = [
-                "exec", "resume", resume_session, "--json", "--skip-git-repo-check",
-                "-c", f'sandbox_mode="{self.sandbox}"',
+                "exec",
+                "resume",
+                resume_session,
+                "--json",
+                "--skip-git-repo-check",
+                "-c",
+                f'sandbox_mode="{self.sandbox}"',
             ]
         else:
             args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", self.sandbox]
@@ -54,8 +59,11 @@ class CodexRunner(CLIRunner):
         resume_session: str | None = None,
     ) -> list[str]:
         return self.build_command(
-            "-", model=model, structured_schema=structured_schema,
-            effort=effort, resume_session=resume_session,
+            "-",
+            model=model,
+            structured_schema=structured_schema,
+            effort=effort,
+            resume_session=resume_session,
         )
 
     def parse(self, stdout, stderr, exit_code):

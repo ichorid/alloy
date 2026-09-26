@@ -126,7 +126,9 @@ def test_verifier_prompt_lists_repository_hints_section():
 
 
 async def test_verifier_prompt_includes_autodetected_cargo_hint_when_context_has_none(
-    project, alloy_home, fake_harnesses,
+    project,
+    alloy_home,
+    fake_harnesses,
 ):
     (project / "Cargo.toml").write_text(
         '[package]\nname = "demo"\nversion = "0.1.0"\n',

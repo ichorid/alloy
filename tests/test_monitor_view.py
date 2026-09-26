@@ -234,17 +234,13 @@ async def test_table_shows_one_row_per_run_after_first_refresh():
 
 async def test_activity_line_is_visible_in_live_view():
     snapshot = _snapshot(runs=[_run("run-1")])
-    snapshot["auxiliary_calls"] = [
-        {"role": "memory_reviewer", "effective_model": "gpt-6-sol"}
-    ]
+    snapshot["auxiliary_calls"] = [{"role": "memory_reviewer", "effective_model": "gpt-6-sol"}]
     app = MonitorApp(snapshot_source=lambda: snapshot, interval=DISABLED_INTERVAL)
     async with app.run_test() as pilot:
         await pilot.pause()
         activity = app.query_one("#activity", Static)
         assert activity.display
-        assert "gpt-6-sol: reviewing repository memory" in str(
-            activity._Static__content
-        )
+        assert "gpt-6-sol: reviewing repository memory" in str(activity._Static__content)
 
 
 async def test_zero_runs_renders_without_raising():
@@ -649,9 +645,7 @@ def test_cli_monitor_once_plain_text_prints_header_and_one_row_per_run(
     assert result.stdout.strip() != ""
 
 
-def test_cli_monitor_once_plain_text_with_no_runs_prints_header_without_raising(
-    beads_project: Path, alloy_home: Path
-):
+def test_cli_monitor_once_plain_text_with_no_runs_prints_header_without_raising(beads_project: Path, alloy_home: Path):
     runner = CliRunner()
     result = runner.invoke(
         cli_app,
@@ -861,9 +855,7 @@ async def test_task_tree_enter_on_queue_expands_and_collapses_ready_rows():
         await pilot.press("enter")
         await pilot.pause()
         expanded_keys = _table_row_keys(table)
-        queue_bead_keys = [
-            key for key in expanded_keys if key.startswith("queue/") and key != "queue/more"
-        ]
+        queue_bead_keys = [key for key in expanded_keys if key.startswith("queue/") and key != "queue/more"]
         assert 1 <= len(queue_bead_keys) <= 50
         assert len(queue_bead_keys) == 5
         assert expanded_keys[0] == "queue"

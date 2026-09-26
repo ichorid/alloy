@@ -31,7 +31,8 @@ def scope_config(**overrides: Any) -> RecipeConfig:
     config = load_config()
     roles = dict(config.roles)
     fallback = overrides.pop(
-        "fallback", RoleSpec(runner="cursor", model="composer-2.5", timeout_minutes=5),
+        "fallback",
+        RoleSpec(runner="cursor", model="composer-2.5", timeout_minutes=5),
     )
     roles["scope"] = RoleSpec(
         runner=overrides.pop("runner", "jev"),
@@ -274,8 +275,13 @@ def make_harness(
 
     if store.get_run(run_id) is None:
         store.create_run(
-            run_id=run_id, bead_id=bead.id, thread_id=run_id, recipe=config.name,
-            repo=project, worktree=worktree.path, branch=worktree.branch,
+            run_id=run_id,
+            bead_id=bead.id,
+            thread_id=run_id,
+            recipe=config.name,
+            repo=project,
+            worktree=worktree.path,
+            branch=worktree.branch,
             log_dir=alloy_home / "logs" / run_id,
             parent_run_id=parent_run_id,
         )

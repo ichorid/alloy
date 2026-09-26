@@ -35,9 +35,7 @@ def script(**overrides):
     return base
 
 
-async def test_estimate_records_simple_complexity_in_state_store_and_ledger(
-    project, alloy_home, fake_harnesses
-):
+async def test_estimate_records_simple_complexity_in_state_store_and_ledger(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(script())
     harness = make_harness(project, alloy_home)
     try:
@@ -63,9 +61,7 @@ async def test_estimate_records_simple_complexity_in_state_store_and_ledger(
     assert implement_row["model"] == "composer-2.5"
 
 
-async def test_alloy_complexity_metadata_skips_estimate_agent_call(
-    project, alloy_home, fake_harnesses
-):
+async def test_alloy_complexity_metadata_skips_estimate_agent_call(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(script())
     bead = make_bead(
         metadata={
@@ -87,9 +83,7 @@ async def test_alloy_complexity_metadata_skips_estimate_agent_call(
     assert [c["role"] for c in calls if c["role"] == "estimate"] == []
 
 
-async def test_missing_estimate_runner_defaults_medium_and_run_completes(
-    project, alloy_home, fake_harnesses
-):
+async def test_missing_estimate_runner_defaults_medium_and_run_completes(project, alloy_home, fake_harnesses):
     config = load_config()
     roles = dict(config.roles)
     roles["estimate"] = RoleSpec(runner="missing-estimate-runner", fallback=None)

@@ -146,8 +146,7 @@ def _contradiction_note_calls(fake_workflow: FakeWorkflow) -> list[dict]:
     return [
         call
         for call in _bd_note_calls(fake_workflow)
-        if "contradiction" in call["argv"][2].lower()
-        or HUMAN_MEMORY_KEY in call["argv"][2]
+        if "contradiction" in call["argv"][2].lower() or HUMAN_MEMORY_KEY in call["argv"][2]
     ]
 
 
@@ -186,7 +185,9 @@ def test_context_packet_compact_caps_contradictions_at_five():
 
 
 async def test_context_flags_memory_contradiction_for_existing_key_only(
-    project, alloy_home, fake_workflow,
+    project,
+    alloy_home,
+    fake_workflow,
 ):
     """One existing-key contradiction -> one review remember, one note, conv untouched."""
     fake_workflow.configure(

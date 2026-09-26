@@ -26,6 +26,7 @@ TDD_LOOP = REPO_ROOT / "src" / "alloy" / "recipes" / "tdd_loop.py"
 SMALL_MARKER = "SMALL_UNIQUE_MARKER_5wb1"
 PER_FILE_CLIP = 4000
 
+
 @pytest.fixture
 def manager(project, tmp_path):
     return WorktreeManager(repo=project, root=tmp_path / "worktrees")
@@ -49,11 +50,7 @@ EXPECTED_JUNK_PATTERNS = {
 def _file_diff(path: str, body: str) -> str:
     lines = body.splitlines() or [""]
     header = (
-        f"diff --git a/{path} b/{path}\n"
-        "new file mode 100644\n"
-        "index 0000000..1111111\n"
-        f"--- /dev/null\n"
-        f"+++ b/{path}\n"
+        f"diff --git a/{path} b/{path}\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/{path}\n"
     )
     hunk = f"@@ -0,0 +1,{len(lines)} @@\n"
     content = "\n".join(f"+{line}" for line in lines)

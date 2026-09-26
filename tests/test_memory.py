@@ -28,11 +28,7 @@ def _expected_render(entries: dict[str, str]) -> str:
 
 
 def _rendered_keys(rendered: str) -> list[str]:
-    return [
-        line.removeprefix("### ")
-        for line in rendered.splitlines()
-        if line.startswith("### ")
-    ]
+    return [line.removeprefix("### ") for line in rendered.splitlines() if line.startswith("### ")]
 
 
 # ---------------------------------------------------------------------------
@@ -127,9 +123,7 @@ def test_with_provenance_round_trips_through_parser():
     stamped = with_provenance("text", "r1", "b1", date(2026, 9, 22))
     assert stamped == "text [alloy run=r1 bead=b1 at=2026-09-22]"
 
-    entry = ProjectMemory.from_raw({"alloy:harvest:x": stamped}, MemorySpec()).entries[
-        "alloy:harvest:x"
-    ]
+    entry = ProjectMemory.from_raw({"alloy:harvest:x": stamped}, MemorySpec()).entries["alloy:harvest:x"]
     assert entry.body == "text"
     assert entry.run_id == "r1"
     assert entry.bead_id == "b1"
@@ -138,9 +132,7 @@ def test_with_provenance_round_trips_through_parser():
 
 def test_human_owned_content_does_not_parse_provenance_trailer():
     raw = "notes [alloy run=r1 bead=b1 at=2026-09-22]"
-    entry = ProjectMemory.from_raw({"operator-note": raw}, MemorySpec()).entries[
-        "operator-note"
-    ]
+    entry = ProjectMemory.from_raw({"operator-note": raw}, MemorySpec()).entries["operator-note"]
 
     assert entry.body == raw
     assert entry.run_id is None
@@ -150,9 +142,7 @@ def test_human_owned_content_does_not_parse_provenance_trailer():
 
 def test_bracket_text_not_at_end_is_not_treated_as_provenance():
     raw = "see [alloy run=old bead=old at=2020-01-01] for history [alloy run=r1 bead=b1 at=2026-09-22]"
-    entry = ProjectMemory.from_raw({"alloy:lesson:refs": raw}, MemorySpec()).entries[
-        "alloy:lesson:refs"
-    ]
+    entry = ProjectMemory.from_raw({"alloy:lesson:refs": raw}, MemorySpec()).entries["alloy:lesson:refs"]
 
     assert entry.body == "see [alloy run=old bead=old at=2020-01-01] for history"
     assert entry.run_id == "r1"

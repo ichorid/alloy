@@ -23,9 +23,7 @@ def test_monitor_render_py_has_no_merge_conflict_markers():
     assert ">>>>>>>" not in text
     assert "\n=======\n" not in text
     # Post-merge resolution: nerd limits block precedes alloy-gek helpers (main's layout).
-    assert text.index("# -- alloy-3g0.3: nerd limits bars") < text.index(
-        "# -- alloy-gek: consumed Codex quota"
-    )
+    assert text.index("# -- alloy-3g0.3: nerd limits bars") < text.index("# -- alloy-gek: consumed Codex quota")
 
 
 def test_monitor_render_py_section_order_nerd_block_before_gek():
@@ -52,14 +50,8 @@ def test_monitor_render_py_gek_weekly_date_suffix_expects_sep_format_not_iso():
 
 def test_monitor_render_py_codex_rollout_test_matches_main_used_percent_name():
     text = MONITOR_RENDER_TESTS.read_text(encoding="utf-8")
-    assert (
-        "def test_limits_lines_codex_rollout_shows_used_percent_with_compact_reset_suffix"
-        in text
-    )
-    assert (
-        "def test_limits_lines_codex_rollout_shows_consumed_percent_with_compact_reset_suffix"
-        not in text
-    )
+    assert "def test_limits_lines_codex_rollout_shows_used_percent_with_compact_reset_suffix" in text
+    assert "def test_limits_lines_codex_rollout_shows_consumed_percent_with_compact_reset_suffix" not in text
 
 
 def test_render_py_reset_suffix_uses_compact_month_day_for_weekly_cycle():
@@ -72,7 +64,7 @@ def test_render_py_reset_suffix_uses_compact_month_day_for_weekly_cycle():
 def test_render_py_nerd_reset_glyph_uses_calendar_for_non_clock_suffix():
     text = MONITOR_RENDER_SRC.read_text(encoding="utf-8")
     assert '"calendar"' in text
-    assert '":" in reset_suffix' in text or ":\" in reset_suffix" in text
+    assert '":" in reset_suffix' in text or ':" in reset_suffix' in text
 
 
 def test_reset_suffix_weekly_other_local_day_returns_sep_compact_date(

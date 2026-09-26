@@ -66,7 +66,7 @@ def splice_managed_block(source: str, managed: str) -> tuple[str, bool]:
     begin = source.find(BEGIN_MARKER)
     end = source.find(END_MARKER, begin + len(BEGIN_MARKER)) if begin >= 0 else -1
     if begin >= 0 and end >= 0:
-        updated = source[:begin] + managed + source[end + len(END_MARKER):]
+        updated = source[:begin] + managed + source[end + len(END_MARKER) :]
     else:
         head = source.rstrip("\n")
         updated = f"{head}\n\n{managed}\n" if head else f"{managed}\n"
@@ -81,7 +81,7 @@ def extract_managed_block(source: str) -> str | None:
     end = source.find(END_MARKER, begin + len(BEGIN_MARKER)) if begin >= 0 else -1
     if begin < 0 or end < 0:
         return None
-    return source[begin:end + len(END_MARKER)]
+    return source[begin : end + len(END_MARKER)]
 
 
 def _block_reviewed_date(block: str) -> date | None:
@@ -91,7 +91,7 @@ def _block_reviewed_date(block: str) -> date | None:
     for line in block.splitlines():
         if line.startswith("reviewed:"):
             try:
-                return date.fromisoformat(line[len("reviewed:"):].strip())
+                return date.fromisoformat(line[len("reviewed:") :].strip())
             except ValueError:
                 return None
     return None

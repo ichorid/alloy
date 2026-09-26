@@ -49,9 +49,7 @@ def script(**overrides):
 
 def test_collection_errors_are_not_double_counted():
     output = (
-        "ERROR tests/test_usage.py\n"
-        "!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!\n"
-        "1 error in 0.24s\n"
+        "ERROR tests/test_usage.py\n!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!\n1 error in 0.24s\n"
     )
     assert parse_counts(output) == (None, 1)
 
@@ -92,9 +90,7 @@ async def test_cancelling_a_call_kills_the_harness(fake_harnesses, project, tmp_
     fake_harnesses.configure({"implement": {"sleep": 30, "pidfile": str(pidfile)}})
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
 
-    task = asyncio.ensure_future(
-        registry.get("codex").run("Implement the smallest change.", project)
-    )
+    task = asyncio.ensure_future(registry.get("codex").run("Implement the smallest change.", project))
     deadline = time.monotonic() + 10
     while not pidfile.exists() and time.monotonic() < deadline:
         await asyncio.sleep(0.05)
@@ -113,9 +109,7 @@ async def test_a_timed_out_harness_is_gone_afterwards(fake_harnesses, project, t
     fake_harnesses.configure({"implement": {"sleep": 30, "pidfile": str(pidfile)}})
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
 
-    result = await registry.get("codex").run(
-        "Implement the smallest change.", project, timeout=timedelta(seconds=1)
-    )
+    result = await registry.get("codex").run("Implement the smallest change.", project, timeout=timedelta(seconds=1))
 
     assert not result.ok and "timed out" in result.error
     assert not pid_alive(int(pidfile.read_text()))
@@ -124,9 +118,7 @@ async def test_a_timed_out_harness_is_gone_afterwards(fake_harnesses, project, t
 # -- alloy-c5v.2: RunContext.call reports the harness pid to the ledger ------
 
 
-async def test_run_context_call_records_the_harness_pid_on_the_inflight_row(
-    fake_harnesses, project, tmp_path
-):
+async def test_run_context_call_records_the_harness_pid_on_the_inflight_row(fake_harnesses, project, tmp_path):
     """journal 9: while a harness is running, `inflight_calls.pid` must carry
     its actual pid -- not just at spawn time, but observably for the whole
     duration the call is in flight -- so reconcile/cancel can find it later
@@ -146,8 +138,14 @@ async def test_run_context_call_records_the_harness_pid_on_the_inflight_row(
     bead = make_bead()
     run_id = "run-1"
     store.create_run(
-        run_id=run_id, bead_id=bead.id, thread_id=run_id, recipe="tdd-loop",
-        repo=project, worktree=None, branch=None, log_dir=None,
+        run_id=run_id,
+        bead_id=bead.id,
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )
     ctx = RunContext(
         bead=bead,
@@ -162,9 +160,7 @@ async def test_run_context_call_records_the_harness_pid_on_the_inflight_row(
         beads=None,
     )
 
-    task = asyncio.ensure_future(
-        ctx.call("implement", RoleSpec(runner="codex"), "Implement the smallest change.")
-    )
+    task = asyncio.ensure_future(ctx.call("implement", RoleSpec(runner="codex"), "Implement the smallest change."))
     try:
         deadline = time.monotonic() + 10
         while not pidfile.exists() and time.monotonic() < deadline:
@@ -181,19 +177,13 @@ async def test_run_context_call_records_the_harness_pid_on_the_inflight_row(
             await task
 
 
-async def test_grandchildren_in_their_own_process_group_die_too(
-    fake_harnesses, project, tmp_path
-):
+async def test_grandchildren_in_their_own_process_group_die_too(fake_harnesses, project, tmp_path):
     """codex's sandbox helpers setpgid themselves; a bare killpg misses them."""
     grandchild = tmp_path / "grandchild.pid"
-    fake_harnesses.configure(
-        {"implement": {"sleep": 30, "detached_child_pidfile": str(grandchild)}}
-    )
+    fake_harnesses.configure({"implement": {"sleep": 30, "detached_child_pidfile": str(grandchild)}})
     registry = RunnerRegistry(log_dir=tmp_path / "logs")
 
-    result = await registry.get("codex").run(
-        "Implement the smallest change.", project, timeout=timedelta(seconds=1)
-    )
+    result = await registry.get("codex").run("Implement the smallest change.", project, timeout=timedelta(seconds=1))
 
     assert not result.ok
     pid = int(grandchild.read_text())
@@ -212,31 +202,30 @@ def _shadow_config():
 
 
 def test_fallback_is_parsed_recursively():
-    spec = RoleSpec.parse({
-        "runner": "astra",
-        "fallback": {"runner": "claude-write", "model": "fable",
-                     "fallback": {"runner": "pi"}},
-    })
+    spec = RoleSpec.parse(
+        {
+            "runner": "astra",
+            "fallback": {"runner": "claude-write", "model": "fable", "fallback": {"runner": "pi"}},
+        }
+    )
     assert spec.fallback.runner == "claude-write"
     assert spec.fallback.model == "fable"
     assert spec.fallback.fallback.runner == "pi"
     assert RoleSpec.parse({"runner": "claude"}).fallback is None
 
 
-async def test_fallback_runner_takes_over_when_the_primary_fails(
-    project, alloy_home, fake_harnesses
-):
+async def test_fallback_runner_takes_over_when_the_primary_fails(project, alloy_home, fake_harnesses):
     config = _shadow_config()
     roles = dict(config.roles)
-    roles["implement"] = replace(
-        roles["implement"], fallback=RoleSpec(runner="claude-write", model="fable")
-    )
+    roles["implement"] = replace(roles["implement"], fallback=RoleSpec(runner="claude-write", model="fable"))
     config = replace(config, roles=roles)
     fake_harnesses.configure(
-        script(**{
-            "implement@codex": [{"exit": 2, "stderr": "codex: rate limited", "text": ""}],
-            "implement@claude": [implement_entry(succeed=True)],
-        })
+        script(
+            **{
+                "implement@codex": [{"exit": 2, "stderr": "codex: rate limited", "text": ""}],
+                "implement@claude": [implement_entry(succeed=True)],
+            }
+        )
     )
     harness = make_harness(project, alloy_home, config=config)
     final = await harness.start()
@@ -249,13 +238,12 @@ async def test_fallback_runner_takes_over_when_the_primary_fails(
     # Both attempts are in the ledger; neither is hidden.
     calls = harness.store.agent_calls(harness.run_id)
     assert [(c["role"], c["runner"], c["ok"]) for c in calls if c["role"] == "implement"] == [
-        ("implement", "codex", 0), ("implement", "claude-write", 1)
+        ("implement", "codex", 0),
+        ("implement", "claude-write", 1),
     ]
 
 
-async def test_fallback_fires_when_primary_reports_is_error_on_exit_zero(
-    project, alloy_home, fake_harnesses
-):
+async def test_fallback_fires_when_primary_reports_is_error_on_exit_zero(project, alloy_home, fake_harnesses):
     config = load_config()
     roles = dict(config.roles)
     roles["tests"] = replace(
@@ -294,9 +282,13 @@ async def test_no_fallback_means_the_failure_stands(project, alloy_home, fake_ha
     roles = dict(config.roles)
     roles["implement"] = replace(roles["implement"], fallback=None)
     fake_harnesses.configure(
-        script(**{"implement@codex": [{"exit": 2, "stderr": "codex: down", "text": ""}],
-                  "implement@claude": [implement_entry(succeed=True)]},
-               judge=[judge_entry("abort", "give up")])
+        script(
+            **{
+                "implement@codex": [{"exit": 2, "stderr": "codex: down", "text": ""}],
+                "implement@claude": [implement_entry(succeed=True)],
+            },
+            judge=[judge_entry("abort", "give up")],
+        )
     )
     harness = make_harness(project, alloy_home, config=replace(config, roles=roles))
     await harness.start()
@@ -326,8 +318,14 @@ async def test_a_bead_with_a_live_run_cannot_be_started_twice(engine, beads_proj
     bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop")
     engine.beads.claim(bead_id)
     engine.store.create_run(
-        run_id="live", bead_id=bead_id, thread_id="live", recipe="tdd-loop",
-        repo=beads_project, worktree=None, branch=None, log_dir=None,
+        run_id="live",
+        bead_id=bead_id,
+        thread_id="live",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )
     import subprocess
     import sys
@@ -355,8 +353,14 @@ async def test_cancel_terminates_the_owning_process(engine, beads_project):
     engine.beads.claim(bead_id)
     holder = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     engine.store.create_run(
-        run_id="owned", bead_id=bead_id, thread_id="owned", recipe="tdd-loop",
-        repo=beads_project, worktree=None, branch=None, log_dir=None,
+        run_id="owned",
+        bead_id=bead_id,
+        thread_id="owned",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )
     engine.store.update_run("owned", pid=holder.pid)
     try:
@@ -373,9 +377,7 @@ async def test_cancel_terminates_the_owning_process(engine, beads_project):
 # -- alloy-c5v.2: cancel kills orphaned harness process groups ---------------
 
 
-async def test_cancel_kills_a_recorded_harness_pid_even_when_the_runs_own_pid_is_dead(
-    engine, beads_project
-):
+async def test_cancel_kills_a_recorded_harness_pid_even_when_the_runs_own_pid_is_dead(engine, beads_project):
     """journal 9: `alloy run` can die (SIGKILL, OOM) without cleaning up the
     harness process group it spawned. cancel() must still reach that group
     via the pid recorded on the inflight_calls row, even though the run's own
@@ -388,17 +390,25 @@ async def test_cancel_kills_a_recorded_harness_pid_even_when_the_runs_own_pid_is
     bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop")
     engine.beads.claim(bead_id)
     engine.store.create_run(
-        run_id="orphaned", bead_id=bead_id, thread_id="orphaned", recipe="tdd-loop",
-        repo=beads_project, worktree=None, branch=None, log_dir=None,
+        run_id="orphaned",
+        bead_id=bead_id,
+        thread_id="orphaned",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )
     engine.store.update_run("orphaned", pid=dead_pid())
 
-    harness = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
-    )
+    harness = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
     engine.store.start_call(
-        "call-orphaned", run_id="orphaned", bead_id=bead_id, role="implement",
-        runner="codex", model=None,
+        "call-orphaned",
+        run_id="orphaned",
+        bead_id=bead_id,
+        role="implement",
+        runner="codex",
+        model=None,
     )
     engine.store.set_call_pid("call-orphaned", harness.pid)
     try:
@@ -424,8 +434,16 @@ def test_time_waiting_for_a_human_is_not_wall_time(alloy_home):
     from alloy.store import Store
 
     store = Store(alloy_home / "alloy.db")
-    store.create_run(run_id="r", bead_id="b", thread_id="r", recipe="tdd-loop",
-                     repo=Path("/repo"), worktree=None, branch=None, log_dir=None)
+    store.create_run(
+        run_id="r",
+        bead_id="b",
+        thread_id="r",
+        recipe="tdd-loop",
+        repo=Path("/repo"),
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
     long_ago = (datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()
     store.update_run("r", started_at=long_ago, paused_at=long_ago)
 
@@ -436,9 +454,7 @@ def test_time_waiting_for_a_human_is_not_wall_time(alloy_home):
     assert record["paused_s"] == pytest.approx(10 * 3600, abs=5)
 
 
-async def test_a_resumed_run_does_not_immediately_hit_max_wall_time(
-    project, alloy_home, fake_harnesses
-):
+async def test_a_resumed_run_does_not_immediately_hit_max_wall_time(project, alloy_home, fake_harnesses):
     """Parked overnight at a human gate, then resumed: the loop must continue."""
     from datetime import datetime, timezone
 
@@ -446,12 +462,14 @@ async def test_a_resumed_run_does_not_immediately_hit_max_wall_time(
 
     from alloy.config import Limits
 
-    config = replace(load_config(), limits=Limits(max_iterations=5, max_consiliums=0,
-                                                  max_agent_calls=100,
-                                                  max_wall_time_minutes=30))
+    config = replace(
+        load_config(), limits=Limits(max_iterations=5, max_consiliums=0, max_agent_calls=100, max_wall_time_minutes=30)
+    )
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
-               judge=[judge_entry("human", "which form?"), judge_entry("done")])
+        script(
+            implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
+            judge=[judge_entry("human", "which form?"), judge_entry("done")],
+        )
     )
     harness = make_harness(project, alloy_home, config=config)
     first = await harness.start()
@@ -459,8 +477,9 @@ async def test_a_resumed_run_does_not_immediately_hit_max_wall_time(
 
     # Simulate the engine's bookkeeping around a long pause.
     night = datetime.now(timezone.utc) - timedelta(hours=8)
-    harness.store.update_run(harness.run_id, started_at=(night - timedelta(minutes=5)).isoformat(),
-                             paused_at=night.isoformat())
+    harness.store.update_run(
+        harness.run_id, started_at=(night - timedelta(minutes=5)).isoformat(), paused_at=night.isoformat()
+    )
     harness.store.mark_resumed(harness.run_id)
 
     final = await harness.resume(Command(resume={"instructions": "carry on"}))
@@ -478,8 +497,14 @@ async def test_time_a_run_spent_dead_is_not_wall_time(engine, beads_project, fak
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
     engine.beads.claim(bead_id)
     engine.store.create_run(
-        run_id="dead", bead_id=bead_id, thread_id="dead", recipe="tdd-loop",
-        repo=beads_project, worktree=None, branch=None, log_dir=None,
+        run_id="dead",
+        bead_id=bead_id,
+        thread_id="dead",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
     )
     hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     engine.store.update_run("dead", pid=999999, started_at=hour_ago)
