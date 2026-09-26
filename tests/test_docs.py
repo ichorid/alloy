@@ -22,6 +22,23 @@ _SHARED_MEMORY_DOC_STRINGS = (
 )
 
 
+def test_agents_has_one_beads_block_and_intact_memory_markers():
+    text = AGENTS_MD.read_text(encoding="utf-8")
+    assert text.count("<!-- BEGIN BEADS INTEGRATION") == 1
+    assert text.count("<!-- END BEADS INTEGRATION -->") == 1
+    assert "<!-- BEGIN BEADS CODEX SETUP" not in text
+    assert text.count("<!-- alloy:memory:begin -->") == 1
+    assert text.count("<!-- alloy:memory:end -->") == 1
+    assert text.index("<!-- alloy:memory:begin -->") < text.index("<!-- alloy:memory:end -->")
+
+
+def test_readme_explains_beads_setup_and_verification_commands():
+    text = README.read_text(encoding="utf-8")
+    assert "bd setup codex" in text
+    assert "uv run pytest -n 0 -q <test-file>" in text
+    assert "uv run pytest -n 8 -q" in text
+
+
 def test_readme_documents_project_memory():
     text = README.read_text(encoding="utf-8")
     for needle in _SHARED_MEMORY_DOC_STRINGS:
