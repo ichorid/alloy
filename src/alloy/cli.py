@@ -340,17 +340,27 @@ def start(
         DEFAULT_STALL_MINUTES, "--stall-minutes",
         help="Announce a running run with no activity for this long (0 disables)",
     ),
-    recipe: Optional[str] = typer.Option(None, "--recipe", help="Only run this recipe"),
+    recipe: Optional[str] = typer.Option(
+        None, "--recipe",
+        help="Force this recipe as the session default for unassigned beads "
+             "(overrides alloy:default:recipe memory; errors if unknown)",
+    ),
     foreground: bool = typer.Option(False, "--foreground", help="Do not detach"),
 ) -> None:
     """Start the scheduler: poll for ready beads and run them one at a time."""
     engine = _engine(repo, root)
+    if recipe is not None:
+        try:
+            engine.validate_recipe(recipe)
+        except (EngineError, ConfigError) as exc:
+            _fail(str(exc))
+            return
     if not foreground:
         existing = read_pid(engine.paths.scheduler_pid)
         if existing:
             _fail(f"scheduler already running (pid {existing})")
         pid = spawn_detached(engine.repo, engine.paths.root, poll, stall_minutes=stall_minutes,
-                             log_file=engine.paths.scheduler_log)
+                             recipe=recipe, log_file=engine.paths.scheduler_log)
         console.print(f"scheduler started (pid {pid}); log: {engine.paths.scheduler_log}")
         return
     _setup_logging()

@@ -50,6 +50,10 @@ class Scheduler:
     poll_seconds: float = DEFAULT_POLL_SECONDS
     concurrency: int = 1
     recipe_filter: str | None = None
+    """When set, forces this recipe as the session default for unassigned
+    beads (see next_task), overriding the alloy:default:recipe memory key.
+    Validated eagerly in __post_init__: an unknown recipe raises EngineError
+    rather than being silently skipped, unlike a bad memory default."""
     once: bool = False
     clock: Callable[[], datetime] = utcnow
     stall_minutes: float = DEFAULT_STALL_MINUTES
@@ -60,6 +64,10 @@ class Scheduler:
     _unknown_default_recipe: str | None = field(default=None, init=False)
     _epic_block_logged: set[str] = field(default_factory=set, init=False)
     _stalled: set[str] = field(default_factory=set, init=False)
+
+    def __post_init__(self) -> None:
+        if self.recipe_filter is not None:
+            self.engine.validate_recipe(self.recipe_filter)
 
     # -- lifecycle --------------------------------------------------------
 
@@ -302,21 +310,23 @@ class Scheduler:
         from alloy import recipes
 
         known = set(recipes.names())
-        self._default_recipe = None
-        default = (
-            self.engine.beads.memories().get(DEFAULT_RECIPE_KEY)
-            if self.recipe_filter is None else None
-        )
-        if default and default not in known:
-            if default != self._unknown_default_recipe:
-                log.warning("ignoring unknown default recipe %r from %s", default, DEFAULT_RECIPE_KEY)
-            self._unknown_default_recipe = default
-        else:
+        if self.recipe_filter is not None:
+            # Validated in __post_init__; it stands in for the memory
+            # default this session and wins over it, but still yields to a
+            # bead's own alloy_recipe metadata (see the check below).
+            self._default_recipe = self.recipe_filter
             self._unknown_default_recipe = None
-            self._default_recipe = default or None
-        for bead in self.engine.beads.ready(
-            recipe=self.recipe_filter, include_unassigned=self._default_recipe is not None,
-        ):
+        else:
+            self._default_recipe = None
+            default = self.engine.beads.memories().get(DEFAULT_RECIPE_KEY)
+            if default and default not in known:
+                if default != self._unknown_default_recipe:
+                    log.warning("ignoring unknown default recipe %r from %s", default, DEFAULT_RECIPE_KEY)
+                self._unknown_default_recipe = default
+            else:
+                self._unknown_default_recipe = None
+                self._default_recipe = default or None
+        for bead in self.engine.beads.ready(include_unassigned=self._default_recipe is not None):
             if (bead.recipe or self._default_recipe) not in known:
                 continue
             if self._top_level_dispatch_blocked(bead.id):
@@ -650,7 +660,7 @@ def signal_stop(pidfile: Path, *, now: bool = False) -> int | None:
 
 def spawn_detached(
     repo: Path, root: Path | None, poll_seconds: float, *, log_file: Path | None = None,
-    stall_minutes: float = DEFAULT_STALL_MINUTES,
+    stall_minutes: float = DEFAULT_STALL_MINUTES, recipe: str | None = None,
 ) -> int:
     """Start `alloy start --foreground` as a background process.
 
@@ -662,6 +672,8 @@ def spawn_detached(
         "--repo", str(repo), "--poll", str(poll_seconds),
         "--stall-minutes", str(stall_minutes),
     ]
+    if recipe:
+        argv += ["--recipe", recipe]
     if root:
         argv += ["--root", str(root)]
     if log_file is not None:

@@ -534,6 +534,59 @@ def test_next_task_logs_once_when_default_recipe_is_unknown(
     assert len(matches) == 1
 
 
+# -- --recipe as the session default (forces onto unassigned beads) ------
+
+
+def test_scheduler_rejects_unknown_recipe_filter(beads_project, alloy_home):
+    with pytest.raises(EngineError):
+        Scheduler(
+            engine=Engine.open(beads_project, alloy_home), poll_seconds=0.01, once=True,
+            recipe_filter="no-such-recipe",
+        )
+
+
+def test_next_task_selects_unassigned_bead_with_recipe_filter(beads_project, alloy_home):
+    scheduler = Scheduler(
+        engine=Engine.open(beads_project, alloy_home), poll_seconds=0.01, once=True,
+        recipe_filter="tdd-loop",
+    )
+    bead_id = bd_create(beads_project, "needs a recipe")
+
+    picked = scheduler.next_task()
+
+    assert picked is not None
+    assert picked.id == bead_id
+    assert picked.recipe is None
+    assert scheduler._default_recipe == "tdd-loop"
+
+
+def test_recipe_filter_overrides_memory_default(beads_project, alloy_home):
+    scheduler = Scheduler(
+        engine=Engine.open(beads_project, alloy_home), poll_seconds=0.01, once=True,
+        recipe_filter="tdd-loop",
+    )
+    bd_create(beads_project, "needs a recipe")
+    scheduler.engine.beads.remember(DEFAULT_RECIPE_KEY, "tdd-loop-jev")
+
+    scheduler.next_task()
+
+    assert scheduler._default_recipe == "tdd-loop"
+
+
+def test_recipe_filter_still_yields_to_a_beads_own_recipe(beads_project, alloy_home):
+    scheduler = Scheduler(
+        engine=Engine.open(beads_project, alloy_home), poll_seconds=0.01, once=True,
+        recipe_filter="tdd-loop",
+    )
+    bead_id = bd_create(beads_project, "already assigned", alloy_recipe="tdd-loop-jev")
+
+    picked = scheduler.next_task()
+
+    assert picked is not None
+    assert picked.id == bead_id
+    assert picked.recipe == "tdd-loop-jev"
+
+
 async def test_tick_runs_unassigned_bead_when_default_recipe_memory_set(
     scheduler, beads_project, fake_harnesses,
 ):
