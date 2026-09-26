@@ -228,13 +228,16 @@ _TESTS_TASK = f"""{BRIEF}
 _IMPLEMENT_STATIC = f"""Implement the smallest change that makes the failing tests pass.
 
 Rules:
-- Change implementation code, not the tests, unless a test is provably wrong about the stated acceptance criteria -- and say so explicitly if you do.
+- Change implementation code, not the tests, unless a test is provably wrong about the stated acceptance \
+criteria -- and say so explicitly if you do.
 - A bug in tests written for THIS task is in scope: use the tests provably wrong permission above, not a <bug> block.
 - Do not disable, skip or loosen assertions to get green.
 - Keep the change minimal and consistent with the repo's conventions.
-- Alloy owns task tracking, verification and git: do not run `bd`, do not commit, and do not run the whole test suite -- run the tests relevant to your change; Alloy runs the full suite when you finish.
+- Alloy owns task tracking, verification and git: do not run `bd`, do not commit, and do not run the whole \
+test suite -- run the tests relevant to your change; Alloy runs the full suite when you finish.
 
-Finish with one paragraph inside <summary> and </summary> tags describing what you changed and why, including 'tests edited: <paths or none>'.
+Finish with one paragraph inside <summary> and </summary> tags describing what you changed and why, including \
+'tests edited: <paths or none>'.
 
 {BUG_PROTOCOL}"""
 
@@ -451,14 +454,11 @@ def expected_golden(role: str) -> str:
 
 
 def _fixture_prompt(role: str) -> str:
-    if role == "context":
-        return context_prompt(BRIEF, ACCEPTANCE)
-    if role == "estimate":
-        return estimate_prompt(BRIEF, ACCEPTANCE, CONTEXT)
-    if role == "tests":
-        return tests_prompt(BRIEF, ACCEPTANCE, CONTEXT)
-    if role == "implement":
-        return implement_prompt(
+    factories = {
+        "context": lambda: context_prompt(BRIEF, ACCEPTANCE),
+        "estimate": lambda: estimate_prompt(BRIEF, ACCEPTANCE, CONTEXT),
+        "tests": lambda: tests_prompt(BRIEF, ACCEPTANCE, CONTEXT),
+        "implement": lambda: implement_prompt(
             BRIEF,
             ACCEPTANCE,
             CONTEXT,
@@ -466,9 +466,8 @@ def _fixture_prompt(role: str) -> str:
             [],
             None,
             BASELINE_CHECKS,
-        )
-    if role == "verifier":
-        return verifier_prompt(
+        ),
+        "verifier": lambda: verifier_prompt(
             brief=BRIEF,
             acceptance=ACCEPTANCE,
             context=CONTEXT,
@@ -480,17 +479,15 @@ def _fixture_prompt(role: str) -> str:
             checks_left_run=5,
             history=ATTEMPT_HISTORY,
             baseline_checks=BASELINE_CHECKS,
-        )
-    if role == "acceptance":
-        return acceptance_prompt(
+        ),
+        "acceptance": lambda: acceptance_prompt(
             ACCEPTANCE,
             DIFF,
             ["tests/test_slugify.py"],
             [CHECK_RESULT],
             None,
-        )
-    if role == "judge":
-        return judge_prompt(
+        ),
+        "judge": lambda: judge_prompt(
             BRIEF,
             ACCEPTANCE,
             CONTEXT,
@@ -499,18 +496,16 @@ def _fixture_prompt(role: str) -> str:
             ATTEMPT_HISTORY,
             1,
             LIMITS_NOTE,
-        )
-    if role == "critic":
-        return critic_prompt(EVIDENCE)
-    if role == "synthesize":
-        return synthesize_prompt(EVIDENCE, CRITIQUES)
-    if role == "harvest":
-        return harvest_prompt(
+        ),
+        "critic": lambda: critic_prompt(EVIDENCE),
+        "synthesize": lambda: synthesize_prompt(EVIDENCE, CRITIQUES),
+        "harvest": lambda: harvest_prompt(
             _HARVEST_EVIDENCE,
             human_note="",
             existing_lessons=HARVEST_EXISTING_LESSONS,
-        )
-    raise KeyError(role)
+        ),
+    }
+    return factories[role]()
 
 
 def _implement_prompt_iteration_two() -> str:
@@ -754,7 +749,7 @@ def test_verifier_prompt_excludes_volatile_markers_from_stable_layers():
         acceptance=ACCEPTANCE,
         context=CONTEXT,
         diff=DIFF,
-        changed_files=[f"mypkg/__init__.py", MARKER_WORKTREE],
+        changed_files=["mypkg/__init__.py", MARKER_WORKTREE],
         checks_this_run=[check_with_markers],
         iteration=MARKER_ITERATION,
         checks_left_iteration=2,

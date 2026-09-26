@@ -70,6 +70,16 @@ _CARGO = re.compile(r"test result: \w+\. (\d+) passed; (\d+) failed")
 
 _ALLOY_SRC = "src/alloy/"
 
+# Cross-cutting workflow code is exercised by tests whose names do not match
+# the source module. These remain suggestions for the verifier, not checks.
+_WORKFLOW_TESTS = {
+    "tdd_loop.py": ("test_workflow.py", "test_prompts.py", "test_triage.py", "test_verify.py"),
+    "state.py": ("test_workflow.py", "test_memory_injection.py"),
+    "role_prompts.py": ("test_prompts.py", "test_workflow.py"),
+    "shared_verification.py": ("test_verify.py", "test_workflow.py", "test_land.py"),
+    "bug_triage.py": ("test_triage.py", "test_remediate.py", "test_workflow.py"),
+}
+
 
 def test_stems_from_changed_alloy_src(changed_files: list[str]) -> set[str]:
     """Map touched ``src/alloy`` modules to ``tests/test_<stem>*.py`` stems.
@@ -101,6 +111,14 @@ def diff_derived_test_paths(changed_files: list[str], repo_root: Path) -> list[s
         for match in sorted(tests_dir.glob(f"test_{stem}*.py")):
             rel = match.relative_to(repo_root).as_posix()
             if rel not in seen:
+                seen.add(rel)
+                paths.append(rel)
+    for source in changed_files:
+        if not source.startswith("src/alloy/recipes/"):
+            continue
+        for name in _WORKFLOW_TESTS.get(Path(source).name, ()):
+            rel = f"tests/{name}"
+            if rel not in seen and (repo_root / rel).is_file():
                 seen.add(rel)
                 paths.append(rel)
     return paths

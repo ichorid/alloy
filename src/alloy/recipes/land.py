@@ -20,7 +20,8 @@ from langgraph.graph import END, START, StateGraph
 
 from alloy.models import JudgeDecision
 from alloy.recipes import tdd_loop
-from alloy.recipes.tdd_loop import TddState, _checks_of, _is_red, make_verify_loop
+from alloy.recipes.shared_verification import _checks_of, _is_red, make_verify_loop
+from alloy.recipes.state import TddState
 from alloy.runtime import RunContext
 
 
