@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 
-from alloy.config import Limits
-from alloy.models import Outcome
 from conftest import estimate_entry, judge_entry
 from support import bind_fake_remediator, make_bead, make_harness
 from test_remediate import _interrupt_reason
@@ -18,6 +16,9 @@ from test_triage import (
     triage_config,
     triage_entry,
 )
+
+from alloy.config import Limits
+from alloy.models import Outcome
 
 # Medium-tier calibration mean used as the remediation cost estimate once headroom
 # gating exists; with max_agent_calls=20 and 14 pre-seeded parent calls, the five

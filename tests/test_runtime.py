@@ -14,12 +14,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from support import load_config, make_bead
 
 from alloy.config import RoleSpec
 from alloy.models import AgentResult, RunnerUnavailable, utcnow
 from alloy.runtime import RunContext
 from alloy.store import Store
-from support import load_config, make_bead
 
 
 class _StaticRegistry:
@@ -263,7 +263,12 @@ async def test_check_limits_counts_only_parent_own_agent_calls(ctx_factory, tmp_
     child_calls = 3
     for index in range(parent_calls):
         store.start_call(
-            f"p-{index}", run_id=parent_run_id, bead_id=bead.id, role="context", runner="codex", model=None
+            f"p-{index}",
+            run_id=parent_run_id,
+            bead_id=bead.id,
+            role="context",
+            runner="codex",
+            model=None,
         )
         store.finish_call(
             f"p-{index}",
@@ -284,7 +289,12 @@ async def test_check_limits_counts_only_parent_own_agent_calls(ctx_factory, tmp_
         )
     for index in range(child_calls):
         store.start_call(
-            f"c-{index}", run_id=child_run_id, bead_id="child", role="implement", runner="codex", model=None
+            f"c-{index}",
+            run_id=child_run_id,
+            bead_id="child",
+            role="implement",
+            runner="codex",
+            model=None,
         )
         store.finish_call(
             f"c-{index}",
@@ -348,7 +358,9 @@ async def test_call_forwards_resume_session_to_runner(ctx_factory):
     assert runner.resume_sessions == ["sess-1"]
 
 
-async def test_call_drops_resume_session_when_falling_back_to_another_runner(ctx_factory):
+async def test_call_drops_resume_session_when_falling_back_to_another_runner(
+    ctx_factory,
+):
     primary = RecordingRunner("codex", ok=False)
     fallback = RecordingRunner("claude-write")
     ctx = ctx_factory(_MappedRegistry({"codex": primary, "claude-write": fallback}))

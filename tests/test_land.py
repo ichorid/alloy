@@ -11,10 +11,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+from conftest import (
+    acceptance_entry,
+    judge_entry,
+    verifier_run_entry,
+    verifier_stop_entry,
+)
+from support import LAND_RECIPE_NAME, load_land_config, make_bead, make_harness
+
 from alloy import recipes
 from alloy.config import load_recipe
-from conftest import acceptance_entry, judge_entry, verifier_run_entry, verifier_stop_entry
-from support import LAND_RECIPE_NAME, load_land_config, make_bead, make_harness
 
 FULL_SUITE = f"{sys.executable} -m pytest -q"
 FAILING_CHECK = 'sh -c "exit 1"'

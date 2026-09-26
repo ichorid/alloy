@@ -10,9 +10,6 @@ from __future__ import annotations
 
 import inspect
 
-from alloy.monitor import app as app_module
-from alloy.monitor import render as render_module
-from alloy.monitor.app import MonitorApp
 from test_monitor_view import (
     DISABLED_INTERVAL,
     _cursor_row_key,
@@ -24,6 +21,10 @@ from test_monitor_view import (
     _snapshot,
     _table_row_keys,
 )
+
+from alloy.monitor import app as app_module
+from alloy.monitor import render as render_module
+from alloy.monitor.app import MonitorApp
 
 ALLOWED_ACTIONS = {
     "cursor_down",

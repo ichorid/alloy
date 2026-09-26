@@ -285,7 +285,9 @@ def test_is_block_stale_false_when_block_matches_rendered_set(embed_stale_today)
     assert is_block_stale(file_text, _memory(), LAST_REVIEW, MemorySpec()) is False
 
 
-def test_is_block_stale_true_when_block_content_differs_from_rendered_set(embed_stale_today):
+def test_is_block_stale_true_when_block_content_differs_from_rendered_set(
+    embed_stale_today,
+):
     is_block_stale = _import_is_block_stale()
     file_text = _agents_with_managed_block(lesson_body="hand-edited inside markers")
 

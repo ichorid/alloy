@@ -21,7 +21,13 @@ from alloy import recipes
 from alloy.beads import Bead, BeadsClient
 from alloy.checkpoints import has_pending_interrupt, open_checkpointer, read_checkpoint
 from alloy.config import ConfigError, RecipeConfig, load_recipe
-from alloy.models import Outcome, parse_bug_where, regression_key, utcnow, with_provenance
+from alloy.models import (
+    Outcome,
+    parse_bug_where,
+    regression_key,
+    utcnow,
+    with_provenance,
+)
 from alloy.paths import AlloyPaths
 from alloy.procs import pid_alive, terminate_group, terminate_pid
 from alloy.runners import RunnerRegistry
@@ -34,7 +40,13 @@ from alloy.store import (
     RUN_WAITING_HUMAN,
     Store,
 )
-from alloy.worktree import Worktree, WorktreeError, WorktreeManager, branch_name, is_test_path
+from alloy.worktree import (
+    Worktree,
+    WorktreeError,
+    WorktreeManager,
+    branch_name,
+    is_test_path,
+)
 
 RECURSION_LIMIT = 200
 
@@ -174,7 +186,10 @@ class Engine:
             reason="cancelled by operator",
         )
         self.beads.set_status(bead_id, bd.STATUS_READY)
-        self.beads.note(bead_id, f"alloy: run {record['run_id']} cancelled; worktree left at {record['worktree']}")
+        self.beads.note(
+            bead_id,
+            f"alloy: run {record['run_id']} cancelled; worktree left at {record['worktree']}",
+        )
         return True
 
     def validate_recipe(self, name: str) -> RecipeConfig:
@@ -275,20 +290,17 @@ class Engine:
         self.beads.close(bead_id)
         worktrees.remove(owner_id, force=True, delete_branch=True)
         log.info("%s: landed %s into %s as %s", bead_id, branch, target, merged.sha)
-        return RunResult(bead_id, result.run_id, "landed", reason=result.reason, worktree=result.worktree)
+        return RunResult(
+            bead_id,
+            result.run_id,
+            "landed",
+            reason=result.reason,
+            worktree=result.worktree,
+        )
 
     # -- remediation ------------------------------------------------------
 
-    async def run_child(self, bead_id: str, *, parent: RunContext, merge_gate: MergeGate | None = None) -> RunResult:
-        """Fix a bug bead from inside a parent run and merge the fix into it.
-
-        The parent's uncommitted work is parked in a WIP commit; the child is
-        cut from the parent's *base* (the defect predates the parent's work, so
-        it reproduces there against a green suite); when the child is done its
-        diff passes a deterministic guard and the merge gate before being
-        merged into the parent's worktree. Any failure leaves the parent tree
-        clean at the WIP commit.
-        """
+    def _claim_child(self, bead_id: str, parent: RunContext) -> tuple[bd.Bead, str]:
         parent_record = self.store.get_run(parent.run_id)
         if parent_record is None:
             raise EngineError(f"no run recorded for parent {parent.run_id}")
@@ -304,6 +316,19 @@ class Engine:
             raise EngineError(f"{bead_id} is '{bug.status}'; only '{bd.STATUS_READY}' beads can start")
         if bug.status == bd.STATUS_READY and not self.beads.claim(bead_id):
             raise EngineError(f"{bead_id} was claimed by someone else")
+        return bug, recipe_name
+
+    async def run_child(self, bead_id: str, *, parent: RunContext, merge_gate: MergeGate | None = None) -> RunResult:
+        """Fix a bug bead from inside a parent run and merge the fix into it.
+
+        The parent's uncommitted work is parked in a WIP commit; the child is
+        cut from the parent's *base* (the defect predates the parent's work, so
+        it reproduces there against a green suite); when the child is done its
+        diff passes a deterministic guard and the merge gate before being
+        merged into the parent's worktree. Any failure leaves the parent tree
+        clean at the WIP commit.
+        """
+        bug, recipe_name = self._claim_child(bead_id, parent)
 
         worktrees = parent.worktrees
         # Read before the WIP commit: the parent's base is where its work
@@ -362,11 +387,20 @@ class Engine:
         )
         self.beads.note(bead_id, note)
         self.beads.note(parent.bead.id, note)
-        log.info("%s: child %s merged into %s", parent.bead.id, bead_id, parent.worktree.branch)
+        log.info(
+            "%s: child %s merged into %s",
+            parent.bead.id,
+            bead_id,
+            parent.worktree.branch,
+        )
         return result
 
     def _guarded_test_paths(
-        self, worktrees: WorktreeManager, child_wt: Worktree, base: str, wip_sha: str | None
+        self,
+        worktrees: WorktreeManager,
+        child_wt: Worktree,
+        base: str,
+        wip_sha: str | None,
     ) -> list[str]:
         """Test files the parent's WIP commit added that the child changed.
 
@@ -386,11 +420,17 @@ class Engine:
         """The child finished but its fix cannot land: record why on both sides.
         The parent tree is already clean at its WIP commit; the child branch
         stays for a human to inspect."""
-        self.store.finish_run(result.run_id, status=RUN_FAILED, outcome=Outcome.FAILED.value, reason=reason)
+        self.store.finish_run(
+            result.run_id,
+            status=RUN_FAILED,
+            outcome=Outcome.FAILED.value,
+            reason=reason,
+        )
         self.beads.set_status(bug.id, bd.STATUS_FAILED)
         self.beads.set_metadata(bug.id, {bd.META_STAGE: Outcome.FAILED.value})
         self.beads.note(
-            bug.id, f"alloy: remediation for {parent.bead.id} not merged -- {reason}. Branch kept at {result.worktree}"
+            bug.id,
+            f"alloy: remediation for {parent.bead.id} not merged -- {reason}. Branch kept at {result.worktree}",
         )
         self.beads.note(parent.bead.id, f"alloy: remediation of {bug.id} not merged -- {reason}")
         key = regression_key(parse_bug_where(bug.description))
@@ -403,7 +443,13 @@ class Engine:
             except Exception:
                 log.warning("could not remember %s", key, exc_info=True)
         log.warning("%s: child %s not merged: %s", parent.bead.id, bug.id, reason)
-        return RunResult(bug.id, result.run_id, Outcome.FAILED.value, reason=reason, worktree=result.worktree)
+        return RunResult(
+            bug.id,
+            result.run_id,
+            Outcome.FAILED.value,
+            reason=reason,
+            worktree=result.worktree,
+        )
 
     def _refuse_if_live(self, bead_id: str, record: dict[str, Any] | None) -> None:
         if (
@@ -609,7 +655,13 @@ class Engine:
                     parent_run_id=parent_run_id,
                     base_commit=ctx.worktree.base_commit,
                 )
-                log.info("%s: run %s started (%s) in %s", bead.id, run_id, recipe_name, ctx.worktree.path)
+                log.info(
+                    "%s: run %s started (%s) in %s",
+                    bead.id,
+                    run_id,
+                    recipe_name,
+                    ctx.worktree.path,
+                )
             else:
                 self.store.reconcile_inflight()
                 self.store.mark_resumed(run_id)
@@ -650,9 +702,17 @@ class Engine:
                 # leaves the run marked running -- which is what makes it
                 # recoverable later. Only a genuine error fails the task here.
                 log.exception("%s: run %s crashed", bead.id, run_id)
-                self.store.finish_run(run_id, status=RUN_FAILED, outcome=Outcome.FAILED.value, reason=str(exc))
+                self.store.finish_run(
+                    run_id,
+                    status=RUN_FAILED,
+                    outcome=Outcome.FAILED.value,
+                    reason=str(exc),
+                )
                 self.beads.set_status(bead.id, bd.STATUS_FAILED)
-                self.beads.note(bead.id, f"alloy: run {run_id} crashed: {exc}. Worktree kept at {ctx.worktree.path}")
+                self.beads.note(
+                    bead.id,
+                    f"alloy: run {run_id} crashed: {exc}. Worktree kept at {ctx.worktree.path}",
+                )
                 raise
             except BaseException:
                 log.warning("%s: run %s interrupted; it stays resumable", bead.id, run_id)
@@ -662,7 +722,14 @@ class Engine:
             log.info("%s: run %s -> %s %s", bead.id, run_id, result.outcome, result.reason)
             return result
 
-    def _settle(self, ctx: RunContext, bead: Bead, recipe_name: str, run_id: str, final: dict[str, Any]) -> RunResult:
+    def _settle(
+        self,
+        ctx: RunContext,
+        bead: Bead,
+        recipe_name: str,
+        run_id: str,
+        final: dict[str, Any],
+    ) -> RunResult:
         config = ctx.recipe
         pending = final.get("__interrupt__")
         if pending:

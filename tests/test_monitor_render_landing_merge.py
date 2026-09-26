@@ -84,10 +84,15 @@ def test_reset_suffix_weekly_other_local_day_returns_sep_compact_date(
 def test_limits_line_weekly_date_suffix_uses_calendar_icon_not_clock(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    from test_monitor_render import (
+        _AMSTERDAM,
+        _available_claude_limits,
+        _freeze_render_now,
+        _snapshot,
+    )
+
     from alloy.limits import window
     from alloy.monitor.render import limits_lines
-
-    from test_monitor_render import _AMSTERDAM, _available_claude_limits, _freeze_render_now, _snapshot
 
     _freeze_render_now(monkeypatch, datetime(2026, 9, 24, 10, 0, tzinfo=_AMSTERDAM))
     snapshot = _snapshot()
@@ -103,8 +108,6 @@ def test_limits_line_weekly_date_suffix_uses_calendar_icon_not_clock(
 
 
 def test_codex_probe_used_percent_is_consumed_fraction_from_rollout(tmp_path):
-    from alloy.limits.codex import probe
-
     from test_limits_codex import (
         CODEX_TS,
         RESETS_AT_EPOCH,
@@ -112,6 +115,8 @@ def test_codex_probe_used_percent_is_consumed_fraction_from_rollout(tmp_path):
         _token_count_line,
         write_rollout,
     )
+
+    from alloy.limits.codex import probe
 
     codex_home = tmp_path / "home"
     write_rollout(

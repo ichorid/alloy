@@ -8,11 +8,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-
-from alloy import beads as bd
-from alloy.checkpoints import open_checkpointer
-from alloy.engine import Engine, EngineError
-from alloy.worktree import WorktreeManager, branch_name
 from conftest import (
     bd_create,
     context_entry,
@@ -24,6 +19,11 @@ from conftest import (
     write_tests_entry,
 )
 from support import load_config, scope_config
+
+from alloy import beads as bd
+from alloy.checkpoints import open_checkpointer
+from alloy.engine import Engine, EngineError
+from alloy.worktree import WorktreeManager, branch_name
 
 
 @pytest.fixture
@@ -142,7 +142,12 @@ async def test_run_child_wip_commit_child_from_base_merges_fix_and_calls_gate(
     beads_project,
     fake_harnesses,
 ):
-    parent_id, parent_run_id, parent_wt, base_before_wip = await _paused_parent_with_wip(
+    (
+        parent_id,
+        parent_run_id,
+        parent_wt,
+        base_before_wip,
+    ) = await _paused_parent_with_wip(
         engine,
         beads_project,
         fake_harnesses,
@@ -178,7 +183,6 @@ async def test_run_child_wip_commit_child_from_base_merges_fix_and_calls_gate(
     assert not _is_ancestor(wip_sha, child_tip, cwd=beads_project)
     assert _is_ancestor(base_before_wip, child_tip, cwd=beads_project)
 
-    parent_record = engine.store.get_run(parent_run_id)
     child_record = engine.store.latest_run_for_bead(bug_id)
     assert child_record is not None
     assert child_record["parent_run_id"] == parent_run_id
@@ -371,7 +375,10 @@ async def test_run_child_agent_calls_do_not_roll_up_into_parent_check_limits(
     assert parent_ctx.check_limits({"iteration": 0, "consiliums": 0}) is None
 
     # The parent's own calls still breach when they reach the cap.
-    recipe = replace(load_config(), limits=replace(load_config().limits, max_agent_calls=parent_calls_before))
+    recipe = replace(
+        load_config(),
+        limits=replace(load_config().limits, max_agent_calls=parent_calls_before),
+    )
     parent_ctx.recipe = recipe
     breach = parent_ctx.check_limits({"iteration": 0, "consiliums": 0})
     assert breach is not None

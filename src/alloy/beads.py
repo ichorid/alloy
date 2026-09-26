@@ -206,7 +206,17 @@ class BeadsClient:
 
     def alloy_beads(self) -> list[Bead]:
         """Every bead Alloy has ever touched or been assigned."""
-        rows = self._json(["list", "--all", "--limit", "0", "--flat", "--has-metadata-key", META_RECIPE])
+        rows = self._json(
+            [
+                "list",
+                "--all",
+                "--limit",
+                "0",
+                "--flat",
+                "--has-metadata-key",
+                META_RECIPE,
+            ]
+        )
         return [Bead.model_validate(row) for row in rows]
 
     def all_rows(self) -> list[dict[str, Any]]:
@@ -347,7 +357,11 @@ class BeadsClient:
             try:
                 rows += self._json(["list", "--status", status, "--limit", "0", "--flat"])
             except Exception:
-                log.debug("project_snapshot: bd list --status %s failed", status, exc_info=True)
+                log.debug(
+                    "project_snapshot: bd list --status %s failed",
+                    status,
+                    exc_info=True,
+                )
         snapshot.open_beads = [_render_bead_line(row) for row in rows[:limit]]
 
         try:

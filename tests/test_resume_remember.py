@@ -12,13 +12,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
-
-from alloy.beads import BeadsClient
-from alloy.cli import app
-from alloy.engine import Engine, RunResult
-from alloy.models import parse_provenance
-from support import load_config
 from conftest import (
     FAKE_BD_SOURCE,
     bd_create,
@@ -29,6 +22,13 @@ from conftest import (
     synthesize_entry,
     write_tests_entry,
 )
+from support import load_config
+from typer.testing import CliRunner
+
+from alloy.beads import BeadsClient
+from alloy.cli import app
+from alloy.engine import Engine, RunResult
+from alloy.models import parse_provenance
 
 
 @pytest.fixture

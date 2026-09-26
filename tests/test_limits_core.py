@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from alloy.limits import (
     harness_for_runner,
     installed_harnesses,

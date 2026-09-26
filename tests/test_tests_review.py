@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from alloy.config import RoleSpec
 from conftest import (
     context_entry,
     implement_entry,
@@ -12,6 +11,8 @@ from conftest import (
     write_tests_entry,
 )
 from support import load_config, make_bead, make_harness
+
+from alloy.config import RoleSpec
 
 
 def review_entry(verdict: str, *issues: str) -> dict:

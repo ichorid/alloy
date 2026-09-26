@@ -64,6 +64,14 @@ def extract_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _advance_string(char: str, escaped: bool) -> tuple[bool, bool]:
+    if escaped:
+        return True, False
+    if char == "\\":
+        return True, True
+    return char != '"', False
+
+
 def _balanced_objects(text: str) -> list[str]:
     """Every top-level {...} span, in order of appearance."""
     spans: list[str] = []
@@ -73,12 +81,7 @@ def _balanced_objects(text: str) -> list[str]:
     escaped = False
     for index, char in enumerate(text):
         if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
+            in_string, escaped = _advance_string(char, escaped)
             continue
         if char == '"':
             in_string = True
@@ -201,6 +204,35 @@ class CLIRunner:
 
     # -- execution --------------------------------------------------------
 
+    def _build_invocation(self, prompt, model, structured_schema, effort, resume_session):
+        model = model or self.default_model
+        effective_prompt = self.build_prompt(prompt, structured_schema)
+        command = None
+        stdin_prompt = None
+        if len(effective_prompt) > self.stdin_prompt_threshold:
+            stdin_kwargs: dict[str, Any] = {
+                "model": model,
+                "structured_schema": structured_schema,
+            }
+            if effort is not None and _accepts_kwarg(self.build_command_stdin, "effort"):
+                stdin_kwargs["effort"] = effort
+            if resume_session is not None and _accepts_kwarg(self.build_command_stdin, "resume_session"):
+                stdin_kwargs["resume_session"] = resume_session
+            command = self.build_command_stdin(**stdin_kwargs)
+            if command is not None:
+                stdin_prompt = effective_prompt.encode("utf-8")
+        if command is None:
+            build_kwargs: dict[str, Any] = {
+                "model": model,
+                "structured_schema": structured_schema,
+            }
+            if effort is not None and _accepts_kwarg(self.build_command, "effort"):
+                build_kwargs["effort"] = effort
+            if resume_session is not None and _accepts_kwarg(self.build_command, "resume_session"):
+                build_kwargs["resume_session"] = resume_session
+            command = self.build_command(effective_prompt, **build_kwargs)
+        return effective_prompt, command, stdin_prompt
+
     async def run(
         self,
         prompt: str,
@@ -224,26 +256,9 @@ class CLIRunner:
         if binary_path is None:
             raise RunnerUnavailable(f"{self.name}: '{self.binary}' not found on PATH")
 
-        model = model or self.default_model
-        effective_prompt = self.build_prompt(prompt, structured_schema)
-        command = None
-        stdin_prompt = None
-        if len(effective_prompt) > self.stdin_prompt_threshold:
-            stdin_kwargs: dict[str, Any] = {"model": model, "structured_schema": structured_schema}
-            if effort is not None and _accepts_kwarg(self.build_command_stdin, "effort"):
-                stdin_kwargs["effort"] = effort
-            if resume_session is not None and _accepts_kwarg(self.build_command_stdin, "resume_session"):
-                stdin_kwargs["resume_session"] = resume_session
-            command = self.build_command_stdin(**stdin_kwargs)
-            if command is not None:
-                stdin_prompt = effective_prompt.encode("utf-8")
-        if command is None:
-            build_kwargs: dict[str, Any] = {"model": model, "structured_schema": structured_schema}
-            if effort is not None and _accepts_kwarg(self.build_command, "effort"):
-                build_kwargs["effort"] = effort
-            if resume_session is not None and _accepts_kwarg(self.build_command, "resume_session"):
-                build_kwargs["resume_session"] = resume_session
-            command = self.build_command(effective_prompt, **build_kwargs)
+        effective_prompt, command, stdin_prompt = self._build_invocation(
+            prompt, model, structured_schema, effort, resume_session
+        )
         argv = [binary_path, *command]
         digest = prompt_hash(effective_prompt)
         prefix = getattr(prompt, "prefix_hash", "")  # set by alloy.prompts.assemble
@@ -328,7 +343,9 @@ class CLIRunner:
         )
 
     @staticmethod
-    def _normalise_parsed(parsed: tuple) -> tuple[str, dict | None, dict, str | None, bool]:
+    def _normalise_parsed(
+        parsed: tuple,
+    ) -> tuple[str, dict | None, dict, str | None, bool]:
         """Accept the historical 4-tuple from :meth:`parse` as well as the
         5-tuple with ``failed``."""
         if len(parsed) == 4:

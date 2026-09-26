@@ -254,7 +254,10 @@ async def test_screen_uses_the_dark_page_background_color():
 
 
 async def test_footer_renders_combined_j_k_move_chip_instead_of_stock_down_up():
-    app = MonitorApp(snapshot_source=lambda: _snapshot(runs=[_run("run-1")]), interval=DISABLED_INTERVAL)
+    app = MonitorApp(
+        snapshot_source=lambda: _snapshot(runs=[_run("run-1")]),
+        interval=DISABLED_INTERVAL,
+    )
     async with app.run_test() as pilot:
         await pilot.pause()
         footer_texts = _footer_key_plain_texts(app)
@@ -262,9 +265,14 @@ async def test_footer_renders_combined_j_k_move_chip_instead_of_stock_down_up():
         assert not any(text.strip() in {"j Down", "k Up"} for text in footer_texts)
 
 
-async def test_footer_shows_icons_mode_marker_in_nerd_mode(monkeypatch: pytest.MonkeyPatch):
+async def test_footer_shows_icons_mode_marker_in_nerd_mode(
+    monkeypatch: pytest.MonkeyPatch,
+):
     monkeypatch.setenv("ALLOY_MONITOR_ICONS", "nerd")
-    app = MonitorApp(snapshot_source=lambda: _snapshot(runs=[_run("run-1")]), interval=DISABLED_INTERVAL)
+    app = MonitorApp(
+        snapshot_source=lambda: _snapshot(runs=[_run("run-1")]),
+        interval=DISABLED_INTERVAL,
+    )
     async with app.run_test() as pilot:
         await pilot.pause()
         assert "icons: nerd" in _footer_plain_text(app)

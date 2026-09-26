@@ -18,7 +18,12 @@ import pytest
 from alloy.monitor.icons import icon
 from alloy.monitor.render import COLUMNS, activity_line, header_line, run_rows
 
-EMPTY_TOKENS = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
+EMPTY_TOKENS = {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "total_tokens": 0,
+    "cost_usd": None,
+}
 WIDE_WIDTH = 100
 
 
@@ -346,7 +351,14 @@ def test_row_tokens_column_reflects_total_tokens_when_no_split_is_available():
 def test_activity_line_shows_memory_review_and_run_stage():
     snapshot = {
         "auxiliary_calls": [{"role": "memory_reviewer", "effective_model": "gpt-6-sol"}],
-        "runs": [{"status": "running", "stage": "verify", "bead_id": "alloy-123", "current_calls": []}],
+        "runs": [
+            {
+                "status": "running",
+                "stage": "verify",
+                "bead_id": "alloy-123",
+                "current_calls": [],
+            }
+        ],
     }
     line = activity_line(snapshot)
     assert "gpt-6-sol: reviewing repository memory" in line
@@ -1036,13 +1048,10 @@ def codex_home(tmp_path):
     return tmp_path / "home"
 
 
-def test_limits_lines_codex_rollout_shows_remaining_percent_with_compact_reset_suffix(
+def test_limits_lines_codex_rollout_shows_used_percent_with_compact_reset_suffix(
     codex_home,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    from alloy.limits.codex import probe
-    from alloy.monitor.render import limits_lines
-
     from test_limits_codex import (
         CODEX_TS,
         RESETS_AT_EPOCH,
@@ -1050,6 +1059,9 @@ def test_limits_lines_codex_rollout_shows_remaining_percent_with_compact_reset_s
         _token_count_line,
         write_rollout,
     )
+
+    from alloy.limits.codex import probe
+    from alloy.monitor.render import limits_lines
 
     write_rollout(
         codex_home,
@@ -1433,7 +1445,14 @@ def _tree_styling_fixture() -> dict:
             ],
         },
         epics=[_epic("E", title="Monitor epic", total=9, done=4, running=2, judge=1)],
-        runs=[_run(run_id="run-under-e", bead_id="running-under-e", epic_id="E", status="running")],
+        runs=[
+            _run(
+                run_id="run-under-e",
+                bead_id="running-under-e",
+                epic_id="E",
+                status="running",
+            )
+        ],
     )
 
 
@@ -1516,7 +1535,14 @@ def test_task_tree_ascii_mode_matches_byo4_expectations():
                 judge=0,
             ),
         ],
-        runs=[_run(run_id="run-under-e", bead_id="running-under-e", epic_id="E", status="running")],
+        runs=[
+            _run(
+                run_id="run-under-e",
+                bead_id="running-under-e",
+                epic_id="E",
+                status="running",
+            )
+        ],
     )
 
     rows = _task_tree_rows(snap, expanded={"queue", "epic/E"}, mode="ascii")

@@ -19,7 +19,19 @@ from alloy.limits import HARNESSES
 from alloy.monitor.icons import icon
 from alloy.verify import parse_counts
 
-COLUMNS = ("bead", "status", "stage", "iter", "cons", "tests", "elapsed", "now", "tokens", "judge", "complexity")
+COLUMNS = (
+    "bead",
+    "status",
+    "stage",
+    "iter",
+    "cons",
+    "tests",
+    "elapsed",
+    "now",
+    "tokens",
+    "judge",
+    "complexity",
+)
 
 RIGHT_ALIGNED = frozenset({"iter", "cons", "tests", "elapsed", "tokens"})
 
@@ -234,23 +246,8 @@ class TreeRow:
     cells: dict[str, str | Text]
 
 
-def task_tree_rows(
-    snapshot: dict[str, Any],
-    expanded: set[str],
-    width: int,
-    *,
-    mode: str | None = None,
-) -> list[TreeRow]:
-    """Build collapsible task-tree rows from a monitor snapshot."""
-    _ = width  # column filtering is applied by the view; cells always carry all keys
+def _queue_tree_rows(ready, blocked, ready_total, queue_open, mode) -> list[TreeRow]:
     rows: list[TreeRow] = []
-    queue = snapshot.get("queue") or {}
-    ready = queue.get("ready") or []
-    blocked = queue.get("blocked") or []
-    ready_total = int(queue.get("ready_total") or 0)
-    runs = snapshot.get("runs") or []
-
-    queue_open = "queue" in expanded
     show_queue = queue_open or ready_total > 0 or bool(blocked)
     if show_queue:
         toggle = "▾" if queue_open else "▸"
@@ -281,7 +278,11 @@ def task_tree_rows(
             )
         for bead in blocked:
             rows.append(_blocked_row(bead, depth=1))
+    return rows
 
+
+def _epic_tree_rows(snapshot, runs, ready, expanded, mode) -> list[TreeRow]:
+    rows: list[TreeRow] = []
     for epic in snapshot.get("epics") or []:
         epic_id = epic["epic_id"]
         epic_key = f"epic/{epic_id}"
@@ -315,6 +316,29 @@ def task_tree_rows(
             if epic.get("done", 0):
                 children.append(_done_fold_row(epic, depth=1))
             rows.extend(_prefix_tree_children(children))
+    return rows
+
+
+def task_tree_rows(
+    snapshot: dict[str, Any],
+    expanded: set[str],
+    width: int,
+    *,
+    mode: str | None = None,
+) -> list[TreeRow]:
+    """Build collapsible task-tree rows from a monitor snapshot."""
+    _ = width  # column filtering is applied by the view; cells always carry all keys
+    rows: list[TreeRow] = []
+    queue = snapshot.get("queue") or {}
+    ready = queue.get("ready") or []
+    blocked = queue.get("blocked") or []
+    ready_total = int(queue.get("ready_total") or 0)
+    runs = snapshot.get("runs") or []
+
+    queue_open = "queue" in expanded
+    rows.extend(_queue_tree_rows(ready, blocked, ready_total, queue_open, mode))
+
+    rows.extend(_epic_tree_rows(snapshot, runs, ready, expanded, mode))
 
     for run in runs:
         if run.get("epic_id") is None:
@@ -858,7 +882,14 @@ def _models_table(entries: list[dict[str, Any]], indent: str = "", usage_style: 
             f"{win['label']} {_display_usage_percent(win, usage_style)}%"
             for win in (entry.get("windows") or {}).values()
         )
-        rows.append((label, str(entry.get("calls", 0)), _text(entry.get("total_tokens")), windows))
+        rows.append(
+            (
+                label,
+                str(entry.get("calls", 0)),
+                _text(entry.get("total_tokens")),
+                windows,
+            )
+        )
     if not rows:
         return []
     model_w = max([5] + [len(r[0]) for r in rows])
@@ -1059,7 +1090,11 @@ def _stale_as_of(as_of: str | None, mode: str | None = None) -> str:
     if age <= 30 * 60:
         return ""
     if mode in ("nerd", "unicode"):
-        badge = _pill_badge(icon("stale", mode) + f" as of {parsed.strftime('%H:%M')}", _COLOR_YELLOW, mode)
+        badge = _pill_badge(
+            icon("stale", mode) + f" as of {parsed.strftime('%H:%M')}",
+            _COLOR_YELLOW,
+            mode,
+        )
         return f" {badge}"
     return f" (as of {parsed.strftime('%H:%M')})"
 

@@ -11,12 +11,11 @@ from typing import Any, Awaitable, Callable
 
 import yaml
 
+from alloy.beads import Bead
 from alloy.checkpoints import open_checkpointer
 from alloy.config import RecipeConfig, RoleSpec, load_recipe
-from alloy.beads import Bead
 from alloy.engine import RunResult
 from alloy.models import utcnow
-from alloy.recipes import tdd_loop
 from alloy.runners import RunnerRegistry
 from alloy.runtime import RunContext
 from alloy.store import Store
@@ -331,7 +330,6 @@ async def await_cancelled_task(
 ) -> float:
     """Await a cancelled graph task; fail if checkpointer teardown exceeds ``budget_s``."""
     import pytest
-
     from conftest import SIMULATED_CLOSE_STALL_S
 
     started = time.monotonic()

@@ -19,7 +19,11 @@ from typing import TYPE_CHECKING, Any
 
 from alloy import beads as bd
 from alloy.config import ConfigError, MemorySpec
-from alloy.memory_embed import last_review_date, render_embed_block, splice_managed_block
+from alloy.memory_embed import (
+    last_review_date,
+    render_embed_block,
+    splice_managed_block,
+)
 from alloy.models import (
     EMBED_STALE_KEY,
     MEMORY_REVIEW_LABEL,

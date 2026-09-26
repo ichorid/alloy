@@ -16,17 +16,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
-
-from alloy import beads as bd
-from alloy.cli import app
-from alloy.engine import Engine
-from alloy.limits import window, write_cache
-from alloy.models import DEFAULT_RECIPE_KEY, AgentResult
-from alloy.monitor import build_snapshot
-from alloy.paths import AlloyPaths
-from alloy.scheduler import Scheduler
-from alloy.store import RUN_CANCELLED, RUN_DONE, RUN_FAILED, RUN_RUNNING, Store
 from conftest import (
     bd_create,
     context_entry,
@@ -39,6 +28,17 @@ from conftest import (
     write_tests_entry,
 )
 from support import make_harness
+from typer.testing import CliRunner
+
+from alloy import beads as bd
+from alloy.cli import app
+from alloy.engine import Engine
+from alloy.limits import window, write_cache
+from alloy.models import DEFAULT_RECIPE_KEY, AgentResult
+from alloy.monitor import build_snapshot
+from alloy.paths import AlloyPaths
+from alloy.scheduler import Scheduler
+from alloy.store import RUN_CANCELLED, RUN_DONE, RUN_FAILED, RUN_RUNNING, Store
 
 TOP_LEVEL_KEYS = {
     "root",
@@ -317,7 +317,11 @@ def test_run_entry_title_falls_back_to_description_snippet_when_title_is_blank(
     bead_id = "bead-run-untitled"
     beads = FakeBeads(
         shows={
-            bead_id: bd.Bead(id=bead_id, title="", description="Fix the flaky retry loop.\nMore detail."),
+            bead_id: bd.Bead(
+                id=bead_id,
+                title="",
+                description="Fix the flaky retry loop.\nMore detail.",
+            ),
         }
     )
     engine = _engine(project, alloy_home, beads=beads)
@@ -481,7 +485,10 @@ async def test_judge_mismatch_when_the_guard_overrides_a_done_decision(project, 
     required check never reaches the judge any more; it goes straight to
     repair, so the override can only come from a limit.)"""
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=True)], judge=[judge_entry("retry", "one more pass")])
+        script(
+            implement=[implement_entry(succeed=True)],
+            judge=[judge_entry("retry", "one more pass")],
+        )
     )
     harness = make_harness(project, alloy_home)
     try:
@@ -559,7 +566,15 @@ def test_cli_monitor_once_json_exits_zero_and_matches_build_snapshot(beads_proje
     runner = CliRunner()
     result = runner.invoke(
         app,
-        ["monitor", "--once", "--json", "--repo", str(beads_project), "--root", str(alloy_home)],
+        [
+            "monitor",
+            "--once",
+            "--json",
+            "--repo",
+            str(beads_project),
+            "--root",
+            str(alloy_home),
+        ],
     )
 
     assert result.exit_code == 0
@@ -657,14 +672,22 @@ def test_snapshot_child_run_resolves_parent_bead_id(project, alloy_home):
 
 def test_cli_monitor_once_json_with_an_active_run(beads_project, alloy_home, fake_harnesses):
     fake_harnesses.configure(script())
-    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
     store = Store(alloy_home / "alloy.db")
     make_harness(beads_project, alloy_home, store=store)  # creates the run row only
 
     runner = CliRunner()
     result = runner.invoke(
         app,
-        ["monitor", "--once", "--json", "--repo", str(beads_project), "--root", str(alloy_home)],
+        [
+            "monitor",
+            "--once",
+            "--json",
+            "--repo",
+            str(beads_project),
+            "--root",
+            str(alloy_home),
+        ],
     )
 
     assert result.exit_code == 0
@@ -1126,7 +1149,11 @@ def test_snapshot_queue_blocked_includes_blocked_by_and_epic_id(project, alloy_h
         title="waiting on deps",
         blocked_by=["alloy-a", "alloy-b"],
     )
-    engine = _engine(project, alloy_home, beads=FakeBeads(blocked=[blocked], epics={"alloy-blocked.1": "alloy-epic"}))
+    engine = _engine(
+        project,
+        alloy_home,
+        beads=FakeBeads(blocked=[blocked], epics={"alloy-blocked.1": "alloy-epic"}),
+    )
 
     snapshot = build_snapshot(engine)
     queue = snapshot["queue"]

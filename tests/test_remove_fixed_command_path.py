@@ -12,9 +12,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
-from alloy.models import ContextPacket
-from alloy.recipes.tdd_loop import verifier_prompt
 from conftest import (
     critic_entry,
     implement_entry,
@@ -25,6 +22,9 @@ from conftest import (
     write_tests_entry,
 )
 from support import make_harness
+
+from alloy.models import ContextPacket
+from alloy.recipes.tdd_loop import verifier_prompt
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ALLOY = REPO_ROOT / "src" / "alloy"

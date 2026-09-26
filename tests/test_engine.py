@@ -9,16 +9,6 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
-
-from alloy import beads as bd
-from alloy.checkpoints import open_checkpointer
-from alloy.cli import app
-from alloy.engine import Engine, EngineError
-from alloy.models import parse_provenance
-from alloy.worktree import Worktree, WorktreeManager, branch_name
-from support import load_config
-from test_beads import _create_child, _create_epic
 from conftest import (
     bd_create,
     context_entry,
@@ -30,6 +20,16 @@ from conftest import (
     verifier_stop_entry,
     write_tests_entry,
 )
+from support import load_config
+from test_beads import _create_child, _create_epic
+from typer.testing import CliRunner
+
+from alloy import beads as bd
+from alloy.checkpoints import open_checkpointer
+from alloy.cli import app
+from alloy.engine import Engine, EngineError
+from alloy.models import parse_provenance
+from alloy.worktree import Worktree, WorktreeManager, branch_name
 
 
 @pytest.fixture
@@ -117,7 +117,10 @@ async def test_a_run_is_recorded_with_every_agent_call(engine, beads_project, fa
 
 async def test_failure_marks_the_bead_failed_and_keeps_the_worktree(engine, beads_project, fake_harnesses):
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("abort", "cannot be done as specified")])
+        script(
+            implement=[implement_entry(succeed=False)],
+            judge=[judge_entry("abort", "cannot be done as specified")],
+        )
     )
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
 
@@ -134,7 +137,10 @@ async def test_human_gate_parks_the_bead_and_resume_completes_it(engine, beads_p
     fake_harnesses.configure(
         script(
             implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
-            judge=[judge_entry("human", "which unicode normalization?"), judge_entry("done")],
+            judge=[
+                judge_entry("human", "which unicode normalization?"),
+                judge_entry("done"),
+            ],
         )
     )
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
@@ -192,7 +198,10 @@ async def test_a_bead_that_is_not_ready_is_refused(engine, beads_project, fake_h
 
 async def test_cancel_returns_the_bead_to_ready_and_keeps_the_worktree(engine, beads_project, fake_harnesses):
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("human", "need a decision")])
+        script(
+            implement=[implement_entry(succeed=False)],
+            judge=[judge_entry("human", "need a decision")],
+        )
     )
     bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop")
     paused = await engine.run(bead_id)
@@ -267,7 +276,15 @@ async def test_status_json_includes_checks_for_finished_run(engine, beads_projec
     runner = CliRunner()
     cli_result = runner.invoke(
         app,
-        ["status", bead_id, "--json", "--repo", str(beads_project), "--root", str(alloy_home)],
+        [
+            "status",
+            bead_id,
+            "--json",
+            "--repo",
+            str(beads_project),
+            "--root",
+            str(alloy_home),
+        ],
     )
 
     assert cli_result.exit_code == 0
@@ -283,7 +300,10 @@ async def test_status_json_includes_checks_for_finished_run(engine, beads_projec
 async def test_rerunning_a_cancelled_bead_starts_from_a_clean_graph(engine, beads_project, fake_harnesses):
     """A new run must not inherit the abandoned run's graph state."""
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("human", "need a decision")])
+        script(
+            implement=[implement_entry(succeed=False)],
+            judge=[judge_entry("human", "need a decision")],
+        )
     )
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
     abandoned = await engine.run(bead_id)
@@ -313,7 +333,10 @@ async def test_graph_snapshot_for_run_returns_that_specific_runs_state(engine, b
     """A bead with two recorded runs must not have `graph_snapshot_for_run` collapse
     to whichever run happens to be latest -- each run keeps its own checkpoint."""
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("human", "need a decision")])
+        script(
+            implement=[implement_entry(succeed=False)],
+            judge=[judge_entry("human", "need a decision")],
+        )
     )
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
     first = await engine.run(bead_id)
@@ -355,7 +378,10 @@ async def test_resume_reconciles_inflight_calls_before_reassigning_pid(
     process's pid -- otherwise a stale in-flight row becomes indistinguishable
     from a fresh one, since the run now looks alive again."""
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("human", "need a decision")])
+        script(
+            implement=[implement_entry(succeed=False)],
+            judge=[judge_entry("human", "need a decision")],
+        )
     )
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
     await engine.run(bead_id)
@@ -421,7 +447,13 @@ async def test_unmerged_remediation_remembers_alloy_regression_prefix(
     bug_id = bd_create(beads_project, BUG_TITLE, alloy_recipe="tdd-loop")
     engine.beads.claim(bug_id)
     subprocess.run(
-        ["bd", "update", bug_id, "-d", _bug_description_with_where(BUG_TITLE, BUG_WHERE)],
+        [
+            "bd",
+            "update",
+            bug_id,
+            "-d",
+            _bug_description_with_where(BUG_TITLE, BUG_WHERE),
+        ],
         cwd=str(beads_project),
         check=True,
         capture_output=True,

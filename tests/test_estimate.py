@@ -5,10 +5,6 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 
-from alloy.config import RoleSpec, MemorySpec
-from alloy.models import ProjectMemory
-from alloy.prompts import LAYER_SEPARATOR
-from alloy.recipes.tdd_loop import estimate_prompt
 from conftest import (
     context_entry,
     critic_entry,
@@ -19,6 +15,11 @@ from conftest import (
     write_tests_entry,
 )
 from support import load_config, make_bead, make_harness
+
+from alloy.config import MemorySpec, RoleSpec
+from alloy.models import ProjectMemory
+from alloy.prompts import LAYER_SEPARATOR
+from alloy.recipes.tdd_loop import estimate_prompt
 
 
 def script(**overrides):

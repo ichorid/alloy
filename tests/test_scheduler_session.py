@@ -7,12 +7,12 @@ import os
 from datetime import datetime
 
 import pytest
+from conftest import bd_create
 
 from alloy import scheduler as scheduler_module
 from alloy.engine import Engine, RunResult
 from alloy.paths import AlloyPaths
 from alloy.scheduler import Scheduler, read_pid
-from conftest import bd_create
 
 
 def read_session(paths: AlloyPaths) -> dict | None:

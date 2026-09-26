@@ -42,5 +42,8 @@ addopts = ["-n", "auto"]
 # `import alloy` would test main's code; this puts ./src ahead of it.
 pythonpath = ["src"]
 
+[tool.ruff]
+line-length = 120
+
 [tool.ruff.lint]
-select = ["E9", "F63", "F7", "F82"]
+select = ["E", "F", "I", "C901"]

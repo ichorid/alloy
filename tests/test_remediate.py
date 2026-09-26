@@ -5,12 +5,8 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from langgraph.types import Command
-
-from alloy import beads as bd
-from alloy.config import Limits
-from alloy.models import Outcome
 from conftest import IMPLEMENTATION, implement_entry, judge_entry
+from langgraph.types import Command
 from support import RemediationStep, bind_fake_remediator, make_bead, make_harness
 from test_triage import (
     RecordingBeadsClient,
@@ -19,6 +15,9 @@ from test_triage import (
     triage_config,
     triage_entry,
 )
+
+from alloy.config import Limits
+from alloy.models import Outcome
 
 
 def _agent_roles(fake_harnesses) -> list[str]:

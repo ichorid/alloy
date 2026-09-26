@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from alloy.beads import Bead
 from conftest import (
     context_entry,
     critic_entry,
@@ -13,8 +12,10 @@ from conftest import (
     synthesize_entry,
     write_tests_entry,
 )
-from alloy.store import Store
 from support import load_config, make_bead, make_harness
+
+from alloy.beads import Bead
+from alloy.store import Store
 
 
 def workflow_script(**overrides):

@@ -555,7 +555,13 @@ def beads_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     _git(["config", "user.email", "alloy@test"], repo)
     _git(["config", "user.name", "Alloy Test"], repo)
     _git(["commit", "-q", "--allow-empty", "-m", "initial"], repo)
-    subprocess.run(["bd", "init", "--prefix", "t"], cwd=str(repo), check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["bd", "init", "--prefix", "t"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     from alloy.beads import BeadsClient
 
     BeadsClient(repo=repo).ensure_statuses()

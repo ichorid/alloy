@@ -10,6 +10,7 @@ the harvest path reads lessons from state.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import shutil
@@ -18,13 +19,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-from alloy.beads import BeadsClient
-from alloy.models import LESSON_KEY_PREFIX, with_provenance
-from alloy.recipes import tdd_loop
-from alloy.runtime import RunContext
-from alloy.runners import RunnerRegistry
-from alloy.store import Store
 from conftest import (
     FAKE_BD_SOURCE,
     FAKE_RUNNERS,
@@ -39,6 +33,13 @@ from conftest import (
     write_tests_entry,
 )
 from support import await_role, load_config, make_bead, make_harness
+
+from alloy.beads import BeadsClient
+from alloy.models import LESSON_KEY_PREFIX, with_provenance
+from alloy.recipes import tdd_loop
+from alloy.runners import RunnerRegistry
+from alloy.runtime import RunContext
+from alloy.store import Store
 
 RUN_ID = "harvest-snapshot-run"
 BEAD_ID = "alloy-muh"
@@ -210,8 +211,9 @@ def _make_run_context(
 
 
 def _harvest_function_body() -> str:
-    text = Path(tdd_loop.__file__).read_text(encoding="utf-8")
-    return text.split("async def harvest")[1].split("\n    def remember_lesson")[0]
+    from alloy.recipes import workflow_nodes
+
+    return inspect.getsource(workflow_nodes._make_node_harvest)
 
 
 def test_harvest_wires_existing_lessons_from_state_memory_lessons():

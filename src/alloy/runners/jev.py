@@ -180,7 +180,14 @@ class JevRunner:
                 ranked = sorted(probabilities.items(), key=lambda item: -item[1])
                 structured["reason"] = "jev p: " + ", ".join(f"{label} {value:.2f}" for label, value in ranked)
 
-        log_path = self._write_log(digest, payload, body_text, response.status_code, probabilities, started=started)
+        log_path = self._write_log(
+            digest,
+            payload,
+            body_text,
+            response.status_code,
+            probabilities,
+            started=started,
+        )
         return AgentResult(
             runner=self.name,
             model=effective_model,

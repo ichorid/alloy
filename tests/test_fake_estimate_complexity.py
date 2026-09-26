@@ -14,6 +14,11 @@ import os
 import subprocess
 
 import pytest
+from conftest import bd_create
+from support import make_harness
+from test_scheduler import _bead_notes
+from test_scheduler import script as scheduler_script
+from test_workflow import script as workflow_script
 
 from alloy.beads import META_COMPLEXITY_ESTIMATED
 from alloy.config import load_recipe
@@ -24,10 +29,6 @@ from alloy.runners.base import extract_json_object
 from alloy.runners.claude import ClaudeRunner
 from alloy.runners.cursor import CursorRunner
 from alloy.scheduler import Scheduler
-from conftest import bd_create
-from support import make_harness
-from test_scheduler import _bead_notes, script as scheduler_script
-from test_workflow import script as workflow_script
 
 
 def _run_fake_cli(fake_harnesses, binary: str, prompt: str) -> subprocess.CompletedProcess[str]:

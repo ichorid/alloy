@@ -121,7 +121,15 @@ def _windows(payload: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         resets_at = entry.get("resets_at")
         label, model = _label(key)
-        windows.append(window(key, label, utilization, resets_at if isinstance(resets_at, str) else None, model))
+        windows.append(
+            window(
+                key,
+                label,
+                utilization,
+                resets_at if isinstance(resets_at, str) else None,
+                model,
+            )
+        )
     return windows
 
 

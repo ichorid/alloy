@@ -20,7 +20,6 @@ import pytest
 from alloy.config import ConfigError, RecipeConfig, RoleSpec, load_recipe
 from alloy.models import COMPLEXITY_LEVELS, next_level
 
-
 # ---------------------------------------------------------------------------
 # models.py: complexity level primitives
 # ---------------------------------------------------------------------------
@@ -342,7 +341,11 @@ def test_complexity_tier_rejects_effort_on_cursor_plan_runner():
             "routing": "live",
             "tiers": {
                 "simple": [
-                    {"runner": "cursor-plan", "model": "composer-2.5", "effort": "high"},
+                    {
+                        "runner": "cursor-plan",
+                        "model": "composer-2.5",
+                        "effort": "high",
+                    },
                 ],
             },
         }

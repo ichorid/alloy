@@ -13,11 +13,6 @@ import sqlite3
 import time
 
 import aiosqlite
-import pytest
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-
-from alloy.checkpoints import open_checkpointer, read_checkpoint
-from alloy.engine import Engine
 from conftest import (
     bd_create,
     context_entry,
@@ -27,7 +22,11 @@ from conftest import (
     synthesize_entry,
     write_tests_entry,
 )
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from support import await_cancelled_task, await_role, make_harness
+
+from alloy.checkpoints import open_checkpointer, read_checkpoint
+from alloy.engine import Engine
 
 # Reported stall was ~35s; fallback must open well inside the cancel budget.
 CONNECT_OPEN_BUDGET_S = 6.0

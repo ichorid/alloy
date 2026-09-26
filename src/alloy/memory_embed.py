@@ -14,7 +14,13 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from alloy.config import MemorySpec
-from alloy.models import EMBED_KEY, LAST_REVIEW_KEY, ProjectMemory, _embeddable, _embedded_keys
+from alloy.models import (
+    EMBED_KEY,
+    LAST_REVIEW_KEY,
+    ProjectMemory,
+    _embeddable,
+    _embedded_keys,
+)
 
 BEGIN_MARKER = "<!-- alloy:memory:begin -->"
 END_MARKER = "<!-- alloy:memory:end -->"

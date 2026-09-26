@@ -6,11 +6,12 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
-from alloy.models import AgentResult, utcnow
-from alloy.runtime import RunContext
-from alloy.runners import RunnerRegistry
-from alloy.store import Store
 from support import load_config, make_bead
+
+from alloy.models import AgentResult, utcnow
+from alloy.runners import RunnerRegistry
+from alloy.runtime import RunContext
+from alloy.store import Store
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _RUNTIME_PY = _REPO_ROOT / "src" / "alloy" / "runtime.py"

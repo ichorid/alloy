@@ -218,7 +218,15 @@ class WorktreeManager:
     def added_paths(self, commit: str) -> list[str]:
         """Paths the commit introduced (relative to its parent)."""
         proc = _git(
-            ["diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "--diff-filter=A", commit],
+            [
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "--root",
+                "--diff-filter=A",
+                commit,
+            ],
             self.repo,
             check=False,
         )
@@ -297,7 +305,11 @@ class WorktreeManager:
         return proc.stdout.strip() or head
 
     def _branch_exists(self, branch: str) -> bool:
-        proc = _git(["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], self.repo, check=False)
+        proc = _git(
+            ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+            self.repo,
+            check=False,
+        )
         return proc.returncode == 0
 
     def _assert_owned(self, path: Path, branch: str) -> None:

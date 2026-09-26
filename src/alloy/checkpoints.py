@@ -81,7 +81,9 @@ class _ThreadedSqliteSaver(SqliteSaver):
 
 
 @asynccontextmanager
-async def _open_threaded_checkpointer(path: Path) -> AsyncIterator[_ThreadedSqliteSaver]:
+async def _open_threaded_checkpointer(
+    path: Path,
+) -> AsyncIterator[_ThreadedSqliteSaver]:
     """Sync-sqlite fallback keeping the same file, pragmas and schema."""
     connection = sqlite3.connect(str(path), check_same_thread=False, timeout=30.0)
     try:
@@ -95,7 +97,9 @@ async def _open_threaded_checkpointer(path: Path) -> AsyncIterator[_ThreadedSqli
 
 
 @asynccontextmanager
-async def open_checkpointer(path: Path) -> AsyncIterator[AsyncSqliteSaver | SqliteSaver]:
+async def open_checkpointer(
+    path: Path,
+) -> AsyncIterator[AsyncSqliteSaver | SqliteSaver]:
     """A checkpointer bound to `path`, set up and closed around the caller."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     try:

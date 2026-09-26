@@ -5,10 +5,6 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from langgraph.types import Command
-
-from alloy import beads as bd
-from alloy.config import RoleSpec
 from conftest import (
     context_entry,
     critic_entry,
@@ -18,7 +14,11 @@ from conftest import (
     triage_entry,
     write_tests_entry,
 )
+from langgraph.types import Command
 from support import load_config, make_bead, make_harness
+
+from alloy import beads as bd
+from alloy.config import RoleSpec
 
 
 def script(**overrides):

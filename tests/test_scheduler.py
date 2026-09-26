@@ -12,15 +12,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
-from alloy import beads as bd
-from alloy.config import LandingSpec
-from alloy.engine import Engine, EngineError
-from alloy.memory_embed import BEGIN_MARKER
-from alloy.models import EMBED_KEY, LAST_REVIEW_KEY, MEMORY_REVIEW_LABEL, utcnow
-from alloy.scheduler import Scheduler, read_pid
-from alloy.store import RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN
-from alloy.worktree import Worktree, WorktreeManager, branch_name
 from conftest import (
     acceptance_entry,
     bd_create,
@@ -35,6 +26,15 @@ from conftest import (
     write_tests_entry,
 )
 from support import await_role, load_config, load_land_config
+
+from alloy import beads as bd
+from alloy.config import LandingSpec
+from alloy.engine import Engine, EngineError
+from alloy.memory_embed import BEGIN_MARKER
+from alloy.models import EMBED_KEY, LAST_REVIEW_KEY, MEMORY_REVIEW_LABEL, utcnow
+from alloy.scheduler import Scheduler, read_pid
+from alloy.store import RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN
+from alloy.worktree import Worktree, WorktreeManager, branch_name
 
 
 def script(**overrides):
@@ -738,7 +738,7 @@ def test_next_task_skips_everything_else_when_epic_child_has_waiting_human_run(
         priority=0,
         alloy_recipe="tdd-loop",
     )
-    child_y = _create_epic_child(
+    _create_epic_child(
         beads_project,
         "epic child Y",
         epic_id,
@@ -901,7 +901,12 @@ def test_next_task_skips_epic_children_when_sibling_has_failed_run_with_dirty_wo
         priority=1,
         alloy_recipe="tdd-loop",
     )
-    standalone = bd_create(beads_project, "standalone after dirty fail", priority=2, alloy_recipe="tdd-loop")
+    standalone = bd_create(
+        beads_project,
+        "standalone after dirty fail",
+        priority=2,
+        alloy_recipe="tdd-loop",
+    )
     dirty_marker = beads_project / "epic-dirty-marker.txt"
     dirty_marker.write_text("uncommitted epic work\n", encoding="utf-8")
     _seed_parked_run(
@@ -1176,9 +1181,8 @@ async def test_scheduler_tick_leaves_landing_off_bead_review_ready(
 
     from alloy.scheduler import Scheduler as SchedulerClass
 
-    assert ".land(" in inspect.getsource(SchedulerClass.tick), (
-        "scheduler.tick must wire auto-land before landing.mode off is testable"
-    )
+    assert "_auto_land_after_run" in inspect.getsource(SchedulerClass.tick)
+    assert ".land(" in inspect.getsource(SchedulerClass._auto_land_after_run)
     _patch_engine_recipes(monkeypatch, scheduler.engine, landing_off=True)
     land_calls: list[str] = []
     original_land = scheduler.engine.land

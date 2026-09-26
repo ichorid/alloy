@@ -14,6 +14,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import (
+    acceptance_entry,
+    bd_create,
+    judge_entry,
+    verifier_run_entry,
+    verifier_stop_entry,
+)
 from typer.testing import CliRunner
 
 from alloy import beads as bd
@@ -21,7 +28,6 @@ from alloy.beads import BeadsClient
 from alloy.cli import app
 from alloy.engine import Engine
 from alloy.worktree import Worktree, WorktreeManager, branch_name
-from conftest import acceptance_entry, bd_create, judge_entry, verifier_run_entry, verifier_stop_entry
 
 FULL_SUITE = f"{sys.executable} -m pytest -q"
 FAILING_CHECK = 'sh -c "exit 1"'

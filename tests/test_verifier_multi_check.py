@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from alloy.models import CheckRequest, VerifierAction
 from conftest import verifier_run_entry, verifier_run_many_entry, verifier_stop_entry
 from support import make_harness
 from test_workflow import verification_script
+
+from alloy.models import CheckRequest, VerifierAction
 
 CMD_A = 'sh -c "echo batch-a"'
 CMD_B = 'sh -c "echo batch-b"'

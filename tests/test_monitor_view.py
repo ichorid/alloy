@@ -24,7 +24,12 @@ from alloy.monitor.app import MonitorApp
 from alloy.monitor.render import COLUMNS
 
 DISABLED_INTERVAL = 1000.0
-EMPTY_TOKENS = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
+EMPTY_TOKENS = {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "total_tokens": 0,
+    "cost_usd": None,
+}
 
 
 def _empty_queue() -> dict:
@@ -151,7 +156,10 @@ ZERO_RUNS = _snapshot(runs=[])
 TWO_RUNS = _snapshot(runs=[_run("run-1"), _run("run-2")])
 THREE_RUNS = _snapshot(runs=[_run("run-1"), _run("run-2"), _run("run-3")])
 RUNNING_AND_DONE = _snapshot(
-    runs=[_run("run-active", bead_id="bead-active"), _done_run("run-finished", bead_id="bead-done")],
+    runs=[
+        _run("run-active", bead_id="bead-active"),
+        _done_run("run-finished", bead_id="bead-done"),
+    ],
 )
 
 
@@ -627,11 +635,14 @@ async def test_r_key_refreshes_snapshot_and_reprobes_limits():
 
 
 def test_cli_monitor_once_plain_text_prints_header_and_one_row_per_run(
-    beads_project: Path, alloy_home: Path, fake_harnesses, monkeypatch: pytest.MonkeyPatch
+    beads_project: Path,
+    alloy_home: Path,
+    fake_harnesses,
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    from alloy.engine import Engine
-    from alloy.store import Store
     from support import make_harness
+
+    from alloy.store import Store
 
     make_harness(beads_project, alloy_home, store=Store(alloy_home / "alloy.db"))
 
@@ -657,12 +668,16 @@ def test_cli_monitor_once_plain_text_with_no_runs_prints_header_without_raising(
 
 
 def test_cli_monitor_once_plain_text_prints_limits_lines_before_table_rows(
-    beads_project: Path, alloy_home: Path, fake_harnesses, monkeypatch: pytest.MonkeyPatch
+    beads_project: Path,
+    alloy_home: Path,
+    fake_harnesses,
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    from support import make_harness
+
     from alloy.limits import window, write_cache
     from alloy.paths import AlloyPaths
     from alloy.store import Store
-    from support import make_harness
 
     fake_harnesses.remove("cursor-agent")
     paths = AlloyPaths.resolve(alloy_home).ensure()

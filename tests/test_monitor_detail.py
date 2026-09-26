@@ -19,7 +19,12 @@ DISABLED_INTERVAL = 1000.0
 
 _METADATA_PREFIXES = ("bead:", "branch:")
 
-EMPTY_TOKENS = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
+EMPTY_TOKENS = {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "total_tokens": 0,
+    "cost_usd": None,
+}
 
 
 def _run(
@@ -90,8 +95,18 @@ def _judge(
 
 def test_two_inflight_calls_with_differing_requested_and_effective_runner():
     calls = [
-        _call(role="implement", requested_runner="astra", effective_runner="codex", elapsed_seconds=42.1),
-        _call(role="critic", requested_runner="claude", effective_runner="cursor", elapsed_seconds=3.9),
+        _call(
+            role="implement",
+            requested_runner="astra",
+            effective_runner="codex",
+            elapsed_seconds=42.1,
+        ),
+        _call(
+            role="critic",
+            requested_runner="claude",
+            effective_runner="cursor",
+            elapsed_seconds=3.9,
+        ),
     ]
     lines = detail_lines(_run(current_calls=calls))
 
@@ -202,8 +217,18 @@ def test_judge_none_does_not_mention_judge_said_or_no_parseable_verdict():
 
 def test_tokens_by_role_has_one_line_per_role_with_total_and_in_out_split():
     tokens_by_role = {
-        "implement": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150, "cost_usd": 0.01},
-        "critic": {"input_tokens": 20, "output_tokens": 10, "total_tokens": 30, "cost_usd": 0.002},
+        "implement": {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "total_tokens": 150,
+            "cost_usd": 0.01,
+        },
+        "critic": {
+            "input_tokens": 20,
+            "output_tokens": 10,
+            "total_tokens": 30,
+            "cost_usd": 0.002,
+        },
     }
 
     lines = detail_lines(_run(tokens_by_role=tokens_by_role))
@@ -248,7 +273,7 @@ def test_detail_lines_models_used_includes_runner_model_calls_tokens_and_windows
         }
     ]
 
-    lines = detail_lines(_run(models_used=models_used))
+    lines = detail_lines(_run(models_used=models_used), usage_style="used")
 
     model_line = next(line for line in lines if "claude-write:fable" in line)
     assert " 3 " in model_line

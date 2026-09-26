@@ -17,11 +17,6 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
-
-from alloy import beads as bd
-from alloy.checkpoints import read_checkpoint
-from alloy.engine import Engine
-from alloy.store import RUN_RUNNING
 from conftest import (
     acceptance_entry,
     bd_create,
@@ -35,6 +30,11 @@ from conftest import (
     write_tests_entry,
 )
 from support import await_role, make_harness, wait_for_role
+
+from alloy import beads as bd
+from alloy.checkpoints import read_checkpoint
+from alloy.engine import Engine
+from alloy.store import RUN_RUNNING
 
 
 def script(**overrides):
@@ -87,7 +87,12 @@ async def test_an_interrupted_run_resumes_without_repeating_finished_stages(proj
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    assert [call["role"] for call in fake_harnesses.calls] == ["context", "estimate", "tests", "implement"]
+    assert [call["role"] for call in fake_harnesses.calls] == [
+        "context",
+        "estimate",
+        "tests",
+        "implement",
+    ]
 
     snapshot = read_checkpoint(alloy_home / "workflows.db", harness.thread_id)
     assert snapshot is not None
@@ -133,7 +138,17 @@ async def test_a_killed_process_leaves_an_orphaned_run_that_can_be_adopted(beads
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
 
     child = subprocess.Popen(
-        [sys.executable, "-m", "alloy.cli", "run", bead_id, "--repo", str(beads_project), "--root", str(alloy_home)],
+        [
+            sys.executable,
+            "-m",
+            "alloy.cli",
+            "run",
+            bead_id,
+            "--repo",
+            str(beads_project),
+            "--root",
+            str(alloy_home),
+        ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")},
@@ -171,7 +186,10 @@ async def test_a_killed_process_leaves_an_orphaned_run_that_can_be_adopted(beads
 
 async def test_restart_can_answer_what_was_running_and_where(beads_project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
-        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("human", "need a decision")])
+        script(
+            implement=[implement_entry(succeed=False)],
+            judge=[judge_entry("human", "need a decision")],
+        )
     )
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
     await Engine.open(beads_project, alloy_home).run(bead_id)
@@ -200,7 +218,17 @@ async def test_killed_mid_check_resumes_without_rerunning_finished_stages_or_che
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
 
     child = subprocess.Popen(
-        [sys.executable, "-m", "alloy.cli", "run", bead_id, "--repo", str(beads_project), "--root", str(alloy_home)],
+        [
+            sys.executable,
+            "-m",
+            "alloy.cli",
+            "run",
+            bead_id,
+            "--repo",
+            str(beads_project),
+            "--root",
+            str(alloy_home),
+        ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")},

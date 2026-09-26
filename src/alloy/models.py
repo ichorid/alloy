@@ -127,9 +127,12 @@ def extract_bug_reports(text: str) -> list[BugReport]:
                 title=title,
                 where=fields.get("where", ""),
                 evidence=fields.get("evidence", ""),
-                blocks_task={"yes": True, "true": True, "no": False, "false": False}.get(
-                    fields.get("blocks_task", "").lower()
-                ),
+                blocks_task={
+                    "yes": True,
+                    "true": True,
+                    "no": False,
+                    "false": False,
+                }.get(fields.get("blocks_task", "").lower()),
             )
         )
     return reports
@@ -303,7 +306,14 @@ class ContextPacket(BaseModel):
         }
 
 
-CHECK_KINDS: tuple[str, ...] = ("regression", "targeted", "lint", "typecheck", "build", "custom")
+CHECK_KINDS: tuple[str, ...] = (
+    "regression",
+    "targeted",
+    "lint",
+    "typecheck",
+    "build",
+    "custom",
+)
 
 
 class CheckRequest(BaseModel):
@@ -873,6 +883,39 @@ class ReviewPlan(BaseModel):
         return {item.key for item in self.items}
 
 
+def _hygiene_stale(entries, today, ttl_days, forget) -> None:
+    for key, entry in entries.items():
+        if entry.owner == "alloy" and entry.date is not None:
+            age = (today - entry.date).days
+            if age > ttl_days:
+                forget(key, f"alloy-owned memory is {age} days old (ttl {ttl_days})")
+        if key.startswith(CONTRADICTION_KEY_PREFIX):
+            subject = key[len(CONTRADICTION_KEY_PREFIX) :]
+            if subject not in entries:
+                forget(key, f"contradiction flag for missing key {subject!r}")
+
+
+def _hygiene_duplicates(entries, forget) -> None:
+    by_body: dict[str, list[MemoryEntry]] = {}
+    for entry in entries.values():
+        if entry.body.strip():
+            by_body.setdefault(entry.body, []).append(entry)
+    for group in by_body.values():
+        if len(group) < 2:
+            continue
+        ordered = sorted(
+            group,
+            key=lambda entry: (
+                entry.date is not None,
+                entry.date or date.min,
+                entry.key,
+            ),
+        )
+        keeper = ordered[0]
+        for entry in ordered[1:]:
+            forget(entry.key, f"byte-identical to older key {keeper.key!r}")
+
+
 def memory_hygiene(memory: ProjectMemory, ttl_days: int, today: date) -> list[ReviewPlanItem]:
     """The deterministic review items, one per key, in key order:
 
@@ -889,29 +932,13 @@ def memory_hygiene(memory: ProjectMemory, ttl_days: int, today: date) -> list[Re
     items: dict[str, ReviewPlanItem] = {}
 
     def forget(key: str, reason: str) -> None:
-        items.setdefault(key, ReviewPlanItem(key=key, action="forget", reason=reason, source="hygiene"))
+        items.setdefault(
+            key,
+            ReviewPlanItem(key=key, action="forget", reason=reason, source="hygiene"),
+        )
 
-    for key, entry in entries.items():
-        if entry.owner == "alloy" and entry.date is not None:
-            age = (today - entry.date).days
-            if age > ttl_days:
-                forget(key, f"alloy-owned memory is {age} days old (ttl {ttl_days})")
-        if key.startswith(CONTRADICTION_KEY_PREFIX):
-            subject = key[len(CONTRADICTION_KEY_PREFIX) :]
-            if subject not in entries:
-                forget(key, f"contradiction flag for missing key {subject!r}")
-
-    by_body: dict[str, list[MemoryEntry]] = {}
-    for entry in entries.values():
-        if entry.body.strip():
-            by_body.setdefault(entry.body, []).append(entry)
-    for group in by_body.values():
-        if len(group) < 2:
-            continue
-        ordered = sorted(group, key=lambda entry: (entry.date is not None, entry.date or date.min, entry.key))
-        keeper = ordered[0]
-        for entry in ordered[1:]:
-            forget(entry.key, f"byte-identical to older key {keeper.key!r}")
+    _hygiene_stale(entries, today, ttl_days, forget)
+    _hygiene_duplicates(entries, forget)
 
     return [items[key] for key in sorted(items)]
 

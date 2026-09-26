@@ -406,7 +406,10 @@ def _judge(engine: Engine, run_id: str, state: dict[str, Any]) -> dict[str, Any]
     except ValueError:
         raw_payload = {}
     effective_payload = state.get("decision") or {}
-    raw = {"decision": raw_payload.get("decision"), "confidence": raw_payload.get("confidence")}
+    raw = {
+        "decision": raw_payload.get("decision"),
+        "confidence": raw_payload.get("confidence"),
+    }
     effective = {
         "decision": effective_payload.get("decision"),
         "reason": effective_payload.get("reason"),

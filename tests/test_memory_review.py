@@ -14,17 +14,19 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+from conftest import FAKE_BD_SOURCE, FAKE_RUNNERS, FAKE_SOURCE, memory_reviewer_entry
 from typer.testing import CliRunner
 
 from alloy.cli import app
 from alloy.models import (
     CONTRADICTION_KEY_PREFIX,
-    EMBED_KEY as META_EMBED_KEY,
     PROPOSAL_KEY_PREFIX,
     utcnow,
     with_provenance,
 )
-from conftest import FAKE_BD_SOURCE, FAKE_RUNNERS, FAKE_SOURCE, memory_reviewer_entry
+from alloy.models import (
+    EMBED_KEY as META_EMBED_KEY,
+)
 
 RUN_ID = "run-review-1"
 BEAD_ID = "alloy-4ef.16"
@@ -365,8 +367,16 @@ def _apply_memories() -> dict[str, str]:
 def _apply_verdicts() -> list[dict[str, str]]:
     return [
         {"action": "forget", "key": APPLY_ALLOY_FORGET_KEY, "reason": "stale lesson a"},
-        {"action": "forget", "key": APPLY_HUMAN_FORGET_KEY, "reason": "human should propose"},
-        {"action": "embed", "key": APPLY_ALLOY_EMBED_KEY, "reason": "belongs in AGENTS.md"},
+        {
+            "action": "forget",
+            "key": APPLY_HUMAN_FORGET_KEY,
+            "reason": "human should propose",
+        },
+        {
+            "action": "embed",
+            "key": APPLY_ALLOY_EMBED_KEY,
+            "reason": "belongs in AGENTS.md",
+        },
         {
             "action": "embed",
             "key": APPLY_META_EMBED_KEY,

@@ -99,6 +99,10 @@ def apply_side_effects(entry: dict) -> None:
         time.sleep(float(entry["sleep"]))
 
 
+def _is_error(entry: dict, exit_code: int) -> bool:
+    return bool(entry["is_error"]) if "is_error" in entry else exit_code != 0
+
+
 def main() -> int:
     runner = Path(sys.argv[0]).name
     argv = sys.argv[1:]
@@ -133,10 +137,7 @@ def main() -> int:
     if entry.get("stderr"):
         sys.stderr.write(entry["stderr"])
 
-    if "is_error" in entry:
-        envelope_is_error = bool(entry["is_error"])
-    else:
-        envelope_is_error = exit_code != 0
+    envelope_is_error = _is_error(entry, exit_code)
 
     if runner.startswith("claude"):
         envelope = {

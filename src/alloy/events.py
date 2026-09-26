@@ -54,7 +54,15 @@ def parse_since(value: str, now: datetime | None = None) -> datetime:
 class EventLog:
     path: Path
 
-    def emit(self, event: str, *, bead: str, run: str | None = None, reason: str = "", **extra: Any) -> dict[str, Any]:
+    def emit(
+        self,
+        event: str,
+        *,
+        bead: str,
+        run: str | None = None,
+        reason: str = "",
+        **extra: Any,
+    ) -> dict[str, Any]:
         record: dict[str, Any] = {
             "ts": utcnow().isoformat(),
             "event": event,
@@ -144,7 +152,11 @@ def _keep(record: dict[str, Any], since: datetime | None, only: frozenset[str] |
 
 def format_line(record: dict[str, Any]) -> str:
     """One greppable line: `<ts> <event> <bead> run=<id> <reason>`."""
-    parts = [str(record.get("ts", ""))[:19], str(record["event"]), str(record.get("bead", ""))]
+    parts = [
+        str(record.get("ts", ""))[:19],
+        str(record["event"]),
+        str(record.get("bead", "")),
+    ]
     if record.get("run"):
         parts.append(f"run={record['run']}")
     if record.get("reason"):

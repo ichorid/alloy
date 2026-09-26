@@ -135,7 +135,9 @@ def two_file_diff() -> str:
     return _two_file_diff()
 
 
-def test_judge_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(two_file_diff):
+def test_judge_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(
+    two_file_diff,
+):
     prompt = judge_prompt(
         "brief",
         "acceptance",
@@ -151,7 +153,9 @@ def test_judge_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(two_fi
     assert SMALL_MARKER in prompt
 
 
-def test_acceptance_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(two_file_diff):
+def test_acceptance_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(
+    two_file_diff,
+):
     prompt = acceptance_prompt(
         "acceptance",
         two_file_diff,
@@ -164,7 +168,9 @@ def test_acceptance_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(t
     assert SMALL_MARKER in prompt
 
 
-def test_verifier_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(two_file_diff):
+def test_verifier_prompt_embeds_per_file_clipped_diff_with_small_hunk_intact(
+    two_file_diff,
+):
     prompt = verifier_prompt(
         brief="brief",
         acceptance="acceptance",

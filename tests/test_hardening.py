@@ -10,15 +10,6 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-
-from alloy import beads as bd
-from alloy.config import RoleSpec
-from alloy.engine import Engine, EngineError
-from alloy.procs import pid_alive
-from alloy.runners import RunnerRegistry
-from alloy.store import RUN_RUNNING
-from alloy.models import CheckRequest
-from alloy.verify import parse_counts, run_check, command_env
 from conftest import (
     bd_create,
     context_entry,
@@ -29,6 +20,14 @@ from conftest import (
     write_tests_entry,
 )
 from support import load_config, make_harness
+
+from alloy import beads as bd
+from alloy.config import RoleSpec
+from alloy.engine import Engine, EngineError
+from alloy.models import CheckRequest
+from alloy.procs import pid_alive
+from alloy.runners import RunnerRegistry
+from alloy.verify import command_env, parse_counts, run_check
 
 
 def script(**overrides):
@@ -125,11 +124,12 @@ async def test_run_context_call_records_the_harness_pid_on_the_inflight_row(fake
     even if `alloy run` itself is killed."""
     from types import SimpleNamespace
 
+    from support import make_bead
+
     from alloy.config import RoleSpec
     from alloy.runners import RunnerRegistry
     from alloy.runtime import RunContext
     from alloy.store import Store
-    from support import make_bead
 
     pidfile = tmp_path / "harness.pid"
     fake_harnesses.configure({"implement": {"sleep": 30, "pidfile": str(pidfile)}})
@@ -205,7 +205,11 @@ def test_fallback_is_parsed_recursively():
     spec = RoleSpec.parse(
         {
             "runner": "astra",
-            "fallback": {"runner": "claude-write", "model": "fable", "fallback": {"runner": "pi"}},
+            "fallback": {
+                "runner": "claude-write",
+                "model": "fable",
+                "fallback": {"runner": "pi"},
+            },
         }
     )
     assert spec.fallback.runner == "claude-write"
@@ -463,7 +467,13 @@ async def test_a_resumed_run_does_not_immediately_hit_max_wall_time(project, all
     from alloy.config import Limits
 
     config = replace(
-        load_config(), limits=Limits(max_iterations=5, max_consiliums=0, max_agent_calls=100, max_wall_time_minutes=30)
+        load_config(),
+        limits=Limits(
+            max_iterations=5,
+            max_consiliums=0,
+            max_agent_calls=100,
+            max_wall_time_minutes=30,
+        ),
     )
     fake_harnesses.configure(
         script(
@@ -478,7 +488,9 @@ async def test_a_resumed_run_does_not_immediately_hit_max_wall_time(project, all
     # Simulate the engine's bookkeeping around a long pause.
     night = datetime.now(timezone.utc) - timedelta(hours=8)
     harness.store.update_run(
-        harness.run_id, started_at=(night - timedelta(minutes=5)).isoformat(), paused_at=night.isoformat()
+        harness.run_id,
+        started_at=(night - timedelta(minutes=5)).isoformat(),
+        paused_at=night.isoformat(),
     )
     harness.store.mark_resumed(harness.run_id)
 

@@ -18,14 +18,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-from alloy.beads import BeadsClient
-from alloy.config import MemorySpec
-from alloy.models import ProjectMemory
-from alloy.recipes import tdd_loop
-from alloy.runtime import RunContext
-from alloy.runners import RunnerRegistry
-from alloy.store import Store
 from conftest import (
     FAKE_BD_SOURCE,
     FAKE_RUNNERS,
@@ -39,6 +31,14 @@ from conftest import (
     write_tests_entry,
 )
 from support import await_role, load_config, make_bead, make_harness
+
+from alloy.beads import BeadsClient
+from alloy.config import MemorySpec
+from alloy.models import ProjectMemory
+from alloy.recipes import tdd_loop
+from alloy.runners import RunnerRegistry
+from alloy.runtime import RunContext
+from alloy.store import Store
 
 # Contract pinned by these tests (stable for golden prompts downstream).
 BEAD_DESIGN_OUTRANKS_MEMORY = "Bead design notes outrank project memory."

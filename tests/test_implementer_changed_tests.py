@@ -10,9 +10,6 @@ import hashlib
 import inspect
 import sys
 
-from alloy.models import Attempt
-from alloy.recipes.tdd_loop import judge_prompt
-from alloy.worktree import WorktreeManager
 from conftest import (
     acceptance_entry,
     context_entry,
@@ -28,6 +25,10 @@ from conftest import (
     write_tests_with_helper_entry,
 )
 from support import make_harness
+
+from alloy.models import Attempt
+from alloy.recipes.tdd_loop import judge_prompt
+from alloy.worktree import WorktreeManager
 
 FULL_SUITE = f"{sys.executable} -m pytest -q"
 IMPLEMENTER_TESTS_HEADING = "## Tests changed by the implementer"
@@ -54,7 +55,14 @@ def _acceptance_script(**overrides):
         ],
         "acceptance": [acceptance_entry("accept", confidence=0.9)],
         "judge": [],
-        "critic": {"structured": {"root_cause": "n/a", "evidence": "n/a", "suggested_fix": "n/a", "confidence": 0.5}},
+        "critic": {
+            "structured": {
+                "root_cause": "n/a",
+                "evidence": "n/a",
+                "suggested_fix": "n/a",
+                "confidence": 0.5,
+            }
+        },
         "synthesize": synthesize_entry(),
     }
     base.update(overrides)

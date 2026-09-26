@@ -16,7 +16,10 @@ from alloy.runners.jev import JevRunner
 SCHEMA = {
     "type": "object",
     "properties": {
-        "decision": {"type": "string", "enum": ["done", "retry", "consilium", "human", "abort"]},
+        "decision": {
+            "type": "string",
+            "enum": ["done", "retry", "consilium", "human", "abort"],
+        },
         "reason": {"type": "string"},
     },
     "required": ["decision"],
@@ -101,7 +104,10 @@ async def test_jev_requires_a_schema_with_an_enum_field():
         await runner.run(
             "state",
             Path("."),
-            structured_schema={"type": "object", "properties": {"reason": {"type": "string"}}},
+            structured_schema={
+                "type": "object",
+                "properties": {"reason": {"type": "string"}},
+            },
         )
 
 

@@ -65,7 +65,12 @@ def test_totals_only_shape_with_no_output_key_never_guesses_a_split():
 
 
 def test_snake_case_takes_precedence_over_camel_case_when_both_present():
-    raw = {"input_tokens": 1, "output_tokens": 2, "inputTokens": 999, "outputTokens": 999}
+    raw = {
+        "input_tokens": 1,
+        "output_tokens": 2,
+        "inputTokens": 999,
+        "outputTokens": 999,
+    }
     result = normalize(raw)
     assert result["input_tokens"] == 1
     assert result["output_tokens"] == 2

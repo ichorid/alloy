@@ -221,7 +221,13 @@ class Store:
                 (*fields.values(), run_id),
             )
         if previous is not None and previous["status"] != fields["status"]:
-            self._announce(run_id, previous["bead_id"], previous["status"], fields["status"], event_reason)
+            self._announce(
+                run_id,
+                previous["bead_id"],
+                previous["status"],
+                fields["status"],
+                event_reason,
+            )
 
     def _announce(self, run_id: str, bead_id: str, old: str, new: str, reason: str) -> None:
         event = _STATUS_EVENTS.get(new)
@@ -289,7 +295,11 @@ class Store:
             self.update_run(run_id, paused_at=None)
             return
         paused_for = max(0.0, (utcnow() - paused_at).total_seconds())
-        self.update_run(run_id, paused_at=None, paused_s=float(record.get("paused_s") or 0) + paused_for)
+        self.update_run(
+            run_id,
+            paused_at=None,
+            paused_s=float(record.get("paused_s") or 0) + paused_for,
+        )
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:
@@ -321,7 +331,8 @@ class Store:
         params = (str(repo), limit) if repo is not None else (limit,)
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM runs" + repo_filter + " ORDER BY started_at DESC LIMIT ?", params
+                "SELECT * FROM runs" + repo_filter + " ORDER BY started_at DESC LIMIT ?",
+                params,
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -336,14 +347,18 @@ class Store:
     def children_of(self, run_id: str) -> list[dict[str, Any]]:
         """Remediation runs started from `run_id` (see Engine.run_child)."""
         with self.connect() as conn:
-            rows = conn.execute("SELECT * FROM runs WHERE parent_run_id = ? ORDER BY started_at", (run_id,)).fetchall()
+            rows = conn.execute(
+                "SELECT * FROM runs WHERE parent_run_id = ? ORDER BY started_at",
+                (run_id,),
+            ).fetchall()
         return [dict(row) for row in rows]
 
     def last_activity(self, run: dict[str, Any]) -> datetime:
         """Latest sign of life: a run update, a finished call or a started call."""
         with self.connect() as conn:
             ended = conn.execute(
-                "SELECT MAX(ended_at) AS t FROM agent_calls WHERE run_id = ?", (run["run_id"],)
+                "SELECT MAX(ended_at) AS t FROM agent_calls WHERE run_id = ?",
+                (run["run_id"],),
             ).fetchone()["t"]
             started = conn.execute(
                 "SELECT MAX(started_at) AS t FROM inflight_calls WHERE run_id = ?",
@@ -436,7 +451,10 @@ class Store:
                     del call["run_pid"]
                     if call.get("pid"):
                         _terminate_group(int(call["pid"]))
-                    conn.execute("DELETE FROM inflight_calls WHERE call_id = ?", (call["call_id"],))
+                    conn.execute(
+                        "DELETE FROM inflight_calls WHERE call_id = ?",
+                        (call["call_id"],),
+                    )
                     removed.append(call)
         return removed
 
@@ -495,7 +513,10 @@ class Store:
                 ),
             )
             if not (result.usage or {}).get(UNAVAILABLE_KEY):
-                conn.execute("UPDATE runs SET agent_calls = agent_calls + 1 WHERE run_id = ?", (run_id,))
+                conn.execute(
+                    "UPDATE runs SET agent_calls = agent_calls + 1 WHERE run_id = ?",
+                    (run_id,),
+                )
 
     def agent_calls(self, run_id: str) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -585,7 +606,12 @@ class Store:
 def _sum_usage(records: Iterable[dict]) -> dict:
     """Unreported token counts sum as 0; an unreported cost stays None, since
     `0.0` would claim a free run rather than an unpriced one."""
-    totals = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost_usd": None}
+    totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cost_usd": None,
+    }
     for record in records:
         for key in ("input_tokens", "output_tokens", "total_tokens"):
             totals[key] += record[key] or 0

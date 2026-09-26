@@ -41,7 +41,13 @@ class CodexRunner(CLIRunner):
                 f'sandbox_mode="{self.sandbox}"',
             ]
         else:
-            args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", self.sandbox]
+            args = [
+                "exec",
+                "--json",
+                "--skip-git-repo-check",
+                "--sandbox",
+                self.sandbox,
+            ]
         if model:
             args += ["--model", model]
         if effort:

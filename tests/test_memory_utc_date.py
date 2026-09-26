@@ -18,10 +18,6 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
-
-from alloy.cli import app
-from alloy.models import with_provenance
 from conftest import FAKE_BD_SOURCE, FAKE_RUNNERS, FAKE_SOURCE, memory_reviewer_entry
 from test_cli_memory import (
     LESSON_KEY,
@@ -35,11 +31,19 @@ from test_memory_review import (
     APPLY_HUMAN_FORGET_KEY,
     APPLY_META_EMBED_KEY,
     APPLY_RECENT_DATE,
-    BEAD_ID as REVIEW_BEAD_ID,
     LAST_REVIEW_KEY,
-    RUN_ID as REVIEW_RUN_ID,
     FakeMemoryReviewHarness,
 )
+from test_memory_review import (
+    BEAD_ID as REVIEW_BEAD_ID,
+)
+from test_memory_review import (
+    RUN_ID as REVIEW_RUN_ID,
+)
+from typer.testing import CliRunner
+
+from alloy.cli import app
+from alloy.models import with_provenance
 
 # 00:09 CEST = 22:09 UTC previous calendar day — the reported failure window.
 UTC_CLOCK = datetime(2026, 9, 23, 22, 9, 0, tzinfo=timezone.utc)
@@ -75,6 +79,7 @@ def fake_memory_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def memory_utc_skew(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pin CLI to UTC today while ``date.today()`` returns the local calendar day."""
     monkeypatch.setattr("alloy.cli.utcnow", lambda: UTC_CLOCK)
+    monkeypatch.setattr("alloy.memory_commands.utcnow", lambda: UTC_CLOCK)
     monkeypatch.setattr("alloy.models.utcnow", lambda: UTC_CLOCK)
     skewed_date = type(
         "_SkewedDate",
@@ -136,8 +141,16 @@ def _apply_memories() -> dict[str, str]:
 def _apply_verdicts() -> list[dict[str, str]]:
     return [
         {"action": "forget", "key": APPLY_ALLOY_FORGET_KEY, "reason": "stale lesson a"},
-        {"action": "forget", "key": APPLY_HUMAN_FORGET_KEY, "reason": "human should propose"},
-        {"action": "embed", "key": APPLY_ALLOY_EMBED_KEY, "reason": "belongs in AGENTS.md"},
+        {
+            "action": "forget",
+            "key": APPLY_HUMAN_FORGET_KEY,
+            "reason": "human should propose",
+        },
+        {
+            "action": "embed",
+            "key": APPLY_ALLOY_EMBED_KEY,
+            "reason": "belongs in AGENTS.md",
+        },
         {
             "action": "embed",
             "key": APPLY_META_EMBED_KEY,

@@ -16,20 +16,20 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping
 
-from alloy.beads import BeadsClient, Bead, META_COMPLEXITY_ESTIMATED, META_STAGE
+from alloy.beads import META_COMPLEXITY_ESTIMATED, META_STAGE, Bead, BeadsClient
 from alloy.config import RecipeConfig, RoleSpec, resolve_max_agent_calls
+from alloy.limits import parse_retry_at
 from alloy.models import (
     UNAVAILABLE_KEY,
-    is_unavailable,
     AgentResult,
     CheckRequest,
     CheckResult,
     ProjectMemory,
     ProjectSnapshot,
     RunnerUnavailable,
+    is_unavailable,
     utcnow,
 )
-from alloy.limits import parse_retry_at
 from alloy.paths import project_brief
 from alloy.runners import RunnerRegistry
 from alloy.store import Store
@@ -174,7 +174,10 @@ class RunContext:
                 )
             # Recorded in usage_json so `alloy logs` can show which calls
             # continued an earlier session.
-            result.usage = {**(result.usage or {}), "resumed": resume_session is not None}
+            result.usage = {
+                **(result.usage or {}),
+                "resumed": resume_session is not None,
+            }
             if not result.ok and result.retry_at is None:
                 # journal 38: "resets 1:20am" is local wall-clock time; keep it
                 # timezone-aware so the scheduler can compare it with utcnow().
@@ -430,7 +433,11 @@ class RunContext:
                     self.beads.set_metadata(self.bead.id, {META_COMPLEXITY_ESTIMATED: level})
                 self.beads.note(self.bead.id, note)
             except Exception:
-                log.warning("could not record complexity on bead %s", self.bead.id, exc_info=True)
+                log.warning(
+                    "could not record complexity on bead %s",
+                    self.bead.id,
+                    exc_info=True,
+                )
 
     def set_consiliums(self, count: int) -> None:
         self.store.update_run(self.run_id, consiliums=count)

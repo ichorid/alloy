@@ -13,8 +13,6 @@ import ast
 import subprocess
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MONITOR_RENDER_TESTS = REPO_ROOT / "tests" / "test_monitor_render.py"
 

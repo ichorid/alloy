@@ -7,10 +7,10 @@ its exit codes and JSON, not a mock of them.
 from __future__ import annotations
 
 import pytest
+from conftest import bd_create
 
 from alloy import beads as bd
 from alloy.beads import BeadsClient, BeadsError
-from conftest import bd_create
 
 
 def _show_json(client: BeadsClient, bead_id: str) -> dict:
@@ -401,9 +401,24 @@ def test_children_passes_parent_and_all_and_returns_open_and_closed(read_client,
     fake_bd.configure(
         {
             "beads": [
-                {"id": "child-open", "title": "open child", "status": "open", "parent": "E"},
-                {"id": "child-closed", "title": "closed child", "status": "closed", "parent": "E"},
-                {"id": "other", "title": "other parent", "status": "open", "parent": "F"},
+                {
+                    "id": "child-open",
+                    "title": "open child",
+                    "status": "open",
+                    "parent": "E",
+                },
+                {
+                    "id": "child-closed",
+                    "title": "closed child",
+                    "status": "closed",
+                    "parent": "E",
+                },
+                {
+                    "id": "other",
+                    "title": "other parent",
+                    "status": "open",
+                    "parent": "F",
+                },
             ],
         }
     )
@@ -483,7 +498,11 @@ def test_epic_root_returns_none_for_standalone_bead(read_client, fake_bd):
     fake_bd.configure(
         {
             "shows": {
-                "standalone": {"id": "standalone", "title": "Lonely task", "issue_type": "task"},
+                "standalone": {
+                    "id": "standalone",
+                    "title": "Lonely task",
+                    "issue_type": "task",
+                },
             },
         }
     )

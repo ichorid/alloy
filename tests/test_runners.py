@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-
-from types import SimpleNamespace
+from support import make_bead
 
 from alloy.config import RoleSpec
 from alloy.models import RunnerUnavailable
@@ -16,8 +16,6 @@ from alloy.runners import RunnerRegistry
 from alloy.runners.base import extract_json_object, schema_instructions
 from alloy.runtime import RunContext
 from alloy.store import Store
-from support import make_bead
-
 
 SCHEMA = {"type": "object", "properties": {"decision": {"type": "string"}}}
 

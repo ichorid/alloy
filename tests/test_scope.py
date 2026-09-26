@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 
 def test_project_brief_prefers_alloy_project_md(project: Path):
     from alloy.paths import project_brief
@@ -80,10 +78,11 @@ def test_scope_prompt_includes_brief_epic_bug_and_diffstat():
 
 
 async def test_scope_gate_merge_verdict(project, alloy_home, fake_harnesses):
-    from alloy.checkpoints import open_checkpointer
-    from alloy.recipes.tdd_loop import scope_gate
     from conftest import scope_entry
     from support import make_bead, make_harness, scope_config
+
+    from alloy.checkpoints import open_checkpointer
+    from alloy.recipes.tdd_loop import scope_gate
 
     fake_harnesses.configure({"scope": scope_entry("merge", "minimal auth fix")})
     harness = make_harness(project, alloy_home, config=scope_config())
@@ -100,10 +99,11 @@ async def test_scope_gate_merge_verdict(project, alloy_home, fake_harnesses):
 
 
 async def test_scope_gate_too_broad_verdict(project, alloy_home, fake_harnesses):
-    from alloy.checkpoints import open_checkpointer
-    from alloy.recipes.tdd_loop import scope_gate
     from conftest import scope_entry
     from support import make_bead, make_harness, scope_config
+
+    from alloy.checkpoints import open_checkpointer
+    from alloy.recipes.tdd_loop import scope_gate
 
     reason = "rewrites the storage layer"
     fake_harnesses.configure({"scope": scope_entry("too-broad", reason)})
@@ -121,9 +121,10 @@ async def test_scope_gate_too_broad_verdict(project, alloy_home, fake_harnesses)
 
 
 async def test_scope_gate_runner_missing_defaults_to_too_broad(project, alloy_home, fake_harnesses):
+    from support import make_bead, make_harness, scope_config
+
     from alloy.checkpoints import open_checkpointer
     from alloy.recipes.tdd_loop import scope_gate
-    from support import make_bead, make_harness, scope_config
 
     config = scope_config(runner="missing-scope-runner", fallback=None)
     harness = make_harness(project, alloy_home, config=config)
@@ -140,10 +141,11 @@ async def test_scope_gate_runner_missing_defaults_to_too_broad(project, alloy_ho
 
 
 async def test_scope_merge_gate_adapts_verdict_to_bool(project, alloy_home, fake_harnesses):
-    from alloy.checkpoints import open_checkpointer
-    from alloy.recipes.tdd_loop import scope_merge_gate
     from conftest import scope_entry
     from support import make_bead, make_harness, scope_config
+
+    from alloy.checkpoints import open_checkpointer
+    from alloy.recipes.tdd_loop import scope_merge_gate
 
     fake_harnesses.configure({"scope": scope_entry("merge", "ok to land")})
     harness = make_harness(project, alloy_home, config=scope_config())
@@ -160,10 +162,11 @@ async def test_scope_merge_gate_adapts_verdict_to_bool(project, alloy_home, fake
 
 
 async def test_scope_merge_gate_rejects_non_merge_verdict(project, alloy_home, fake_harnesses):
-    from alloy.checkpoints import open_checkpointer
-    from alloy.recipes.tdd_loop import scope_merge_gate
     from conftest import scope_entry
     from support import make_bead, make_harness, scope_config
+
+    from alloy.checkpoints import open_checkpointer
+    from alloy.recipes.tdd_loop import scope_merge_gate
 
     detail = "introduces a new public API"
     fake_harnesses.configure({"scope": scope_entry("too-broad", detail)})

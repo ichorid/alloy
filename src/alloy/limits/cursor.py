@@ -209,6 +209,13 @@ def _fetch_legacy(token: str, legacy_fetch: Fetch) -> tuple[int, str]:
     return legacy_fetch(url, headers)
 
 
+def _window_from_response(status: int, body: str, window_of) -> dict[str, Any] | None:
+    if status != 200:
+        return None
+    payload = json.loads(body)
+    return window_of(payload) if isinstance(payload, dict) else None
+
+
 def probe(
     home: Path,
     fetch: Fetch = default_fetch,
@@ -224,26 +231,20 @@ def probe(
         return unavailable(HARNESS, "no credentials")
 
     status, body = _fetch_dashboard(token, fetch)
-    if status == 200:
-        try:
-            payload = json.loads(body)
-        except ValueError:
-            return unavailable(HARNESS, "bad response")
-        if isinstance(payload, dict):
-            total = _dashboard_window(payload)
-            if total is not None:
-                return _available_sample(windows=[total], source=SOURCE)
+    try:
+        total = _window_from_response(status, body, _dashboard_window)
+    except ValueError:
+        return unavailable(HARNESS, "bad response")
+    if total is not None:
+        return _available_sample(windows=[total], source=SOURCE)
 
     legacy_status, legacy_body = _fetch_legacy(token, legacy_fetch)
-    if legacy_status == 200:
-        try:
-            legacy_payload = json.loads(legacy_body)
-        except ValueError:
-            return unavailable(HARNESS, "bad response")
-        if isinstance(legacy_payload, dict):
-            total = _legacy_total_window(legacy_payload)
-            if total is not None:
-                return _available_sample(windows=[total], source=_LEGACY_SOURCE)
+    try:
+        total = _window_from_response(legacy_status, legacy_body, _legacy_total_window)
+    except ValueError:
+        return unavailable(HARNESS, "bad response")
+    if total is not None:
+        return _available_sample(windows=[total], source=_LEGACY_SOURCE)
 
     if status not in (0, 200):
         return unavailable(HARNESS, f"HTTP {status}")

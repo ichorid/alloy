@@ -11,11 +11,6 @@ import json
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
-
-from alloy.checkpoints import open_checkpointer
-from alloy.cli import app
-from alloy.engine import Engine
 from conftest import bd_create
 from support import load_config
 from test_engine_run_child import (
@@ -23,6 +18,11 @@ from test_engine_run_child import (
     _parent_context,
     _paused_parent_with_wip,
 )
+from typer.testing import CliRunner
+
+from alloy.checkpoints import open_checkpointer
+from alloy.cli import app
+from alloy.engine import Engine
 
 CHILD_RUNNER_NAMES = ("jev", "codex", "cursor-plan", "claude", "cursor-agent")
 

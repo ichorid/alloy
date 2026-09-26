@@ -15,10 +15,6 @@ import shutil
 from pathlib import Path
 
 import pytest
-
-from alloy.beads import BeadsClient
-from alloy.models import ContextPacket, parse_provenance
-from alloy.recipes.tdd_loop import CONTEXT_SCHEMA, context_prompt
 from conftest import (
     FAKE_BD_SOURCE,
     FAKE_RUNNERS,
@@ -31,6 +27,10 @@ from conftest import (
     write_tests_entry,
 )
 from support import make_harness
+
+from alloy.beads import BeadsClient
+from alloy.models import ContextPacket, parse_provenance
+from alloy.recipes.tdd_loop import CONTEXT_SCHEMA, context_prompt
 
 HUMAN_MEMORY_KEY = "conv"
 HUMAN_MEMORY_VALUE = "repo uses pathlib"
