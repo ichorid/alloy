@@ -1715,8 +1715,14 @@ def make_verify_loop(ctx: RunContext, *, implementer_fallback: str | None = None
     )
 
 
-def build_graph(ctx: RunContext):
-    """Compile the tdd-loop graph bound to one task's runtime."""
+def build_graph(ctx: RunContext, *, skip_context: bool = False):
+    """Compile the tdd-loop graph bound to one task's runtime.
+
+    ``skip_context`` drops the context-gathering phase entirely (no
+    "context" node, no role lookup): estimate runs first, off of START,
+    and every prompt that reads ``state.get("context", {})`` sees the
+    empty dict it already tolerates.
+    """
 
     def _capture_bugs(
         role: str, result: AgentResult, state: TddState, iteration: int
@@ -2633,7 +2639,8 @@ def build_graph(ctx: RunContext):
             log.warning("could not remember %s", key, exc_info=True)
 
     graph = StateGraph(TddState)
-    graph.add_node("context", gather_context)
+    if not skip_context:
+        graph.add_node("context", gather_context)
     graph.add_node("estimate", estimate)
     graph.add_node("tests", write_tests)
     graph.add_node("prove_red", prove_red)
@@ -2652,8 +2659,11 @@ def build_graph(ctx: RunContext):
     graph.add_node("finish", finish)
     graph.add_node("harvest", harvest)
 
-    graph.add_edge(START, "context")
-    graph.add_edge("context", "estimate")
+    if skip_context:
+        graph.add_edge(START, "estimate")
+    else:
+        graph.add_edge(START, "context")
+        graph.add_edge("context", "estimate")
     graph.add_edge("estimate", "tests")
     graph.add_conditional_edges("tests", route_after_tests, ["prove_red", "finish", "human_gate"])
     graph.add_conditional_edges(

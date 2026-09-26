@@ -1,0 +1,186 @@
+name: tdd-loop-sonnet-no-context
+
+# Same as tdd-loop-sonnet, except the context-gathering phase before writing
+# tests is removed entirely: the graph runs estimate straight off START (see
+# build_graph(..., skip_context=True) in recipes/tdd_loop.py). There is no
+# "context" role here on purpose -- nothing ever calls it.
+
+landing:
+  mode: auto
+
+complexity:
+  routing: live  # live selects tiers for tiered roles; shadow would estimate and record only
+  escalate_after_retries: 2
+  # A tier is a priority-ordered runner list: the first is primary, the rest fallbacks.
+  # `effort` is per entry (claude --effort, codex model_reasoning_effort); cursor has
+  # no effort knob and encodes it in the model id (kimi-k3-high).
+  tiers:
+    simple:
+      - {runner: cursor, model: composer-2.5}
+      - {runner: codex, model: gpt-6-luna}
+      - {runner: claude-write, model: haiku, effort: low}
+    medium:
+      - {runner: claude-write, model: sonnet, effort: high}
+      - {runner: codex, model: gpt-6-sol, effort: high}
+    complex:
+      - {runner: claude-write, model: claude-opus-5-5}
+      - {runner: codex, model: gpt-6-sol, effort: max}
+      - {runner: cursor, model: kimi-k3-high}
+
+roles:
+  harvest:
+    runner: claude
+    model: sonnet
+  memory_reviewer:
+    runner: cursor
+    model: composer-2.5
+
+  estimate:
+    runner: jev
+    model: jev-latest
+    timeout_minutes: 5
+    fallback:
+      runner: cursor
+      model: composer-2.5
+      timeout_minutes: 5
+
+  triage:
+    # Labels a <bug> report an agent filed mid-run (see AGENTS.md, "Bugs an agent finds").
+    runner: jev
+    model: jev-latest
+    timeout_minutes: 5
+    fallback:
+      runner: cursor
+      model: composer-2.5
+      timeout_minutes: 5
+
+  scope:
+    # Decides whether a remediation child's fix may merge into its parent
+    # (merge / too-broad / subverts-task), judged from the project context packet.
+    runner: jev
+    model: jev-latest
+    timeout_minutes: 5
+    fallback:
+      runner: cursor
+      model: composer-2.5
+      timeout_minutes: 5
+
+  tests:
+    # Tiered like implement: the tests are the spec the judge enforces, so the
+    # tier chain for the run's complexity writes them (a weak spec cannot be
+    # rescued by more implement iterations). The role's own runner is only the
+    # non-live/shadow fallback. When the tier's runner differs from the verifier's
+    # (cursor), the verifier starts a fresh session instead of resuming this one.
+    tiered: true
+    runner: cursor
+    model: composer-2.5
+    timeout_minutes: 20
+    fallback:
+      runner: claude-write
+      model: sonnet
+      timeout_minutes: 20
+
+  tests_review:
+    # Independent, read-only second opinion on the red tests before any code is
+    # written: reads the task on its own, then checks the tests for missed
+    # criteria, wrong readings, trivial passes. Advisory (a missing or failing
+    # reviewer is skipped); up to verification.max_test_reviews rounds.
+    # A panel of two cheap reviewers runs in parallel and their issues are merged
+    # (an A/B over 11 finished beads showed each catches different problems).
+    # A member whose runner is missing or that fails just narrows the panel; only
+    # when no member answers does the role-level fallback (Sonnet, low effort) run.
+    panel:
+      - runner: cursor-plan
+        model: composer-2.5
+        timeout_minutes: 10
+      - runner: codex-readonly
+        model: gpt-6-luna
+        timeout_minutes: 10
+    fallback:
+      runner: claude
+      model: sonnet
+      effort: low
+      timeout_minutes: 10
+
+  implement:
+    tiered: true
+    runner: astra                # aliases to codex; override under `runners:` to swap
+    timeout_minutes: 25
+    fallback:                    # when codex is missing, rate-limited or times out
+      runner: claude-write
+      model: fable               # Claude Fable 5.1 (alias resolves to claude-fable-5-1)
+      timeout_minutes: 25
+
+  verifier:
+    # Proposes verification checks (one command or a batch in `checks`); Alloy runs
+    # them as-is and shows the result back.
+    # Same runner/model as the tests role on purpose: the verifier resumes the
+    # tests writer's session (context window and prompt cache intact), and a
+    # cursor session cannot be resumed by claude. The prompt forbids edits and
+    # Alloy parks the run if the verifier changes the worktree anyway.
+    runner: cursor
+    model: composer-2.5
+    timeout_minutes: 10
+    fallback:
+      runner: claude-write
+      model: sonnet
+      timeout_minutes: 10
+
+  acceptance:
+    # Decides, after the verifier stops, whether the evidence is enough to call
+    # the task complete (accept / verify_more / repair / escalate); only
+    # escalate, low confidence or a failed call reaches the judge.
+    runner: jev
+    model: jev-latest
+    timeout_minutes: 5
+    fallback:
+      runner: claude
+      model: sonnet
+      timeout_minutes: 5
+
+  judge:
+    runner: claude
+    model: sonnet
+    timeout_minutes: 10
+
+consilium:
+  critics:
+    - runner: claude
+      model: sonnet
+    - runner: codex-readonly
+    - runner: pi                 # skipped automatically when the CLI is absent
+  synthesizer:
+    runner: claude
+    model: sonnet
+
+# There is no fixed test command. The verifier role names each check; the
+# bead's optional alloy_test_cmd and project-layout autodetection reach it
+# only as unverified hints (there is no context role here to supply
+# check_hints). A legacy `verify:` block still parses (with a warning) but
+# only its timeout_minutes is honoured, as max_command_timeout_minutes.
+verification:
+  max_checks_per_iteration: 5        # checks Alloy will run per implement/verify round
+  max_total_checks: 20               # hard cap on checks across the whole run
+  max_command_timeout_minutes: 15    # any single check is killed after this long
+  max_baseline_repairs: 2            # attempts to repair a pre-existing red baseline
+  max_test_reviews: 2                # independent test reviews per run (review, revise, re-review)
+  min_acceptance_confidence: 0.6     # below this, acceptance escalates instead of passing
+
+limits:
+  max_iterations: 5
+  max_consiliums: 1
+  max_wall_time_minutes: 90
+  max_agent_calls: 20
+  # Per-tier floors for the agent-call ceiling; 1.5x the alloy:calibration
+  # mean for the run's tier can raise it further (see resolve_max_agent_calls).
+  max_agent_calls_by_tier:
+    simple: 20
+    medium: 24
+    complex: 32
+
+on_success_status: review-ready
+cleanup_worktree_on_success: false
+
+runners:
+  jev:
+    api_key_file: ~/MY_SRC/jev.key   # never commit the raw key; TYPESAFE_API_KEY env var also works

@@ -7,6 +7,7 @@ Adding a recipe means adding a module and a YAML file -- no DSL, no plugin loade
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any, Callable, NamedTuple
 
 from alloy.recipes import land, tdd_loop
@@ -37,6 +38,13 @@ REGISTRY: dict[str, Recipe] = {
         build_graph=tdd_loop.build_graph,
         initial_state=tdd_loop.initial_state,
         description="tdd-loop with Sonnet, then Codex gpt-6-sol, implementing the medium tier",
+    ),
+    "tdd-loop-sonnet-no-context": Recipe(
+        name="tdd-loop-sonnet-no-context",
+        build_graph=partial(tdd_loop.build_graph, skip_context=True),
+        initial_state=tdd_loop.initial_state,
+        description="tdd-loop-sonnet with the context-gathering phase removed: "
+        "estimate runs first, straight off START",
     ),
     "land": Recipe(
         name="land",
