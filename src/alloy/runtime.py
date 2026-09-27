@@ -55,9 +55,18 @@ class RunContext:
     beads: BeadsClient | None = None
     # Bound by the engine (Engine.run_child); recipes never import the engine.
     remediator: Callable[[str], Awaitable[Any]] | None = None
+    checkout_note: str = ""
+    """Set by the engine for in-place runs; see `task_brief`."""
     started_monotonic: float = field(default_factory=time.monotonic)
     _stage: str = "starting"
     _iteration: int = 0
+
+    def task_brief(self) -> str:
+        """The bead's brief as every role sees it, plus -- for an in-place run
+        -- where the work lives: straight on the checked-out branch, with no
+        separate bead branch for anything to be compared against."""
+        brief = self.bead.task_brief()
+        return f"{brief}\n\n## Checkout\n{self.checkout_note}" if self.checkout_note else brief
 
     # -- agent invocation -------------------------------------------------
 

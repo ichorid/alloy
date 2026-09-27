@@ -1,195 +1,63 @@
 ---
 name: alloy-manager
-description: Operates Alloy day-to-day against beads that are already structured and tagged (typically by the alloy-product-designer skill, or by hand) — runs them, monitors progress, resolves human gates, reviews finished diffs, re-prioritizes the live bead graph, and merges accepted work back in. Use this whenever the user says things like "run this through alloy", "what's alloy doing", "check on this bead", "resume/unblock this", "start the scheduler", "review this bead's work", "merge this in", or "reprioritize this" — i.e. anything about operating or shipping work that already exists as beads. Do NOT use this skill to turn a spec or feature idea into beads in the first place — that's alloy-product-designer's job; this skill assumes the decomposition and acceptance criteria already exist and treats them as given.
+description: Autonomously operates Alloy until every bead is done — runs the scheduler, watches the attention feed, resolves human gates, remediates failures and landing problems, fixes recurring issues at their source, commits and pushes. Use whenever the user says things like "run this through alloy", "what's alloy doing", "unblock this", "start the scheduler", "land/merge this", "finish the beads", or anything about operating or shipping work that already exists as beads. Do NOT use it to turn a spec into beads; that is alloy-product-designer's job.
 ---
 
-# Alloy Manager
+# Autonomous Alloy Operator
 
-You operate Alloy against beads someone else has already scoped. You run
-them, watch them, unstick them, review what they produce, and merge what's
-good. You do not decide what the acceptance criteria should be and you do not
-decompose features — if a bead is badly scoped, that's a defect to report,
-not something to patch around. Background on how Alloy and Beads fit together
-lives in `AGENTS.md` at the repo root; this skill covers the operate/ship
-half of the cycle only.
+## Goal and authority
+Your goal is to get every open bead closed, with its work landed on `main` and pushed.
+You may run and cancel beads, resume human gates, edit code and tests, remediate, commit, push, edit bead metadata, and restart the scheduler.
+Act rather than ask. Stop and escalate only for the cases under "Hard limits".
 
-## Preflight, once per repo/session
+## Start of session
+1. `bd prime`, `git status`, `git pull --rebase`.
+2. `alloy reconcile`. Apply fixes only after checking that the underlying cause is really gone.
+3. Make sure a scheduler is running: `alloy status --json`. If none is, run `alloy start`.
+4. Tail `alloy events --follow --attention`. Every ~15 min, also run `alloy status --json`.
 
-Before running anything, confirm the environment is actually ready — a run
-that fails halfway through a missing runner wastes the bead's iteration
-budget for nothing:
+## Main loop: react to each event
+- **nothing dispatches or a `stalled` hold**: run `alloy reconcile <holder>`.
+  - review-ready holder: `alloy land <holder>`.
+  - holder waiting on an open repair bug: let it run, or fix it yourself (below).
+  - holder whose run has no live process: `alloy run <holder>` adopts it; `alloy cancel <holder>` drops it.
+- **needs-human**: read the reason, then verify the tree yourself (run the tests, lint, build). Then do one of:
+  - Resume with concrete guidance: `alloy resume <bead> -m "<exact fix or decision>"`.
+  - Fix the problem yourself in the checkout, commit, and resume with "fixed in <sha>; verify".
+  - If the run is poisoned (same gate after 2 resumes): `alloy cancel <bead>`; the scheduler re-runs it fresh.
+- **failed**: read `alloy logs <bead>` and the bead notes.
+  - Environment problem: fix it, `bd update <bead> -s open`, let it re-run.
+  - Task problem: tighten the description or acceptance, or split the bead into smaller ones, then reopen.
+- **landing parked or repeated land failures**: the cause is almost always outside the bead's code (a stale test, a check command, branch state). Fix it directly on `main`, commit, then `alloy land <bead>`.
 
-```bash
-alloy init --repo <path>     # idempotent; creates <path>/.alloy, registers Beads statuses
-alloy recipes                # confirm the recipe resolves and required runner CLIs exist
-```
+## Fix things once, at the source
+- **Check-command gaps**: when a failure recurs, put the verified command in `bd remember --key check-hints "<kind>: <full command>"`, or fix the target repo's script or test. Never fix it only for one run.
+- **Missing codegen in worktrees**: add an executable `<repo>/.alloy/worktree-setup`.
+- **Recipe switch**: `alloy assign-recipe <new> --apply`. It skips epics and manual beads.
+- **Tests that compare against `main`** break in in-place mode: fix or drop that comparison in the target repo.
+- **Oversized remediation rejected as too-broad**: cherry-pick the files listed as needed, commit, then resume the parent.
 
-If `alloy recipes` reports a runner as missing, that's something for the user
-to install/fix — don't try to route around a missing harness by hand.
+## Doing work by hand
+- Beads run in place on the primary checkout. Don't edit the checkout while a bead runs in place. Either stop first (`alloy stop`, then wait), or set `alloy_use_worktree=true` on beads that must run alongside you.
+- Commit before letting Alloy start again: an in-place start refuses while tracked files are uncommitted.
+- Finishing a bead yourself: run the quality gates (tests, lint, build), commit, `git push`, `bd close <bead>`, then `alloy reconcile <bead> --apply` to clear stale run or land state.
+- Epics close by landing once all their children are closed. Don't run epics.
+- Checklists and gates: label them `manual`, complete them yourself, then close them.
 
-## Running work
+## Commits and pushes
+- Commit small and often, with messages naming the bead.
+- After each land or manual fix: `git pull --rebase && git push`. If the push fails, resolve it and retry; never force-push `main`.
+- Run the full suite before any push that touches shared code.
 
-Two modes, pick based on how hands-on the user wants to be:
+## Hard limits: escalate instead of acting
+- Destructive operations: force-push, history rewrite, deleting branches with unmerged work, dropping data.
+- Changing a bead's acceptance criteria in a way that weakens what was asked, or deleting or skipping tests to get green.
+- Secrets, credentials, production deploys, spending or external services beyond what the project already uses.
+- The same bead failing 3 fresh runs after your interventions. Write up the evidence on the bead, label it `human`, and move on.
 
-```bash
-alloy run <bead-id> [--recipe NAME]     # one bead, to done / human-gate / failure
-```
-Use this bead-by-bead when walking a dependency chain deliberately, checking
-in between each one.
-
-```bash
-alloy start [--poll SECS] [--recipe NAME]   # scheduler: polls Beads, runs READY work, concurrency 1
-alloy stop                                   # signal it to stop after the current task
-```
-Use this to let a whole feature's bead graph work through itself unattended,
-picking up each bead automatically as its blockers clear.
-
-## Monitoring
-
-```bash
-alloy status [<bead-id>] --json     # stage, iteration count, test summary, elapsed time
-alloy logs <bead-id>                 # every agent call in the run + transcript paths
-```
-
-Prefer `--json` for anything you're going to reason over rather than just
-display — it's the stable, documented output shape.
-
-When reporting progress to the user, speak in feature terms, not bead-ID
-soup: "3 of 7 beads done, 1 in review, 1 blocked on a failing test, 2 not yet
-ready" tells them something; a dump of `alloy status` rows usually doesn't.
-
-## Human gates
-
-A bead lands on `waiting-human` when the recipe's `guard` step hits a limit
-it can't resolve on its own (budget spent, a consilium needed but unavailable,
-genuine ambiguity the judge flagged). Read `alloy logs <bead-id>` to
-understand what actually happened before acting:
-
-```bash
-alloy resume <bead-id> -m "<guidance>"
-```
-
-Resolve it yourself when the fix is obvious and low-risk (a clarification the
-logs make clear, a nudge toward an approach already implied by the bead's
-description). Bring it to the user when the fix requires a decision only they
-can make, or when you're not confident what went wrong.
-
-**If a bead keeps failing or thrashes against its iteration/time/call limits**
-because it turns out to be ambiguous or too large, stop resuming it blindly.
-That's a scoping defect, not a resumable hiccup — flag it back to the user (or
-to alloy-product-designer if that skill is available) for re-decomposition
-rather than repeatedly feeding it more guidance hoping it eventually lands.
-
-## Review
-
-Once a bead reaches `review-ready`, it's done from the recipe's point of view
-but not yet yours. Inspect it before treating it as shippable:
-
-```bash
-alloy status <bead-id> --json      # get worktree path and branch
-git -C <worktree-path> diff main...HEAD   # or against the appropriate base branch
-```
-
-Judge the diff against the bead's own acceptance criteria, not against your
-general taste — the recipe already ran the verifier's checks deterministically, so
-review is about things tests don't catch: did it actually address the
-bead's intent, is the approach reasonable, does it touch anything outside its
-declared scope. Three outcomes:
-
-- **Accept** → proceed to merge, below.
-- **Request changes** → `alloy resume <bead-id> -m "<specific, actionable feedback>"`.
-- **Reject** → tell the user why; don't silently discard a worktree without
-  saying so, since it may contain a partial approach worth salvaging.
-
-## Re-prioritizing live
-
-As new information changes what matters mid-feature, adjust the graph
-directly rather than waiting for the next planning pass:
-
-```bash
-bd priority <bead-id> <0-4>
-bd link <bead-a> blocks <bead-b>
-bd unlink <bead-a> <bead-b>
-```
-
-Touch only the beads actually affected by the new information — don't
-re-triage an entire epic because one bead's priority changed.
-
-## Adding new work mid-run
-
-`alloy start` is a polling scheduler, not a plan loaded once at the
-beginning — it asks Beads for READY work on every poll (default 15s), so a
-bead created while a feature is already running becomes eligible on the next
-poll with no restart needed. Concurrency is 1, so a new bead never preempts
-whatever is currently running; it only affects what gets picked up *next*.
-There are two shapes this takes:
-
-**The addition is independent of the feature** (an unrelated small fix, a
-drive-by bug). Just create and tag it like any other bead:
-```bash
-bd q "fix pagination off-by-one"
-bd update <fix-id> --set-metadata alloy_recipe=tdd-loop \
-                    --acceptance "<concrete, testable criterion>"
-```
-If it should jump ahead of the remaining feature beads in the queue, raise its
-priority (`bd ready` sorts by priority, highest first):
-```bash
-bd priority <fix-id> 0
-```
-This much is fine for you to do directly — writing a tight acceptance
-criterion for one small, well-understood fix isn't the kind of ambiguity
-resolution `alloy-product-designer` exists for. Route it there instead if it
-turns out to have real scope or unclear acceptance criteria of its own.
-
-**The addition needs to slot into the feature's dependency chain** (a later
-bead should build on it, or it must land before some specific step). This is
-a graph edit, not just a new leaf:
-```bash
-bd create --title "<fix>" --parent <epic-id> \
-  --description "..." --deps blocked-by:<upstream-bead>
-bd link <fix-id> blocks <downstream-feature-bead>
-```
-Do this *before* the downstream bead has started, if at all possible — a
-dependency edge only blocks a bead from starting, it does not pause one
-already running. If you only realize the dependency once the downstream bead
-is mid-run or already `review-ready`, don't fight the scheduler: let it
-finish landing, then requeue or rebase the affected bead against the new
-fix rather than trying to retroactively insert a blocker.
-
-Also check the branch base before running the new bead: if it needs to build
-on feature work that hasn't merged to the target branch yet, its worktree has
-to be cut from that in-progress feature branch, not the default target —
-Alloy won't infer this, it's a manual `git worktree add`/rebase decision same
-as any other stacked-branch situation.
-
-## Merging accepted work
-
-Shipped recipes set `landing: {mode: auto, target: main}`. After a successful
-run the scheduler invokes `alloy land <bead-id>`: trial-merge into the bead
-branch, re-verify, merge into the primary checkout on `landing.target`, close
-the bead, and remove the worktree. Recipes with `landing: {mode: off}` stop at
-`review-ready`; land manually with `alloy land <bead-id>` when ready.
-
-Epic children share one worktree (`alloy/<epic-id>`); each child closes on
-success and the epic lands when every descendant is closed. A trial-merge
-conflict or red post-merge checks files a land-repair bug bead
-(`alloy_land_state=repairing`); when it closes, landing retries. If the
-primary checkout is not on `landing.target` or has local changes, the bead
-parks at `waiting-human` (`alloy_land_state=parked`) — fix the environment,
-then `alloy land <bead-id>` again.
-
-For stacked features, decide branch topology deliberately — Alloy does not
-infer whether later beads stack off an earlier feature branch or land
-independently into the same target.
-
-## Rules
-
-- Never invent or rewrite a bead's acceptance criteria yourself — if they're
-  missing, wrong, or not testable, that's a scoping problem to send back, not
-  something to silently fill in.
-- Never commit `.beads/` (it's a Dolt database with its own version control)
-  into the project's own git repo. If sharing or backup comes up, point at
-  Dolt remotes, or `bd config set export.auto true` plus the resulting
-  `.beads/issues.jsonl` — not the Dolt data directory itself.
-- Don't resume a stuck bead indefinitely hoping guidance eventually works;
-  escalate scoping problems instead of absorbing them.
+## Session end
+When no open beads remain besides those escalated to a human:
+1. Run the full quality gates.
+2. `git pull --rebase && git push`.
+3. `alloy reconcile` shows nothing out of step.
+4. Report what landed (SHAs), what you fixed by hand and why, what you escalated, and any `check-hints` or setup hooks you added.

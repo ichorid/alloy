@@ -39,6 +39,7 @@ from alloy.models import CHECK_HINTS_KEY as CHECK_HINTS_KEY
 from alloy.models import CONTRADICTION_KEY_PREFIX as CONTRADICTION_KEY_PREFIX
 from alloy.models import EMBED_STALE_KEY as EMBED_STALE_KEY
 from alloy.models import LESSON_KEY_PREFIX as LESSON_KEY_PREFIX
+from alloy.models import PINNED_CHECK_HINTS_KEY as PINNED_CHECK_HINTS_KEY
 from alloy.models import REGRESSION_KEY_PREFIX as REGRESSION_KEY_PREFIX
 from alloy.models import AgentResult as AgentResult
 from alloy.models import Attempt as Attempt
@@ -358,6 +359,7 @@ def initial_state(ctx: RunContext) -> TddState:
         title=ctx.bead.title,
         memory_block=memory.render() if memory is not None else "",
         memory_check_hints=memory.body_of(CHECK_HINTS_KEY) if memory is not None else "",
+        memory_pinned_checks=memory.body_of(PINNED_CHECK_HINTS_KEY) if memory is not None else "",
         memory_calibration=memory.body_of(CALIBRATION_KEY) if memory is not None else "",
         memory_keys=sorted(memory.entries) if memory is not None else [],
         memory_lessons=existing_lessons(memory),

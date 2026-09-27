@@ -314,6 +314,15 @@ class Store:
             ).fetchone()
         return dict(row) if row else None
 
+    def runs_for_bead(self, bead_id: str) -> list[dict[str, Any]]:
+        """Every run recorded for `bead_id`, oldest first."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM runs WHERE bead_id = ? ORDER BY started_at",
+                (bead_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def active_runs(self, repo: Path | None = None) -> list[dict[str, Any]]:
         repo_filter = " AND repo = ?" if repo is not None else ""
         params = (RUN_DONE, RUN_FAILED, RUN_CANCELLED)

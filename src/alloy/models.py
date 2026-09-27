@@ -210,6 +210,10 @@ class ScopeVerdict(BaseModel):
     verdict: ScopeLabel
     reason: str = ""
     confidence: float = 0.0
+    needed_files: list[str] = Field(default_factory=list)
+    """For a rejection: the files the defect's fix actually requires."""
+    incidental_files: list[str] = Field(default_factory=list)
+    """For a rejection: changed files the fix does not need."""
 
     @classmethod
     def schema_for_agents(cls) -> dict[str, Any]:
@@ -220,8 +224,10 @@ class ScopeVerdict(BaseModel):
                 "verdict": {"type": "string", "enum": list(SCOPE_VERDICTS)},
                 "reason": {"type": "string"},
                 "confidence": {"type": "number"},
+                "needed_files": {"type": "array", "items": {"type": "string"}},
+                "incidental_files": {"type": "array", "items": {"type": "string"}},
             },
-            "required": ["verdict", "reason", "confidence"],
+            "required": ["verdict", "reason", "confidence", "needed_files", "incidental_files"],
             "additionalProperties": False,
         }
 
@@ -346,6 +352,9 @@ class CheckResult(BaseModel):
     log_path: str | None = None
     passed: int | None = None
     failed: int | None = None
+    refused: str = ""
+    """Why Alloy would not run the command at all (a bare `echo` verifies
+    nothing); a refused check is not runnable and never counts as evidence."""
 
     @property
     def tail(self) -> str:  # legacy name for output_tail
@@ -353,13 +362,15 @@ class CheckResult(BaseModel):
 
     @property
     def ok(self) -> bool:
-        return self.exit_code == 0 and not self.timed_out
+        return self.exit_code == 0 and not self.timed_out and not self.refused
 
     @property
     def runnable(self) -> bool:
-        return not self.timed_out and self.exit_code != 127
+        return not self.timed_out and self.exit_code != 127 and not self.refused
 
     def headline(self) -> str:
+        if self.refused:
+            return f"not a check: {self.refused}"
         if self.timed_out:
             # No duration: headlines land in prompts, where a clock value
             # would differ between otherwise identical renderings.
@@ -483,6 +494,25 @@ Decision = Literal["done", "retry", "consilium", "human", "abort"]
 DECISIONS: tuple[str, ...] = ("done", "retry", "consilium", "human", "abort")
 
 
+PLACEHOLDER_TEXTS = frozenset(
+    {"test", "testing", "todo", "tbd", "placeholder", "n/a", "none", "null", "string", "reason", "..."}
+    | {"xxx", "lorem ipsum"}
+)
+
+
+def is_placeholder_text(value: str) -> bool:
+    """Free text that carries no judgement at all: a stock filler word. A
+    harness once answered `{"decision": "human", "reason": "test",
+    "next_instructions": "test", "confidence": 0.5}` -- valid JSON, no verdict."""
+    return value.strip().strip(".!").strip().lower() in PLACEHOLDER_TEXTS
+
+
+def is_placeholder_answer(answer: Any) -> bool:
+    """A structured verdict whose `reason` is placeholder text."""
+    reason = getattr(answer, "reason", None)
+    return isinstance(reason, str) and is_placeholder_text(reason)
+
+
 class JudgeDecision(BaseModel):
     """Structured verdict required from the judge role."""
 
@@ -595,7 +625,11 @@ REGRESSION_KEY_PREFIX = "alloy:regression:"
 DEFAULT_RECIPE_KEY = "alloy:default:recipe"
 
 _MEMORY_EXCLUDED_PREFIXES = ("alloy:meta:", "alloy:review:", REGRESSION_KEY_PREFIX)
-_MEMORY_EXCLUDED_KEYS = frozenset({"alloy:calibration", DEFAULT_RECIPE_KEY})
+PINNED_CHECK_HINTS_KEY = "check-hints"
+"""Human-owned: check commands an operator verified by hand (the full CI
+sequence, say). Runs never overwrite it, unlike alloy:check-hints; the
+verifier sees it as verified, ahead of every unverified hint."""
+_MEMORY_EXCLUDED_KEYS = frozenset({"alloy:calibration", DEFAULT_RECIPE_KEY, PINNED_CHECK_HINTS_KEY})
 _MEMORY_LESSON_PREFIX = "alloy:lesson"
 
 _PROVENANCE_RE = re.compile(
@@ -1201,4 +1235,21 @@ def parse_check_hints(body: str) -> list[str]:
         command = command.strip()
         if sep and kind.strip() in CHECK_KINDS and command and command not in commands:
             commands.append(command)
+    return commands
+
+
+def parse_pinned_check_hints(body: str) -> list[str]:
+    """The commands of the operator's check-hints memory: one per line, as
+    ``<kind>: <command>`` or a bare command; blank and ``#`` lines skipped."""
+
+    commands: list[str] = []
+    for line in body.splitlines():
+        line = line.strip().removeprefix("- ").strip()
+        if not line or line.startswith("#"):
+            continue
+        kind, sep, command = line.partition(":")
+        if sep and kind.strip() in CHECK_KINDS:
+            line = command.strip()
+        if line and line not in commands:
+            commands.append(line)
     return commands

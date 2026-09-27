@@ -57,6 +57,12 @@ class SchedulerBusy(RuntimeError):
     pass
 
 
+class RunCancelled(Exception):
+    """The operator cancelled the run the scheduler was executing (`alloy
+    cancel`); the run is already booked cancelled and the scheduler keeps
+    serving."""
+
+
 @dataclass
 class Scheduler:
     engine: Engine
@@ -77,6 +83,13 @@ class Scheduler:
     _unknown_default_recipe: str | None = field(default=None, init=False)
     _epic_block_logged: set[str] = field(default_factory=set, init=False)
     _stalled: set[str] = field(default_factory=set, init=False)
+    _current_bead: str | None = field(default=None, init=False)
+    _cancel_bead: str | None = field(default=None, init=False)
+    _hold: tuple[str, str] | None = field(default=None, init=False)
+    """(holder bead, why) while top-level dispatch is held; see _note_hold."""
+    _hold_since: datetime | None = field(default=None, init=False)
+    _hold_announced: datetime | None = field(default=None, init=False)
+    _pinned_reported: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         if self.recipe_filter is not None:
@@ -172,6 +185,8 @@ class Scheduler:
                 if self._cancel_requested:
                     return recovered
                 raise
+            except RunCancelled:
+                continue
             except EngineError as exc:
                 log.warning("could not recover %s: %s", bead_id, exc)
             except Exception:
@@ -193,6 +208,9 @@ class Scheduler:
             bead = self.next_task()
         if bead is None:
             return False
+        return await self._run_picked(bead)
+
+    async def _run_picked(self, bead: bd.Bead) -> bool:
         log.info("picked %s (%s, P%d)", bead.id, bead.title, bead.priority)
         recipe_name = bead.recipe or self._default_recipe
         try:
@@ -201,6 +219,8 @@ class Scheduler:
             if self._cancel_requested:
                 return False  # the operator stopped this run; serve() exits next
             raise
+        except RunCancelled:
+            return True
         except EngineError as exc:
             log.warning("%s refused: %s", bead.id, exc)
             return False
@@ -248,6 +268,8 @@ class Scheduler:
             if self._cancel_requested:
                 return False
             raise
+        except RunCancelled:
+            return True
         except EngineError as exc:
             log.warning("%s could not be resumed: %s", bead_id, exc)
             self.engine.store.update_run(record["run_id"], retry_at=None)
@@ -271,10 +293,25 @@ class Scheduler:
             else self.engine.run(bead_id, recipe_name=recipe_name)
         )
         self._current = asyncio.ensure_future(coro)
+        self._current_bead = bead_id
         try:
             return await self._current
+        except asyncio.CancelledError:
+            if self._cancel_bead != bead_id or self._cancel_requested:
+                raise
+            # `alloy cancel` of this very run: the task (and its harness) is
+            # gone; book the run cancelled from here, where its recorded pid
+            # is our own, and keep serving.
+            self._cancel_bead = None
+            try:
+                self.engine.cancel(bead_id)
+            except EngineError as exc:
+                log.warning("%s: cancel bookkeeping failed: %s", bead_id, exc)
+            log.info("%s: run cancelled by operator; the scheduler keeps serving", bead_id)
+            raise RunCancelled(bead_id) from None
         finally:
             self._current = None
+            self._current_bead = None
 
     # -- memory maintenance (alloy-4ef.19) ----------------------------------
 
@@ -369,55 +406,123 @@ class Scheduler:
             else:
                 self._unknown_default_recipe = None
                 self._default_recipe = default or None
-        for bead in self.engine.beads.ready(include_unassigned=self._default_recipe is not None):
+        ready = self.engine.beads.ready(include_unassigned=self._default_recipe is not None)
+        self._report_pinned_recipes(ready)
+        held_by: tuple[str, str] | None = None
+        for bead in ready:
+            if bead.manual:
+                continue  # human-operated: never Alloy's, whatever its recipe says
             if (bead.recipe or self._default_recipe) not in known:
                 continue
-            if self._top_level_dispatch_blocked(bead.id):
+            holder = self._dispatch_holder(bead.id)
+            if holder is not None:
+                held_by = held_by or holder
                 continue
             if self._epic_dispatch_blocked(bead.id):
                 continue
+            self._note_hold(None)
             return bead
+        self._note_hold(held_by)
         return None
+
+    def _report_pinned_recipes(self, ready: list[bd.Bead]) -> None:
+        """Once per scheduler: say how many ready beads pin their own recipe
+        and so ignore the session/memory default (journal-operating-tentura 4)."""
+        if self._pinned_reported or not self._default_recipe:
+            return
+        self._pinned_reported = True
+        pinned: dict[str, int] = {}
+        for bead in ready:
+            if bead.recipe and bead.recipe != self._default_recipe and not bead.manual:
+                pinned[bead.recipe] = pinned.get(bead.recipe, 0) + 1
+        if pinned:
+            counts = ", ".join(f"{name}: {n}" for name, n in sorted(pinned.items()))
+            log.info(
+                "default recipe %s applies to unassigned beads only; %d ready bead(s) pin their own "
+                "(%s) -- `alloy assign-recipe %s` retargets them",
+                self._default_recipe,
+                sum(pinned.values()),
+                counts,
+                self._default_recipe,
+            )
 
     def _top_level_unit(self, bead_id: str) -> str:
         """The epic root a bead belongs to, or the bead itself when standalone."""
         return self.engine.beads.epic_root(bead_id) or bead_id
 
     def _top_level_dispatch_blocked(self, bead_id: str) -> bool:
-        """True while another epic or standalone bead has an unfinished run
-        or sits at review-ready.
+        return self._dispatch_holder(bead_id) is not None
+
+    def _dispatch_holder(self, bead_id: str) -> tuple[str, str] | None:
+        """(holder bead, why) while another epic or standalone bead has an
+        unfinished run or sits at review-ready; None when `bead_id` may go.
 
         Top-level units run strictly one after another: a run that is running
         or parked at waiting-human holds the repo until it lands, so a stuck
         bead never lets unrelated work pile up merge conflicts behind it.
         """
         unit = self._top_level_unit(bead_id)
-        holders = [run["bead_id"] for run in self.engine.store.active_runs(self.engine.repo)]
+        for run in self.engine.store.active_runs(self.engine.repo):
+            if self._top_level_unit(run["bead_id"]) != unit:
+                return run["bead_id"], _run_hold_reason(run)
         # A review-ready bead holds its unit until it lands, except for the
         # repair bug it is waiting on, which must run for it to ever land.
         for held in self.engine.beads.list_by_status(bd.STATUS_REVIEW_READY):
-            if held.metadata.get(bd.META_LAND_REPAIR) != bead_id:
-                holders.append(held.id)
-        for holder_bead in holders:
-            holder = self._top_level_unit(holder_bead)
-            if holder == unit:
+            if held.metadata.get(bd.META_LAND_REPAIR) == bead_id:
                 continue
-            if holder not in self._epic_block_logged:
-                log.info("skipping %s: %s has unfinished work", unit, holder)
-                self._epic_block_logged.add(holder)
-            return True
-        return False
+            if self._top_level_unit(held.id) != unit:
+                return held.id, self._review_ready_hold_reason(held)
+        return None
+
+    def _review_ready_hold_reason(self, held: bd.Bead) -> str:
+        repair = held.metadata.get(bd.META_LAND_REPAIR)
+        if held.metadata.get(bd.META_LAND_STATE) == "repairing" and repair:
+            try:
+                status = self.engine.beads.show(str(repair)).status
+            except bd.BeadsError:
+                status = "missing"
+            return f"review-ready, waiting on land-repair bug {repair} ({status})"
+        return f"review-ready and not landed; `alloy land {held.id}` lands it"
+
+    def _note_hold(self, hold: tuple[str, str] | None) -> None:
+        """Log a dispatch hold when it starts or changes, and re-announce it
+        (warning + `stalled` event) every `stall_minutes` while a holder with
+        no live run of its own keeps everything else waiting -- a hold that
+        was only logged once looked exactly like a hung scheduler."""
+        if hold is None:
+            self._hold = self._hold_since = self._hold_announced = None
+            return
+        now = self.clock()
+        if self._hold is None or self._hold[0] != hold[0]:
+            self._hold, self._hold_since, self._hold_announced = hold, now, now
+            log.info("dispatch held by %s: %s", hold[0], hold[1])
+            return
+        self._hold = hold
+        if self.stall_minutes <= 0 or hold[1].startswith(_LIVE_RUN_PREFIX):
+            return  # a live run is working; check_stalls watches it
+        period = timedelta(minutes=self.stall_minutes)
+        if now - (self._hold_announced or now) < period:
+            return
+        self._hold_announced = now
+        minutes = int((now - (self._hold_since or now)).total_seconds() // 60)
+        why = (
+            f"dispatch held by {hold[0]} for {minutes} min: {hold[1]}; "
+            f"`alloy reconcile {hold[0]}` shows what is out of step"
+        )
+        log.warning("%s", why)
+        self.engine.store.events.emit(EVENT_STALLED, bead=hold[0], reason=why, stage="dispatch-hold")
 
     def _epic_dispatch_blocked(self, bead_id: str) -> bool:
         """True when an epic child must wait for a sibling or its own prior run."""
         epic_id = self.engine.beads.epic_root(bead_id)
         if epic_id is None:
-            # An epic is not a child of itself: while any descendant is open the
-            # children do the work and the epic lands when they are all closed.
+            # An epic is not a child of itself: the children do the work and
+            # the epic lands (via _completed_epics) once they are all closed.
             # Sorting puts the epic ahead of its children in `ready`, so without
             # this an idle epic with no run yet was picked for an empty
-            # epic-level run.
-            return bool(self.engine.beads.open_descendants(bead_id))
+            # epic-level run -- and a tracking epic whose children had all
+            # closed was "implemented" from scratch.
+            return bool(self.engine.beads.children(bead_id))
         blocker = self._epic_blocking_sibling(epic_id)
         if blocker is not None:
             if blocker not in self._epic_block_logged:
@@ -492,6 +597,8 @@ class Scheduler:
             due = self._completed_epics() + self._repaired_beads()
         for bead_id in due:
             bead = self.engine.beads.show(bead_id)
+            if bead.status == bd.STATUS_DONE or bead.manual:
+                continue  # closed since the snapshot, or never Alloy's to land
             if not self.engine._commit_before_land(bead):
                 log.warning("landing %s skipped; worktree still dirty", bead_id)
                 continue
@@ -516,7 +623,7 @@ class Scheduler:
         worktrees = WorktreeManager(repo=self.engine.repo, root=self.engine.paths.worktrees)
         due: list[str] = []
         for bead in self.engine.beads.list_by_status(bd.STATUS_READY):
-            if bead.issue_type != "epic":
+            if bead.issue_type != "epic" or bead.manual:
                 continue
             if self.engine.beads.open_descendants(bead.id):
                 continue
@@ -541,7 +648,7 @@ class Scheduler:
         """Review-ready beads in `repairing` whose repair bug is now closed."""
         due: list[str] = []
         for bead in self.engine.beads.list_by_status(bd.STATUS_REVIEW_READY):
-            if bead.metadata.get(bd.META_LAND_STATE) != "repairing":
+            if bead.metadata.get(bd.META_LAND_STATE) != "repairing" or bead.manual:
                 continue
             bug_id = bead.metadata.get(bd.META_LAND_REPAIR)
             if not bug_id:
@@ -585,6 +692,31 @@ class Scheduler:
             log.info("stop requested; finishing the current run first")
         self._stopping = True
 
+    def request_cancel(self, bead_id: str) -> bool:
+        """Cancel the run in progress if it is `bead_id`'s, and keep serving.
+
+        `_run_current` books the run cancelled once its task has unwound (the
+        harness dies with the task). False when this scheduler is not running
+        that bead right now."""
+        if self._current is None or self._current.done() or self._current_bead != bead_id:
+            return False
+        log.info("%s: cancel requested; stopping this run only", bead_id)
+        self._cancel_bead = bead_id
+        self._current.cancel()
+        return True
+
+    def _on_cancel_signal(self) -> None:
+        """SIGUSR1 from `alloy cancel`: the bead to cancel is in scheduler_cancel."""
+        path = self.engine.paths.scheduler_cancel
+        try:
+            request = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            log.warning("cancel signal without a readable %s; ignored", path.name)
+            return
+        bead_id = str(request.get("bead") or "") if isinstance(request, dict) else ""
+        if not self.request_cancel(bead_id):
+            log.warning("cancel of %s ignored: this scheduler is not running it", bead_id or "?")
+
     async def _sleep(self, seconds: float) -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.sleep(seconds)
@@ -594,6 +726,8 @@ class Scheduler:
         for sig in (signal.SIGINT, signal.SIGTERM):
             with contextlib.suppress(NotImplementedError, ValueError):
                 loop.add_signal_handler(sig, self.stop)
+        with contextlib.suppress(NotImplementedError, ValueError, AttributeError):
+            loop.add_signal_handler(signal.SIGUSR1, self._on_cancel_signal)
 
     @property
     def pidfile(self) -> Path:
@@ -646,6 +780,22 @@ def read_session(paths: AlloyPaths) -> dict | None:
     }:
         return None
     return data
+
+
+_LIVE_RUN_PREFIX = "run is live"
+
+
+def _run_hold_reason(run: dict) -> str:
+    """Why an active run record holds dispatch, with the command that clears it."""
+    bead_id, run_id = run["bead_id"], run["run_id"]
+    if run["status"] == RUN_WAITING_HUMAN:
+        return f"run {run_id} waits for a human; `alloy resume {bead_id} -m ...` or `alloy cancel {bead_id}`"
+    if _pid_alive(run.get("pid")):
+        return f"{_LIVE_RUN_PREFIX} (run {run_id}, pid {run['pid']}, stage {run.get('stage') or '?'})"
+    return (
+        f"run {run_id} is marked {run['status']} but its process is gone; "
+        f"`alloy run {bead_id}` adopts it, `alloy cancel {bead_id}` drops it"
+    )
 
 
 def _worktree_dirty(worktree: str | None) -> bool:

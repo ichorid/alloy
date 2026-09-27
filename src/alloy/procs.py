@@ -158,6 +158,50 @@ def terminate_pid(pid: int, *, grace_s: float = DEFAULT_GRACE_S) -> bool:
     return not pid_alive(pid)
 
 
+def pids_under(path: Path) -> list[int]:
+    """Processes whose working directory is `path` or inside it (Linux /proc).
+
+    A server an agent started from an isolated worktree (`run-server.sh &`)
+    outlives the harness and keeps serving that worktree's code on a shared
+    port long after the worktree is discarded."""
+    root = os.path.realpath(path)
+    own = {os.getpid(), os.getppid()}
+    found: list[int] = []
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return []
+    for entry in entries:
+        if not entry.isdigit() or int(entry) in own:
+            continue
+        try:
+            cwd = os.readlink(f"/proc/{entry}/cwd")
+        except OSError:
+            continue
+        cwd = cwd.removesuffix(" (deleted)")
+        if cwd == root or cwd.startswith(root + os.sep):
+            found.append(int(entry))
+    return sorted(found)
+
+
+def stop_processes_under(path: Path, *, grace_s: float = DEFAULT_GRACE_S) -> list[int]:
+    """SIGTERM every process running inside `path`, SIGKILL what is left
+    after `grace_s`; returns the pids found. Only for isolated worktrees --
+    never the primary checkout, where the operator's own tools live."""
+    pids = [pid for pid in pids_under(path) if pid_alive(pid)]
+    for pid in pids:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + grace_s
+    while time.monotonic() < deadline and any(pid_alive(pid) for pid in pids):
+        time.sleep(0.1)
+    for pid in pids:
+        if pid_alive(pid):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(pid, signal.SIGKILL)
+    return pids
+
+
 def read_pid(pidfile: Path) -> int | None:
     """The pid written in `pidfile` if that process is still alive, else None
     (clearing a stale file). Shared by the scheduler (its own pidfile) and the

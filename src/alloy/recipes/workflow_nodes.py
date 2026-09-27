@@ -210,7 +210,7 @@ def _make_node_write_tests(ctx, _capture_bugs):
         # that wrote the tests; the first pass has no session yet.
         session_id = resumable_session(spec, state.get("tests_session"))
         prompt_args = (
-            ctx.bead.task_brief(),
+            ctx.task_brief(),
             ctx.bead.acceptance_criteria,
             state.get("context", {}),
             state.get("instructions", ""),
@@ -363,7 +363,7 @@ def _make_node_review_tests(ctx, _first_available):
         update: dict[str, Any] = {"stage": "tests_review", "tests_reviews": reviews}
         role_spec = ctx.recipe.role("tests_review")
         prompt = tests_review_prompt(
-            ctx.bead.task_brief(),
+            ctx.task_brief(),
             ctx.bead.acceptance_criteria,
             state.get("context", {}),
             state.get("baseline") or [],
@@ -437,7 +437,7 @@ def _make_node_implement(ctx, _capture_bugs):
             "implement",
             spec,
             implement_prompt(
-                ctx.bead.task_brief(),
+                ctx.task_brief(),
                 ctx.bead.acceptance_criteria,
                 state.get("context", {}),
                 state.get("instructions", ""),
@@ -859,7 +859,17 @@ def _make_node_human_gate(ctx):
             }
         )
         instructions = payload if isinstance(payload, str) else (payload or {}).get("instructions", "")
+        extra: dict[str, Any] = {}
+        if state.get("resume_to") == "tests":
+            # The human grants the tests stage a fresh repair budget; without
+            # this the very next bad baseline parked the run again at once.
+            extra["baseline_repairs"] = 0
+            if state.get("baseline"):
+                # Parked over the baseline itself: the session that kept
+                # proposing it is part of the problem, so start a fresh one.
+                extra["tests_session"] = None
         return {
+            **extra,
             "instructions": instructions or "Continue; the human provided no extra guidance.",
             "human_note": instructions or "",
             "retries_on_tier": 0,

@@ -14,6 +14,7 @@ class TddState(TypedDict, total=False):
     context: dict[str, Any]
     memory_block: str  # rendered project memory, fixed at run start
     memory_check_hints: str  # stored alloy:check-hints body, fixed at run start
+    memory_pinned_checks: str  # the operator's check-hints body, fixed at run start
     memory_calibration: str  # stored alloy:calibration body, fixed at run start
     memory_keys: list[str]  # every stored memory key, fixed at run start
     memory_lessons: dict[str, str]  # stored alloy:lesson:* bodies, fixed at run start

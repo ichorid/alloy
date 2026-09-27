@@ -12,11 +12,14 @@ from alloy.models import (
     Attempt,
     CheckResult,
     JudgeDecision,
+    ScopeVerdict,
     VerifierAction,
     clip,
     format_regression_areas,
+    is_placeholder_answer,
     is_unavailable,
     parse_check_hints,
+    parse_pinned_check_hints,
 )
 from alloy.prompts import assemble
 from alloy.recipes.role_prompts import (
@@ -88,7 +91,7 @@ def _evidence_packet(state: TddState, ctx: RunContext, diff: str) -> str:
             "",
             _project_layer(state.get("memory_block", "")),
             _run_layer(state.get("context")),
-            _task_layer(ctx.bead.task_brief(), ctx.bead.acceptance_criteria),
+            _task_layer(ctx.task_brief(), ctx.bead.acceptance_criteria),
             volatile,
         ).text
     )
@@ -107,19 +110,32 @@ async def classify(
     """Validate a classifier's answer, returning the supplied default on failure.
 
     The default's reason records the failure; its identity signals defaulting.
+    An answer whose reason is placeholder text ("test") is asked for once
+    more, then treated as a failure.
     """
-    try:
-        result = await ctx.call(
-            role,
-            spec,
-            prompt,
-            schema=model_cls.schema_for_agents(),
-            iteration=iteration,
-        )
-    except Exception as exc:
-        default.reason = f"{role} failed: {exc}"
-        return default
-    return answer_of(role, result, model_cls=model_cls, default=default)
+    answer = default
+    for _ in range(2):
+        try:
+            result = await ctx.call(
+                role,
+                spec,
+                prompt,
+                schema=model_cls.schema_for_agents(),
+                iteration=iteration,
+            )
+        except Exception as exc:
+            default.reason = f"{role} failed: {exc}"
+            return default
+        answer = answer_of(role, result, model_cls=model_cls, default=default)
+        if answer is default or model_cls not in _SANITY_CHECKED or not is_placeholder_answer(answer):
+            return answer
+        log.warning("%s answered with placeholder text (%r); asking again", role, answer.reason)
+    default.reason = f"{role} failed: it answered with placeholder text twice ({answer.reason!r})"
+    return default
+
+
+# Gate verdicts whose `reason` is the whole signal a human later reads.
+_SANITY_CHECKED = (AcceptanceVerdict, ScopeVerdict)
 
 
 def answer_of(role: str, result: AgentResult, *, model_cls, default):
@@ -272,7 +288,7 @@ def _make_verifier_nodes(ctx):
         diff = ctx.diff()
         changed_before = ctx.worktrees.changed_files(ctx.worktree)
         prompt_args = (
-            ctx.bead.task_brief(),
+            ctx.task_brief(),
             ctx.bead.acceptance_criteria,
             verifier_context(state, ctx),
             diff,
@@ -288,6 +304,7 @@ def _make_verifier_nodes(ctx):
             instructions=state.get("instructions", ""),
             memory=state.get("memory_block", ""),
             repo_root=ctx.worktree.path,
+            pinned_checks=parse_pinned_check_hints(state.get("memory_pinned_checks", "")),
         )
         # The verifier continues the tests writer's session: the agent that
         # wrote the tests chooses how to verify them, context intact.
@@ -595,34 +612,46 @@ def _make_judge_node(ctx, _implementer):
         spec = ctx.recipe.role("judge")
         diff = ctx.diff()
         changed_tests = _implementer_changed_tests(ctx, state)
-        result = await ctx.call(
-            "judge",
-            spec,
-            judge_prompt(
-                ctx.bead.task_brief(),
-                ctx.bead.acceptance_criteria,
-                state.get("context", {}),
-                diff,
-                _checks_of(state, state.get("iteration", 0)),
-                state.get("attempts", []),
-                state.get("iteration", 0),
-                ctx.limits_note(state),
-                verifier_stop=state.get("verifier_stop"),
-                changed_tests=changed_tests,
-                memory=state.get("memory_block", ""),
-            ),
-            schema=JudgeDecision.schema_for_agents(),
-            iteration=state.get("iteration", 0),
+        prompt = judge_prompt(
+            ctx.task_brief(),
+            ctx.bead.acceptance_criteria,
+            state.get("context", {}),
+            diff,
+            _checks_of(state, state.get("iteration", 0)),
+            state.get("attempts", []),
+            state.get("iteration", 0),
+            ctx.limits_note(state),
+            verifier_stop=state.get("verifier_stop"),
+            changed_tests=changed_tests,
+            memory=state.get("memory_block", ""),
         )
-        if is_unavailable(result):
-            # The fallback chain is exhausted too: retrying would only burn
-            # budget on a harness that cannot answer.
-            return {
-                "stage": "judge",
-                "resume_to": "implement",
-                "decision": _unavailable_decision("judge", result).model_dump(),
-            }
-        decision = _decision_from(result, state)
+        for asked in range(2):
+            result = await ctx.call(
+                "judge",
+                spec,
+                prompt,
+                schema=JudgeDecision.schema_for_agents(),
+                iteration=state.get("iteration", 0),
+            )
+            if is_unavailable(result):
+                # The fallback chain is exhausted too: retrying would only burn
+                # budget on a harness that cannot answer.
+                return {
+                    "stage": "judge",
+                    "resume_to": "implement",
+                    "decision": _unavailable_decision("judge", result).model_dump(),
+                }
+            decision = _decision_from(result, state)
+            if not (result.structured and is_placeholder_answer(decision)):
+                break
+            if asked == 0:
+                log.warning("judge answered with placeholder text (%r); asking again", decision.reason)
+                continue
+            decision = JudgeDecision(
+                decision="human",
+                reason=f"the judge answered with placeholder text twice ({decision.reason!r}); no verdict was reached",
+                next_instructions="Check the evidence yourself, then resume with guidance.",
+            )
         attempt = Attempt(
             iteration=state.get("iteration", 0),
             implementer=_implementer(state),

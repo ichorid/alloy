@@ -1182,7 +1182,8 @@ async def test_scheduler_tick_leaves_landing_off_bead_review_ready(
 
     from alloy.scheduler import Scheduler as SchedulerClass
 
-    assert "_auto_land_after_run" in inspect.getsource(SchedulerClass.tick)
+    assert "_run_picked" in inspect.getsource(SchedulerClass.tick)
+    assert "_auto_land_after_run" in inspect.getsource(SchedulerClass._run_picked)
     assert ".land(" in inspect.getsource(SchedulerClass._auto_land_after_run)
     _patch_engine_recipes(monkeypatch, scheduler.engine, landing_off=True)
     land_calls: list[str] = []

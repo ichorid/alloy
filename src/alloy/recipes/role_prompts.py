@@ -433,7 +433,12 @@ def scope_prompt(
             "graph, not against a file count\n"
             '- "subverts-task" -- it changes behaviour the parent\'s acceptance criteria rely '
             "on, so the paused task would pass or fail for the wrong reason\n\n"
-            "Return verdict, reason and confidence in the required structured output.",
+            'Unless the verdict is "merge", split the changed files: `needed_files` -- the '
+            "minimal subset the defect's fix requires -- and `incidental_files` -- the rest "
+            "(helpers, extra tests, refactors it could do without). A human keeps the needed "
+            'part instead of re-reading every hunk. For "merge" leave both lists empty.\n\n'
+            "Return verdict, reason, confidence, needed_files and incidental_files in the "
+            "required structured output.",
         ]
     )
 
@@ -579,6 +584,7 @@ def verifier_prompt(
     memory: str = "",
     repo_root: Path | None = None,
     resumed: bool = False,
+    pinned_checks: list[str] | None = None,
 ) -> str:
     """`resumed` is the continuation variant sent into the tests writer's own
     session: it drops the task brief, acceptance criteria and repository context
@@ -599,6 +605,14 @@ def verifier_prompt(
         "## Hints from the repository (not yet verified)\n"
         f"{_render_check_hints(context, changed_files=changed_files, repo_root=repo_root)}"
     )
+    if pinned_checks:
+        pinned = "\n".join(f"- `{command}`" for command in pinned_checks)
+        hints = (
+            "## Operator-pinned checks (verified by a human)\n"
+            "Run these exactly as written when they cover what the diff touches; a shorter "
+            "variant that skips a step is not the same check.\n"
+            f"{pinned}\n\n{hints}"
+        )
     baseline = (
         "## Baseline commands (the tests role's targeted checks; red before implementation)\n"
         f"{_render_checks(baseline_checks or []) or '(none)'}"

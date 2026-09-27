@@ -86,7 +86,28 @@ async def scope_merge_gate(ctx: RunContext, bug_bead: Any, diff: str) -> tuple[b
     verdict = await scope_gate(ctx, bug_bead, diff)
     if verdict.verdict == "merge":
         return True, verdict.reason
-    return False, f"{verdict.verdict}: {verdict.reason}"
+    reason = f"{verdict.verdict}: {verdict.reason}"
+    changed = _changed_files(diff)
+    needed = [path for path in verdict.needed_files if path in changed] or verdict.needed_files
+    incidental = [path for path in changed if path not in needed]
+    if needed:
+        reason += f". Needed for the fix: {', '.join(needed)}"
+        if incidental:
+            reason += f"; not needed: {', '.join(incidental)}"
+    elif changed:
+        reason += f". Changed files: {', '.join(changed)}"
+    return False, reason
+
+
+def _changed_files(diff: str) -> list[str]:
+    """Paths a unified diff touches, in diff order (the b/ side)."""
+    files: list[str] = []
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            path = line.rsplit(" b/", 1)[-1]
+            if path not in files:
+                files.append(path)
+    return files
 
 
 def bug_acceptance(report: BugReport) -> str:

@@ -88,13 +88,20 @@ alloy run <bead-id> [--recipe NAME]   # run one bead to done / human-gate / fail
 alloy status [<bead-id>] --json       # what's running, stage, iteration count, tests
 alloy logs <bead-id>                  # every agent call in the run + transcript paths
 alloy resume <bead-id> -m "<message>" # continue a paused/crashed run with guidance
-alloy cancel <bead-id>                # stop the run's process; bead returns to ready, worktree kept
+alloy cancel <bead-id>                # stop the run (in-scheduler if the scheduler owns it); bead returns to ready unless closed
+alloy reconcile [<bead-id>] [--apply] # find/fix drift between bd status, alloy_* metadata and the run ledger
+alloy assign-recipe <recipe> [--from R] [--apply]  # retarget beads pinning another recipe; skips epics and manual beads
 alloy land <bead-id>                  # trial-merge, re-verify, merge into landing.target (default main)
 alloy start [--poll SECS] [--recipe N]  # scheduler: poll Beads, run READY work, concurrency 1
 alloy stop [--now]                    # stop the scheduler after the current task (--now: cancel it too)
 alloy monitor [--once [--json]]       # live htop-style view of every active run; --once prints one snapshot
 alloy limits [--json]                 # probe installed harness usage limits; refresh limits.json
 ```
+
+Beads labelled `manual` or `merge-gate` (or with `alloy_manual=true`) are
+human-operated: Alloy never dispatches, runs or lands them, whatever
+`alloy_recipe` says. When nothing dispatches, run `alloy reconcile` before
+suspecting the scheduler; it names the bead holding dispatch and why.
 
 Ctrl-C or SIGTERM on `alloy run` stops the harness with it and leaves the run
 resumable (`alloy run <bead-id>` again picks it up). The detached scheduler

@@ -157,6 +157,29 @@ def is_runnable(command: str) -> bool:
     return shutil.which(program) is not None
 
 
+NOOP_PROGRAMS = frozenset({"echo", "printf", "true", ":", "sleep", "exit", "pwd"})
+
+
+def noop_reason(command: str) -> str:
+    """Why `command` cannot verify anything, or "" when it might.
+
+    A lone `echo`/`true`/`printf` always exits 0: recorded as a check it is a
+    green result that proves nothing -- a tests role "previewing" its command
+    with `echo` made every baseline look unexpectedly green (journal-operating-
+    tentura 9). Compound shell expressions are left to the shell."""
+    if any(character in command for character in "|&;<>$`\n"):
+        return ""  # a shell expression (or an expansion worth seeing): let it run
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return ""
+    while tokens and "=" in tokens[0] and not tokens[0].startswith("="):
+        tokens = tokens[1:]  # leading VAR=value assignments
+    if tokens and tokens[0] in NOOP_PROGRAMS:
+        return f"`{tokens[0]}` only prints or exits; name the command that runs the check itself"
+    return ""
+
+
 def normalize_command(command: str) -> str:
     """Repoint a bare `python` at an interpreter that exists.
 
@@ -180,6 +203,16 @@ async def run_check(
     index: int = 0,
 ) -> CheckResult:
     """Run one shell command, capture what happened, persist the evidence."""
+    refused = noop_reason(request.command)
+    if refused:
+        return CheckResult(
+            command=request.command,
+            purpose=request.purpose,
+            kind=request.kind,
+            required=request.required,
+            exit_code=126,
+            refused=refused,
+        )
     started = time.monotonic()
     process = await asyncio.create_subprocess_shell(
         request.command,

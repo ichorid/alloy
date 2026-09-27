@@ -8,11 +8,22 @@ human can inspect them, and are only removed on request.
 from __future__ import annotations
 
 import hashlib
+import logging
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from alloy.procs import stop_processes_under
+
 BRANCH_PREFIX = "alloy"
+SETUP_HOOK = Path(".alloy") / "worktree-setup"
+"""Executable, relative to the primary checkout, run inside every freshly
+created worktree (codegen, dependency fetch): a new checkout has none of the
+generated files a long-lived primary checkout has accumulated."""
+SETUP_TIMEOUT_S = 1800
+
+log = logging.getLogger("alloy.worktree")
 
 JUNK_PATTERNS: tuple[str, ...] = (
     "uv.lock",
@@ -131,7 +142,38 @@ class WorktreeManager:
             _git(["worktree", "add", str(path), branch], self.repo)
         else:
             _git(["worktree", "add", "-b", branch, str(path), base_commit], self.repo)
+        self._run_setup_hook(path)
         return Worktree(bead_id, path, branch, base_commit)
+
+    def _run_setup_hook(self, path: Path) -> None:
+        """Run the project's SETUP_HOOK in a fresh worktree, if it has one.
+
+        A failure is logged, never raised: the run goes ahead and its checks
+        say what is missing, as they would have without the hook."""
+        hook = self.repo / SETUP_HOOK
+        if not hook.is_file():
+            return
+        if not os.access(hook, os.X_OK):
+            log.warning("%s is not executable; skipped for %s", hook, path)
+            return
+        env = {**os.environ, "ALLOY_PRIMARY_CHECKOUT": str(self.repo), "ALLOY_WORKTREE": str(path)}
+        log.info("running %s in %s", SETUP_HOOK, path)
+        try:
+            proc = subprocess.run(
+                [str(hook)],
+                cwd=str(path),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=SETUP_TIMEOUT_S,
+                stdin=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            log.warning("%s failed in %s: %s", SETUP_HOOK, path, exc)
+            return
+        if proc.returncode != 0:
+            tail = (proc.stdout + proc.stderr).strip()[-2000:]
+            log.warning("%s exited %d in %s:\n%s", SETUP_HOOK, proc.returncode, path, tail)
 
     def ensure_from(self, bead_id: str, base_commit: str) -> Worktree:
         """A worktree cut from a specific commit rather than the repo's HEAD --
@@ -142,6 +184,7 @@ class WorktreeManager:
         path = self.path_for(bead_id)
         if not path.exists():
             return False
+        self.stop_processes(path)
         args = ["worktree", "remove", str(path)]
         if force:
             args.append("--force")
@@ -151,6 +194,18 @@ class WorktreeManager:
         if delete_branch:
             _git(["branch", "-D", branch_name(bead_id)], self.repo, check=False)
         return True
+
+    def stop_processes(self, path: Path) -> list[int]:
+        """Stop what still runs inside an isolated worktree (a dev server an
+        agent left behind). Refuses anything outside `root`: the primary
+        checkout is the operator's, not Alloy's to clean."""
+        path = Path(path).resolve()
+        if path == self.repo or self.root not in path.parents:
+            return []
+        stopped = stop_processes_under(path)
+        if stopped:
+            log.warning("stopped %d process(es) left running in %s: %s", len(stopped), path, stopped)
+        return stopped
 
     def prune(self) -> None:
         _git(["worktree", "prune"], self.repo, check=False)
@@ -194,6 +249,20 @@ class WorktreeManager:
     def head(self, path: Path) -> str:
         """The worktree's current HEAD commit."""
         return self._head(path)
+
+    def commits_ahead(self, branch: str, target: str) -> int | None:
+        """Commits on `branch` that `target` lacks; None when git cannot tell
+        (a missing branch), which callers must not read as "nothing"."""
+        proc = _git(["rev-list", "--count", f"{target}..{branch}"], self.repo, check=False)
+        if proc.returncode != 0:
+            return None
+        try:
+            return int(proc.stdout.strip())
+        except ValueError:
+            return None
+
+    def is_ancestor(self, commit: str, of: str) -> bool:
+        return _git(["merge-base", "--is-ancestor", commit, of], self.repo, check=False).returncode == 0
 
     def current_branch(self, path: Path | None = None) -> str:
         """The branch checked out at `path` (the primary checkout by default)."""

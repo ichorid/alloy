@@ -114,9 +114,38 @@ alloy monitor --once --json # the same as one snapshot, for scripts
 alloy limits [--json]       # probe installed harness usage limits; refresh limits.json
 alloy logs t-a3f            # every agent call, with the path to its transcript
 alloy resume t-a3f -m "use NFKD"
-alloy cancel t-a3f
+alloy cancel t-a3f          # a scheduler-owned run is stopped inside the scheduler, which keeps serving
 alloy start                 # the polling scheduler, concurrency 1
+alloy reconcile [--apply]   # find (and fix) beads whose bd status, alloy_* metadata and runs disagree
+alloy assign-recipe tdd-loop-sonnet [--from tdd-loop] [--apply]   # retarget beads that pin a recipe
 ```
+
+### Operating notes
+
+- **Human-operated beads.** A bead labelled `manual` or `merge-gate`, or with
+  `alloy_manual=true`, is never dispatched, run or landed, whatever
+  `alloy_recipe` it carries. Epics with children are never run as tasks; they
+  land once every descendant is closed.
+- **Dispatch holds are re-announced.** When a review-ready bead or a run with
+  no live process keeps every other top-level bead waiting for more than
+  `--stall-minutes`, the scheduler logs a warning and emits a `stalled` event
+  naming the holder and the command that clears it. `alloy reconcile <bead>`
+  explains what is out of step.
+- **Landing is bounded.** A closed bead is never landed or reopened. A bead
+  with nothing to land (a tracking epic, work already on the target) is closed
+  without a land run. An in-place land verifies the diff since the bead's
+  first run. After three failed landings in a row the bead parks at
+  waiting-human instead of filing another repair bug.
+- **Recipe defaults only reach unassigned beads.** `alloy start --recipe` and
+  `alloy:default:recipe` never override a bead's own `alloy_recipe`. The
+  scheduler logs how many ready beads pin another recipe; `alloy
+  assign-recipe` retargets them and skips epics and human-operated beads.
+- **Fresh worktrees can run a setup hook.** An executable
+  `<repo>/.alloy/worktree-setup` runs inside every newly created worktree
+  (codegen, dependency fetch), with `ALLOY_PRIMARY_CHECKOUT` and
+  `ALLOY_WORKTREE` set. A failure is logged and the run goes ahead. Processes
+  still running inside an isolated worktree are stopped when a remediation
+  child finishes, when its run is cancelled and when the worktree is removed.
 
 ## The `tdd-loop` recipe
 
@@ -210,6 +239,16 @@ Alloy never rewrites it. What Alloy writes:
 
 `alloy:meta:*`, `alloy:review:*`, `alloy:regression:*`, `alloy:calibration` and
 `alloy:default:recipe` never appear in the generic prompt block.
+
+One human-owned key has a fixed meaning: `check-hints` holds check commands an
+operator verified by hand (for example the full CI build sequence), one per
+line, either bare or as `<kind>: <command>`. Runs never overwrite it, unlike
+`alloy:check-hints`, and the verifier sees it as "operator-pinned checks
+(verified by a human)", ahead of every unverified hint:
+
+```bash
+bd remember --key check-hints "build: flutter build web --wasm && dart run tool/apply_versioned_web_assets.dart"
+```
 
 ```bash
 alloy memory list                 # inventory: key, owner, provenance, age, flags

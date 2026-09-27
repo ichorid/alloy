@@ -378,42 +378,125 @@ async def test_cancel_terminates_the_owning_process(engine, beads_project):
         holder.wait(timeout=10)
 
 
-async def test_cancel_refuses_a_run_owned_by_the_live_scheduler(engine, beads_project):
-    """A bead the scheduler is running in-process records the scheduler's own
-    pid as the run's pid (it has no separate OS process). `cancel` must not
-    SIGTERM that pid -- that would stop the whole scheduler, taking every
-    other run down with it -- and must instead refuse with a clear message,
-    leaving the run and the scheduler untouched."""
+_SCHEDULER_STAND_IN = """
+import signal, sqlite3, sys, time
+db, run_id = sys.argv[1], sys.argv[2]
+def cancel(*_):
+    con = sqlite3.connect(db)
+    con.execute("UPDATE runs SET status='cancelled' WHERE run_id=?", (run_id,))
+    con.commit()
+signal.signal(signal.SIGUSR1, cancel)
+print("ready", flush=True)
+time.sleep(60)
+"""
+
+
+def _scheduler_owned_run(engine, beads_project, bead_id, run_id, script, **run_fields):
+    """A stand-in scheduler process (pidfile included) that owns `run_id`."""
     import subprocess
     import sys
 
+    engine.store.create_run(
+        run_id=run_id,
+        bead_id=bead_id,
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+        **run_fields,
+    )
+    stand_in = subprocess.Popen(
+        [sys.executable, "-c", script, str(engine.paths.alloy_db), run_id],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert stand_in.stdout.readline().strip() == "ready"
+    engine.store.update_run(run_id, pid=stand_in.pid)
+    engine.paths.scheduler_pid.parent.mkdir(parents=True, exist_ok=True)
+    engine.paths.scheduler_pid.write_text(str(stand_in.pid), encoding="utf-8")
+    return stand_in
+
+
+async def test_cancel_asks_the_live_scheduler_to_stop_only_that_run(engine, beads_project):
+    """A bead the scheduler runs in-process records the scheduler's own pid.
+    `cancel` must not SIGTERM that pid (it would stop the whole scheduler);
+    it names the bead in scheduler_cancel and sends SIGUSR1, and the
+    scheduler books the run cancelled while it keeps running
+    (journal-operating-tentura 3)."""
     bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop")
     engine.beads.claim(bead_id)
-    scheduler_stand_in = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    stand_in = _scheduler_owned_run(engine, beads_project, bead_id, "scheduler-owned", _SCHEDULER_STAND_IN)
+    try:
+        assert engine.cancel(bead_id, scheduler_timeout_s=10) is True
+        assert pid_alive(stand_in.pid)
+        assert engine.store.get_run("scheduler-owned")["status"] == "cancelled"
+        assert not engine.paths.scheduler_cancel.exists()
+    finally:
+        stand_in.kill()
+        stand_in.wait(timeout=10)
+
+
+async def test_cancel_times_out_when_the_scheduler_does_not_answer(engine, beads_project):
+    ignoring = _SCHEDULER_STAND_IN.replace("con.commit()", "pass")
+    bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop")
+    engine.beads.claim(bead_id)
+    stand_in = _scheduler_owned_run(engine, beads_project, bead_id, "deaf", ignoring)
+    try:
+        with pytest.raises(EngineError, match="did not cancel"):
+            engine.cancel(bead_id, scheduler_timeout_s=1)
+        assert pid_alive(stand_in.pid)
+        assert engine.store.get_run("deaf")["status"] == "running"
+    finally:
+        stand_in.kill()
+        stand_in.wait(timeout=10)
+
+
+async def test_cancel_refuses_a_remediation_child_the_scheduler_runs(engine, beads_project):
+    parent_id = bd_create(beads_project, "parent", alloy_recipe="tdd-loop")
+    child_id = bd_create(beads_project, "child bug", alloy_recipe="tdd-loop")
     engine.store.create_run(
-        run_id="scheduler-owned",
-        bead_id=bead_id,
-        thread_id="scheduler-owned",
+        run_id="parent-run",
+        bead_id=parent_id,
+        thread_id="parent-run",
         recipe="tdd-loop",
         repo=beads_project,
         worktree=None,
         branch=None,
         log_dir=None,
     )
-    engine.store.update_run("scheduler-owned", pid=scheduler_stand_in.pid)
-    engine.paths.scheduler_pid.parent.mkdir(parents=True, exist_ok=True)
-    engine.paths.scheduler_pid.write_text(str(scheduler_stand_in.pid), encoding="utf-8")
-
+    stand_in = _scheduler_owned_run(
+        engine, beads_project, child_id, "child-run", _SCHEDULER_STAND_IN, parent_run_id="parent-run"
+    )
     try:
-        with pytest.raises(EngineError, match="alloy stop"):
-            engine.cancel(bead_id)
-
-        assert pid_alive(scheduler_stand_in.pid)
-        assert engine.store.get_run("scheduler-owned")["status"] == "running"
-        assert engine.beads.show(bead_id).status != bd.STATUS_READY
+        with pytest.raises(EngineError, match=f"cancel that bead instead|{parent_id}"):
+            engine.cancel(child_id, scheduler_timeout_s=1)
+        assert pid_alive(stand_in.pid)
+        assert engine.store.get_run("child-run")["status"] == "running"
     finally:
-        scheduler_stand_in.kill()
-        scheduler_stand_in.wait(timeout=10)
+        stand_in.kill()
+        stand_in.wait(timeout=10)
+
+
+async def test_cancel_keeps_a_closed_bead_closed(engine, beads_project):
+    """A human closed the bead out of band; cancelling its leftover run must
+    not reopen it (journal-operating-tentura 13)."""
+    bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop")
+    engine.store.create_run(
+        run_id="leftover",
+        bead_id=bead_id,
+        thread_id="leftover",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    engine.beads.close(bead_id)
+    assert engine.cancel(bead_id) is True
+    assert engine.store.get_run("leftover")["status"] == "cancelled"
+    assert engine.beads.show(bead_id).status == bd.STATUS_DONE
 
 
 # -- alloy-c5v.2: cancel kills orphaned harness process groups ---------------

@@ -74,6 +74,12 @@ class AlloyPaths:
         return self.root / "scheduler.log"
 
     @property
+    def scheduler_cancel(self) -> Path:
+        """`alloy cancel` names the scheduler-owned run to stop here, then
+        sends SIGUSR1 (see Scheduler.request_cancel)."""
+        return self.root / "scheduler-cancel.json"
+
+    @property
     def limits_cache(self) -> Path:
         return self.shared_root / "limits.json"
 

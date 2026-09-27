@@ -254,7 +254,7 @@ def test_cli_land_red_files_repair_bug_acceptance_names_failing_check(
             ],
         )
     )
-    bead_id = bd_create(beads_project, "land red repair", alloy_recipe="tdd-loop")
+    bead_id = bd_create(beads_project, "land red repair", alloy_recipe="tdd-loop", alloy_use_worktree="true")
     worktree = _seed_review_ready(land_engine, beads_project, alloy_home, bead_id)
     primary_head_before = _prepare_clean_merge(beads_project, worktree)
     bugs_before = set(_bug_ids(land_engine.beads))

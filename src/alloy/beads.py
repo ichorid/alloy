@@ -58,6 +58,11 @@ META_USE_WORKTREE = "alloy_use_worktree"
 """Opt-in flag: a bead (or epic) with this set truthy gets an isolated git
 worktree/branch. Without it, Alloy runs the bead directly in the primary
 checkout -- no worktree is created."""
+META_MANUAL = "alloy_manual"
+"""Flag: a human-operated bead (a checklist, a merge gate, a tracking epic).
+Alloy never dispatches, runs or lands it, whatever `alloy_recipe` says."""
+META_LAND_ATTEMPTS = "alloy_land_attempts"
+"""How many land runs in a row have failed; reset when the bead lands."""
 
 TRUTHY_METADATA = frozenset({"1", "true", "yes", "on"})
 
@@ -71,10 +76,13 @@ def metadata_flag(metadata: dict[str, Any], key: str) -> bool:
         return False
     return str(value).strip().lower() in TRUTHY_METADATA
 
+
 # Labels on beads Alloy files itself. `human` is Beads' own convention, so
 # `bd human list` surfaces needs-human bugs without any Alloy-specific query.
 LABEL_BUG = "alloy-bug"
 LABEL_HUMAN = "human"
+# Labels that mark a bead as human-operated, like META_MANUAL.
+MANUAL_LABELS = frozenset({"manual", "merge-gate"})
 
 CAS_CONFLICT_EXIT = 13
 
@@ -109,6 +117,12 @@ class Bead(BaseModel):
     def check_hint(self) -> str | None:
         value = self.metadata.get(META_TEST_CMD)
         return str(value) if value else None
+
+    @property
+    def manual(self) -> bool:
+        """Human-operated: a `manual`/`merge-gate` label or `alloy_manual` set.
+        Such a bead is never Alloy's to run or land, even with a stray recipe."""
+        return metadata_flag(self.metadata, META_MANUAL) or bool(MANUAL_LABELS.intersection(self.labels))
 
     @property
     def complexity_override(self) -> Complexity | None:

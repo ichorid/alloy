@@ -312,8 +312,9 @@ def cancel(
     root: Optional[Path] = RootOption,
     json: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Stop the run (process included) and return the bead to ready. The
-    worktree is kept."""
+    """Stop the run (process included) and return the bead to ready (a bead
+    closed meanwhile stays closed). The worktree is kept. A run the live
+    scheduler owns is stopped inside the scheduler, which keeps serving."""
     _setup_logging(verbose=not json)
     engine = _engine(repo, root)
     try:
@@ -325,6 +326,76 @@ def cancel(
         _emit({"bead": bead_id, "cancelled": cancelled}, True)
         return
     console.print(f"{'cancelled' if cancelled else 'nothing to cancel for'} {bead_id}")
+
+
+@app.command(name="reconcile")
+def reconcile_command(
+    bead_id: Optional[str] = typer.Argument(None, help="One bead (default: every bead Alloy touched)"),
+    apply: bool = typer.Option(False, "--apply", help="Fix what has a mechanical fix"),
+    repo: Optional[Path] = RepoOption,
+    root: Optional[Path] = RootOption,
+    json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Find beads whose bd status, alloy_* metadata and run ledger disagree
+    (a stuck holder, a closed bead with a live run, stale land state) and,
+    with --apply, put them back in step."""
+    from alloy.reconcile import reconcile
+
+    engine = _engine(repo, root)
+    try:
+        findings = reconcile(engine, [bead_id] if bead_id else None, apply=apply)
+    except (EngineError, bd.BeadsError) as exc:
+        _fail(str(exc))
+        return
+    if json:
+        _emit([finding.as_dict() for finding in findings], True)
+        return
+    if not findings:
+        console.print("everything is in step")
+        return
+    table = Table(show_header=True, header_style="bold")
+    for column in ("bead", "problem", "fix", ""):
+        table.add_column(column)
+    for finding in findings:
+        mark = "[green]fixed[/green]" if finding.applied else ("fixable" if finding.action else "")
+        table.add_row(finding.bead, finding.problem, finding.fix, mark)
+    console.print(table)
+    if not apply and any(finding.action for finding in findings):
+        console.print("re-run with [bold]--apply[/bold] to fix the fixable ones")
+
+
+@app.command(name="assign-recipe")
+def assign_recipe(
+    recipe: str = typer.Argument(..., help="Recipe to assign"),
+    from_recipe: Optional[str] = typer.Option(None, "--from", help="Only beads currently on this recipe"),
+    apply: bool = typer.Option(False, "--apply", help="Write the change (default: show what would change)"),
+    repo: Optional[Path] = RepoOption,
+    root: Optional[Path] = RootOption,
+    json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Retarget open beads that pin another alloy_recipe. `alloy start
+    --recipe` and alloy:default:recipe only reach unassigned beads. Epics and
+    human-operated (manual/merge-gate) beads are never touched."""
+    from alloy.reconcile import recipe_candidates
+
+    engine = _engine(repo, root)
+    try:
+        engine.validate_recipe(recipe)
+        beads = recipe_candidates(engine, recipe, from_recipe=from_recipe)
+        if apply:
+            for bead in beads:
+                engine.beads.set_metadata(bead.id, {bd.META_RECIPE: recipe})
+    except (EngineError, bd.BeadsError) as exc:
+        _fail(str(exc))
+        return
+    rows = [{"bead": b.id, "title": b.title, "from": b.recipe, "to": recipe} for b in beads]
+    if json:
+        _emit({"applied": apply, "beads": rows}, True)
+        return
+    for row in rows:
+        console.print(f"{row['bead']}  {row['from']} -> {row['to']}  {row['title']}")
+    verb = "retargeted" if apply else "would retarget"
+    console.print(f"{verb} {len(rows)} bead(s)" + ("" if apply or not rows else "; add --apply to write"))
 
 
 @app.command()

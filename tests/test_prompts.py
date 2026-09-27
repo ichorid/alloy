@@ -837,6 +837,9 @@ def test_evidence_packet_matches_layer_joined_golden():
     class _Ctx:
         bead = _Bead()
 
+        def task_brief(self) -> str:
+            return self.bead.task_brief()
+
     state = {
         "context": CONTEXT,
         "iteration": 1,
