@@ -412,6 +412,8 @@ class Scheduler:
         for bead in ready:
             if bead.manual:
                 continue  # human-operated: never Alloy's, whatever its recipe says
+            if bead.issue_type == "epic":
+                continue  # tracking only: epics close via _completed_epics, never a run
             if (bead.recipe or self._default_recipe) not in known:
                 continue
             holder = self._dispatch_holder(bead.id)

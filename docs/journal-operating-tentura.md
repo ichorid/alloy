@@ -462,6 +462,36 @@ says what it is waiting for.
 
 ---
 
+## 14. A run's agent process can die silently mid-stage, and the scheduler logs the stall but never auto-recovers -- open
+
+Twice in a row on the same bead (`tentura-3dw`, a genuinely hard client-side
+bug fix), the dispatched agent process vanished mid-run with no error in the
+bead's own logs -- once mid-`implement` after ~90 minutes idle, once mid-land
+`verify` after another ~20 minutes idle. Both times `scheduler.log` printed
+exactly one line (`stalled: run process is gone`) and then went silent
+*indefinitely* -- no automatic re-dispatch, no retry, nothing -- until a human
+noticed the gap between "last log line" and wall-clock time and ran
+`alloy resume`/`alloy land` by hand. `--stall-minutes 30.0` apparently governs
+detection, not recovery. Each time, `alloy reconcile <bead>` correctly named
+the exact problem (`run marked running but its process is gone`) but even
+`--apply` only offers "book it cancelled and reopen" or "adopt it" -- it does
+not do either automatically as part of normal scheduler operation.
+
+Mitigation: when driving Alloy for a task that runs long (a full client test
+suite as the land check, a hard bug needing many iterations), periodically
+diff current wall-clock time against the last `scheduler.log` timestamp, not
+just `alloy status`'s `elapsed`/`stage` fields -- those come from bead
+metadata and stay frozen (looking "still running") long after the actual
+process has died. If the gap is large with no matching log activity, don't
+wait longer -- run `alloy reconcile <bead>` immediately, then
+`alloy resume`/`alloy land`/`alloy run` to reattach. If the bead's real work
+is already committed locally (check `git log` before assuming nothing
+happened), it's often faster to finish the bead by hand (verify, push,
+`bd close`, `alloy reconcile --apply`) than to keep re-dispatching into the
+same stall.
+
+---
+
 ## Summary: what actually costs the most operator time
 
 In order of how much wall-clock time each pattern burned this session:

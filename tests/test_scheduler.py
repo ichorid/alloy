@@ -78,6 +78,40 @@ def test_selection_makes_no_agent_calls(scheduler, beads_project, fake_harnesses
     assert fake_harnesses.calls == []
 
 
+def bd_create_epic(repo: Path, title: str, *, priority: int = 2) -> str:
+    """Create an epic-typed bead and return its id (bd_create only makes tasks)."""
+    proc = subprocess.run(
+        ["bd", "create", title, "-t", "epic", "--silent"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    bead_id = proc.stdout.strip().splitlines()[-1].strip()
+    subprocess.run(
+        ["bd", "update", bead_id, "-p", str(priority)],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return bead_id
+
+
+def test_next_task_never_picks_an_epic_even_when_ready(scheduler, beads_project):
+    """A ready, unblocked epic must never be run directly -- it closes only
+    via `_completed_epics` once every descendant is done (journal-operating-
+    tentura: tentura-0cl.1 was picked and run in place despite its own
+    description saying "Tracking only -- never run with alloy")."""
+    bd_create_epic(beads_project, "tracking epic", priority=0)
+    bd_create(beads_project, "leaf work", priority=3, alloy_recipe="tdd-loop")
+
+    picked = scheduler.next_task()
+
+    assert picked is not None
+    assert picked.title == "leaf work"
+
+
 async def test_a_tick_claims_and_runs_exactly_one_task(scheduler, beads_project, fake_harnesses):
     fake_harnesses.configure(script())
     first = bd_create(beads_project, "first", priority=0, alloy_recipe="tdd-loop")
