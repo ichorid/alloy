@@ -23,6 +23,7 @@ from alloy.runners import RunnerRegistry, RunnerUnavailable
 from alloy.status_display import (
     _role_label,
 )
+from alloy.worktree import WorktreeManager
 
 
 def _recipe_entries(found, paths, repo_path, probe):
@@ -83,9 +84,15 @@ def _recipe_entries(found, paths, repo_path, probe):
             {"runner": spec.runner, "available": registry.available(spec.runner)} for spec in config.consilium.critics
         ]
         entry["limits"] = config.limits.__dict__
+        # No recipe-level target: show what landing would actually resolve
+        # to right now (the checkout's current branch), matching
+        # Engine.build_context -- not a stale hardcoded name.
+        target = config.landing.target
+        if target is None:
+            target = WorktreeManager(repo=repo_path, root=paths.worktrees).current_branch()
         entry["landing"] = {
             "mode": config.landing.mode,
-            "target": config.landing.target,
+            "target": target,
         }
         entries.append(entry)
     return entries, probes

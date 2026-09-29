@@ -257,7 +257,10 @@ class MemorySpec:
 @dataclass(frozen=True)
 class LandingSpec:
     mode: str = "off"
-    target: str = "main"
+    # None: no recipe-level override -- the engine resolves it to whatever
+    # branch the primary checkout is actually on when landing starts, so a
+    # repo that doesn't work off `main` isn't forced onto a hardcoded name.
+    target: str | None = None
 
     @classmethod
     def parse(cls, raw: dict[str, Any] | None) -> "LandingSpec":
@@ -277,7 +280,7 @@ class LandingSpec:
         if mode not in ("off", "auto"):
             raise ConfigError(f"invalid landing.mode: {mode!r}")
         target = raw.get("target", defaults.target)
-        if not isinstance(target, str):
+        if target is not None and not isinstance(target, str):
             raise ConfigError(f"invalid landing.target: {target!r}")
         return cls(mode=mode, target=target)
 

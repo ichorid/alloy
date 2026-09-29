@@ -218,4 +218,6 @@ async def test_land_config_loads_for_harness(project, alloy_home):
     """land_config helper loads the shipped land recipe YAML."""
     config = load_land_config()
     assert config.name == LAND_RECIPE_NAME
-    assert config.landing.target == "main"
+    # No hardcoded target: the engine resolves it from the checkout's
+    # actual branch at land time.
+    assert config.landing.target is None

@@ -264,12 +264,16 @@ def make_harness(
     recipe_name: str = "tdd-loop",
 ) -> Harness:
     bead = bead or make_bead()
+    worktrees = WorktreeManager(repo=project, root=alloy_home / "worktrees")
     if config is None:
         config = load_land_config() if recipe_name == LAND_RECIPE_NAME else load_config()
+        if recipe_name == LAND_RECIPE_NAME and config.landing.target is None:
+            # Mirror Engine.build_context: no recipe-level target means land
+            # on whatever branch the primary checkout is actually on.
+            config = replace(config, landing=replace(config.landing, target=worktrees.current_branch()))
     run_id = run_id or uuid.uuid4().hex
     store = store or Store(alloy_home / "alloy.db")
 
-    worktrees = WorktreeManager(repo=project, root=alloy_home / "worktrees")
     worktree = worktrees.ensure(bead.id)
 
     if store.get_run(run_id) is None:

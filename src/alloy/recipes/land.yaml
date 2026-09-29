@@ -5,7 +5,10 @@ name: land
 # -- never `alloy_recipe` metadata.
 landing:
   mode: auto
-  target: main
+  # No target: the engine resolves it to whatever branch the primary
+  # checkout is on when landing starts. Set an explicit target here only
+  # for a project that must always land on a fixed branch regardless of
+  # what's checked out.
 
 roles:
   verifier:

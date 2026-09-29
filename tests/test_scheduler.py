@@ -1130,6 +1130,37 @@ async def test_scheduler_tick_auto_lands_standalone_tdd_loop_after_success(
     assert _head_parent_count(beads_project) >= 2
 
 
+async def test_scheduler_tick_auto_lands_in_place_bead_on_a_non_main_branch(
+    scheduler,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
+    monkeypatch,
+):
+    """An in-place bead lands on whatever branch is checked out, not main.
+
+    journal-operating-tentura: the land recipe used to hardcode target=main,
+    parking any in-place land attempt on a repo that works off a feature
+    branch with 'primary checkout is on X, expected main' -- even though
+    in-place work already lives on the checked-out branch and there is
+    nothing to merge.
+    """
+    _git(beads_project, "checkout", "-b", "feature/no-main-here")
+    _patch_engine_recipes(monkeypatch, scheduler.engine)
+    fake_harnesses.configure(_auto_land_script())
+    bead_id = bd_create(beads_project, "in place non-main land", alloy_recipe="tdd-loop")
+    primary_before = _head(beads_project)
+
+    assert await scheduler.tick() is True
+
+    bead = scheduler.engine.beads.show(bead_id)
+    assert bead.status == bd.STATUS_DONE
+    assert bead.metadata.get(bd.META_LAND_STATE) == "landed"
+    assert bead.metadata.get(bd.META_LAND_SHA)
+    assert _head(beads_project) != primary_before
+    assert _git(beads_project, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "feature/no-main-here"
+
+
 async def test_scheduler_tick_lands_completed_epic_on_next_tick(
     scheduler,
     beads_project,

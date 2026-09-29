@@ -14,7 +14,7 @@ import os
 import signal
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -295,9 +295,15 @@ class Engine:
             )
 
         owner_id = self._worktree_owner(bead)
-        target = config.landing.target
         worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
         use_worktree = self._use_worktree(bead, owner_id)
+        start_branch = worktrees.current_branch()
+        # No recipe-level override: land on whatever branch the primary
+        # checkout is actually on, not a hardcoded name that only fits repos
+        # working off `main`.
+        target = config.landing.target or start_branch
+        if use_worktree:
+            start_branch = None
         nothing, land_worktree = self._land_plan(bead, owner_id, target, worktrees, use_worktree)
         if nothing:
             return self._close_nothing_to_land(bead_id, owner_id, target, worktrees, use_worktree)
@@ -314,11 +320,13 @@ class Engine:
                 self.beads.unset_metadata(bead_id, [bd.META_RECIPE])
 
         if result.outcome != Outcome.DONE.value:
-            self._settle_failed_land(bead, result, config)
+            self._settle_failed_land(bead, result, target)
 
         # The land run is done; `_settle` has parked the bead at
         # on_success_status (review-ready). Now move the target branch.
-        sha, landed_where = self._merge_owner_into_primary(bead_id, owner_id, target, worktrees, use_worktree)
+        sha, landed_where = self._merge_owner_into_primary(
+            bead_id, owner_id, target, worktrees, use_worktree, start_branch
+        )
 
         self.beads.set_metadata(
             bead_id,
@@ -328,7 +336,8 @@ class Engine:
             },
         )
         self.beads.unset_metadata(bead_id, [bd.META_LAND_ATTEMPTS])
-        self.beads.note(bead_id, f"alloy: landed {landed_where} into {target} as {sha}")
+        destination = target if use_worktree else start_branch
+        self.beads.note(bead_id, f"alloy: landed {landed_where} into {destination} as {sha}")
         self.beads.close(bead_id)
         if use_worktree:
             worktrees.remove(owner_id, force=True, delete_branch=True)
@@ -425,7 +434,7 @@ class Engine:
         log.info("%s: nothing to land from %s; closed", bead_id, where)
         return RunResult(bead_id, "", "landed", reason="nothing to land")
 
-    def _settle_failed_land(self, bead: Bead, result: RunResult, config: RecipeConfig) -> None:
+    def _settle_failed_land(self, bead: Bead, result: RunResult, target: str) -> None:
         """Book a land run that did not finish `done`, then raise.
 
         conflict / red: file (or reuse) a repair bug, mark the bead repairing,
@@ -461,7 +470,7 @@ class Engine:
                     bead,
                     outcome=result.outcome,
                     run_id=result.run_id,
-                    target=config.landing.target,
+                    target=target,
                     snapshot=state,
                     reason=result.reason,
                 )
@@ -482,12 +491,13 @@ class Engine:
         target: str,
         worktrees: WorktreeManager,
         use_worktree: bool,
+        start_branch: str | None,
     ) -> tuple[str, str]:
         """Move the owner's finished work onto `target`; returns (sha, description).
 
         Parks the bead at waiting-human and raises when the primary checkout
-        refuses -- either a real merge conflict, or (in-place) the primary
-        simply isn't on `target`.
+        refuses -- either a real merge conflict, or (in-place) the checkout
+        drifted to a different branch than the one the land run started on.
         """
         if use_worktree:
             branch = branch_name(owner_id)
@@ -497,11 +507,19 @@ class Engine:
             reason = merged.reason
         else:
             # In-place bead: the work already lives on the primary checkout's
-            # current branch, so there is no separate branch to merge.
+            # current branch (whatever that is -- `target` names where a
+            # worktree-based land would merge to, not a branch this mode is
+            # required to match). `_land_plan` already verified the bead's
+            # own base commit is an ancestor of HEAD; the only thing left to
+            # guard against here is the checkout being switched to a
+            # different branch between when the land run started and now.
             current = worktrees.current_branch()
-            if current == target:
-                return worktrees.head(self.repo), "the primary checkout"
-            reason = f"primary checkout is on '{current}', expected '{target}'"
+            if current == start_branch:
+                return worktrees.head(self.repo), f"the primary checkout on {current}"
+            reason = (
+                f"primary checkout drifted from '{start_branch}' to '{current}' "
+                "during the land run"
+            )
 
         self.beads.set_status(bead_id, bd.STATUS_WAITING_HUMAN)
         self.beads.set_metadata(bead_id, {bd.META_LAND_STATE: "parked"})
@@ -694,6 +712,10 @@ class Engine:
     ) -> RunContext:
         config = self.load_config(recipe_name)
         worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
+        if recipe_name == "land" and config.landing.target is None:
+            # No recipe-level override: land on whatever branch the primary
+            # checkout is on, not a hardcoded name (docs/plans/auto-land.md).
+            config = replace(config, landing=replace(config.landing, target=worktrees.current_branch()))
         if worktree is None:
             owner_id = self._worktree_owner(bead)
             if self._use_worktree(bead, owner_id):

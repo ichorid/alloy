@@ -250,36 +250,38 @@ async def test_land_commits_uncommitted_work_before_merging(
 # -- parked when primary checkout is wrong -----------------------------------
 
 
-def test_cli_land_wrong_primary_branch_parks_bead_and_leaves_main_unchanged(
+def test_cli_land_lands_onto_whatever_branch_is_checked_out(
     land_engine,
     beads_project,
     alloy_home,
     fake_harnesses,
 ):
-    """Primary on another branch: non-zero exit, B waiting-human, main untouched."""
+    """No recipe-level target: land merges into the branch checked out when
+    the land run starts, not a hardcoded 'main' -- a repo that works off a
+    feature branch lands there just as well (journal-operating-tentura)."""
     fake_harnesses.configure(_land_script())
-    bead_id = bd_create(beads_project, "park when wrong branch", alloy_recipe="tdd-loop", alloy_use_worktree="true")
+    bead_id = bd_create(beads_project, "lands on checked-out branch", alloy_recipe="tdd-loop", alloy_use_worktree="true")
     worktree = _seed_review_ready(land_engine, beads_project, alloy_home, bead_id)
     _prepare_clean_merge(beads_project, worktree)
 
     _git(beads_project, "checkout", "-b", "other-branch")
-    main_head_before = _head(beads_project)
+    branch_head_before = _head(beads_project)
 
     result = _invoke("land", bead_id, project=beads_project, alloy_home=alloy_home)
 
-    assert result.exit_code != 0
-    assert "main" in (result.stdout + result.stderr).lower()
+    assert result.exit_code == 0
 
     bead = land_engine.beads.show(bead_id)
-    assert bead.status == bd.STATUS_WAITING_HUMAN
-    assert bead.metadata.get("alloy_land_state") == "parked"
-    assert _head(beads_project) == main_head_before
+    assert bead.status == bd.STATUS_DONE
+    assert bead.metadata.get("alloy_land_state") == "landed"
+    assert _head(beads_project) != branch_head_before
+    assert _git(beads_project, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "other-branch"
 
     status = _invoke("status", bead_id, "--json", project=beads_project, alloy_home=alloy_home)
     assert status.exit_code == 0
     row = _status_bead(json.loads(status.stdout), bead_id)
-    assert row["landing"]["state"] == "parked"
-    assert row["landing"]["sha"] in (None, "")
+    assert row["landing"]["state"] == "landed"
+    assert row["landing"]["sha"]
 
 
 # -- validation refusals -----------------------------------------------------
