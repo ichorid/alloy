@@ -556,7 +556,7 @@ class Scheduler:
             if run["status"] != RUN_WAITING_HUMAN or not run.get("retry_at"):
                 continue
             retry_at = _parse_iso(run["retry_at"])
-            if retry_at is not None and retry_at <= now:
+            if retry_at is not None and retry_at <= now and not self._is_epic(run["bead_id"]):
                 return run
         return None
 
@@ -575,10 +575,19 @@ class Scheduler:
             if bead_id not in ready_ids:
                 continue
             bead = self.engine.beads.show(bead_id)
-            if not bead.recipe:
+            if not bead.recipe or bead.issue_type == "epic":
                 continue
             return run
         return None
+
+    def _is_epic(self, bead_id: str) -> bool:
+        """Whether `bead_id` is an epic -- epics are never resumed, only run
+        via `next_task` (which already excludes them) or landed once all
+        their descendants close."""
+        try:
+            return self.engine.beads.show(bead_id).issue_type == "epic"
+        except bd.BeadsError:
+            return False
 
     def _human_resume_instructions(self, bead_id: str) -> str:
         return self.engine.beads.memories().get(f"{HUMAN_RESUME_MEMORY_PREFIX}{bead_id}", "")

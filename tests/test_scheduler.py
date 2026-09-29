@@ -329,6 +329,48 @@ def test_due_human_resume_returns_ready_parked_run_without_retry_at(
     assert due.get("retry_at") is None
 
 
+def test_due_human_resume_never_returns_an_epic(scheduler, beads_project):
+    """A misdirected run against an epic must not be resumed once the bead
+    is reopened -- only `_completed_epics` may touch an epic again (journal-
+    operating-tentura: tentura-0cl.1 was resumed via this path even after
+    the epic-dispatch fix, because it only guarded `next_task`)."""
+    bead_id = bd_create_epic(beads_project, "tracking epic")
+    run_id = "human-resume-epic-1"
+    scheduler.engine.store.create_run(
+        run_id=run_id,
+        bead_id=bead_id,
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=str(beads_project),
+        branch=f"alloy/{bead_id}",
+        log_dir=None,
+    )
+    scheduler.engine.store.update_run(run_id, status="waiting-human", stage="waiting-human")
+    scheduler.engine.beads.set_status(bead_id, bd.STATUS_READY)
+
+    assert scheduler.due_human_resume() is None
+
+
+def test_due_resume_never_returns_an_epic(scheduler, beads_project):
+    bead_id = bd_create_epic(beads_project, "tracking epic")
+    run_id = "timed-resume-epic-1"
+    scheduler.engine.store.create_run(
+        run_id=run_id,
+        bead_id=bead_id,
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=str(beads_project),
+        branch=f"alloy/{bead_id}",
+        log_dir=None,
+    )
+    past = (utcnow() - timedelta(minutes=1)).isoformat()
+    scheduler.engine.store.update_run(run_id, status="waiting-human", stage="waiting-human", retry_at=past)
+
+    assert scheduler.due_resume() is None
+
+
 async def test_scheduler_tick_leaves_parked_run_when_retry_at_is_future(scheduler, beads_project, fake_harnesses):
     """A future retry_at must not be resumed early."""
     fake_harnesses.configure(script(tests=[{"exit": 1, "stderr": SESSION_LIMIT_MSG}]))
