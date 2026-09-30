@@ -280,3 +280,42 @@ def test_cli_land_red_files_repair_bug_acceptance_names_failing_check(
     landed = land_engine.beads.show(bead_id)
     assert landed.metadata.get(bd.META_LAND_STATE) == "repairing"
     assert landed.metadata.get(bd.META_LAND_REPAIR) == bug_id
+
+
+def test_cli_land_red_repair_bug_inherits_landed_beads_recipe(
+    land_engine,
+    beads_project,
+    alloy_home,
+    fake_harnesses,
+):
+    """A land-repair bug uses the landed bead's own recipe, not a hardcoded
+    'tdd-loop' -- an operator-assigned recipe (e.g. tdd-loop-sonnet-no-context)
+    must not be silently overridden for the whole remediation chain it spawns."""
+    fake_harnesses.configure(
+        _land_script(
+            verifier=[
+                verifier_run_entry(FAILING_CHECK, kind="regression"),
+                verifier_stop_entry("should not reach stop after red check"),
+            ],
+        )
+    )
+    bead_id = bd_create(
+        beads_project,
+        "land red repair recipe inheritance",
+        alloy_recipe="tdd-loop-sonnet-no-context",
+        alloy_use_worktree="true",
+    )
+    worktree = _seed_review_ready(land_engine, beads_project, alloy_home, bead_id)
+    _prepare_clean_merge(beads_project, worktree)
+    bugs_before = set(_bug_ids(land_engine.beads))
+
+    result = _invoke("land", bead_id, project=beads_project, alloy_home=alloy_home)
+
+    assert result.exit_code != 0
+    bugs_after = set(_bug_ids(land_engine.beads))
+    new_bugs = bugs_after - bugs_before
+    assert len(new_bugs) == 1
+    bug_id = next(iter(new_bugs))
+
+    bug = land_engine.beads.show(bug_id)
+    assert bug.metadata.get(bd.META_RECIPE) == "tdd-loop-sonnet-no-context"

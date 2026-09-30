@@ -869,7 +869,10 @@ class Engine:
         else:
             raise EngineError(f"cannot file a land repair bug for outcome {outcome!r}")
         metadata = {
-            bd.META_RECIPE: "tdd-loop",
+            # Inherit the landed bead's own recipe (e.g. an operator-assigned
+            # tdd-loop-sonnet-no-context) instead of forcing every land-repair
+            # bug onto tdd-loop regardless of what actually failed.
+            bd.META_RECIPE: landed.recipe or "tdd-loop",
             bd.META_WORKTREE_OWNER: landed.id,
             bd.META_DISCOVERED_IN_RUN: run_id,
         }
