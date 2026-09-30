@@ -116,13 +116,13 @@ def test_builtin_recipe_complex_tier_chain(recipe_name):
     fb1 = complex_.fallback
     assert fb1 is not None
     assert fb1.runner == "claude-write"
-    assert fb1.model == "opus"
+    assert fb1.model == "claude-sonnet-5-5"
     assert fb1.effort is None
 
     fb2 = fb1.fallback
     assert fb2 is not None
-    assert fb2.runner == "astra"
-    assert fb2.model is None
+    assert fb2.runner == "codex"
+    assert fb2.model == "gpt-6.1-sol"
     assert fb2.effort is None
     assert fb2.fallback is None
 

@@ -38,8 +38,8 @@ EXPECTED_PROBE_KEYS = {
     ("codex", "gpt-6.1-sol", "high"),
     ("claude-write", "sonnet", "high"),
     ("cursor", "kimi-k3-high", None),
-    ("claude-write", "opus", None),
-    ("astra", None, None),
+    ("claude-write", "claude-sonnet-5-5", None),
+    ("codex", "gpt-6.1-sol", None),
 }
 
 
@@ -114,7 +114,7 @@ def test_recipes_json_exports_complexity_tiers(project, alloy_home, fake_harness
         "effort": None,
         "available": fake_harnesses.bindir.joinpath("cursor-agent").exists(),
     }
-    assert complex_tier[2]["runner"] == "astra"
+    assert complex_tier[2]["runner"] == "codex"
 
 
 def test_recipes_table_lists_routing_tiers_models_and_effort(project, alloy_home):
@@ -201,7 +201,7 @@ def test_recipes_probe_nonzero_exit_when_codex_missing(project, alloy_home, fake
     assert result.exit_code != 0
     payload = json.loads(result.stdout)
     codex_rows = [row for row in payload["probe"] if row["runner"] == "codex"]
-    assert len(codex_rows) == 2
+    assert len(codex_rows) == 3
     assert all(not row["ok"] for row in codex_rows)
     assert all("not found" in (row.get("error") or "").lower() for row in codex_rows)
 

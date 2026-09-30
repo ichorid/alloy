@@ -28,8 +28,8 @@ complexity:
       - {runner: claude-write, model: sonnet, effort: high}
     complex:
       - {runner: cursor, model: kimi-k3-high}
-      - {runner: claude-write, model: opus}
-      - {runner: astra}
+      - {runner: claude-write, model: claude-sonnet-5-5}
+      - {runner: codex, model: gpt-6.1-sol}
 
 roles:
   harvest:
