@@ -44,7 +44,6 @@ from alloy.models import (
 from alloy.paths import AlloyPaths
 from alloy.procs import read_pid
 from alloy.store import RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN, _pid_alive
-from alloy.worktree import WorktreeManager
 
 DEFAULT_POLL_SECONDS = 15.0
 DEFAULT_STALL_MINUTES = 30.0
@@ -202,7 +201,7 @@ class Scheduler:
             return await self._resume_due(due)
         if await self._memory_maintenance():
             return True
-        if self._auto_land_enabled() and await self._land_ready_work():
+        if await self._close_completed_epics():
             return True
         with self._beads_snapshot():
             bead = self.next_task()
@@ -214,7 +213,7 @@ class Scheduler:
         log.info("picked %s (%s, P%d)", bead.id, bead.title, bead.priority)
         recipe_name = bead.recipe or self._default_recipe
         try:
-            result = await self._run_current(bead.id, recipe_name=recipe_name)
+            await self._run_current(bead.id, recipe_name=recipe_name)
         except asyncio.CancelledError:
             if self._cancel_requested:
                 return False  # the operator stopped this run; serve() exits next
@@ -227,22 +226,7 @@ class Scheduler:
         except Exception:
             log.exception("%s failed", bead.id)
             return True
-        await self._auto_land_after_run(bead, recipe_name, result)
         return True
-
-    async def _auto_land_after_run(self, bead, recipe_name: str, result) -> None:
-        if self._auto_land_enabled() and self._auto_land_due(bead, recipe_name, result):
-            if not self.engine._commit_before_land(bead):
-                log.warning("%s: auto-land skipped; worktree still dirty", bead.id)
-            else:
-                try:
-                    await self.engine.land(bead.id)
-                except asyncio.CancelledError:
-                    raise
-                except EngineError as exc:
-                    log.warning("%s did not land: %s", bead.id, exc)
-                except Exception:
-                    log.exception("%s landing crashed", bead.id)
 
     async def _resume_due(self, record: dict) -> bool:
         """journal 38: the harness said when it would be back; that time has passed."""
@@ -592,61 +576,46 @@ class Scheduler:
     def _human_resume_instructions(self, bead_id: str) -> str:
         return self.engine.beads.memories().get(f"{HUMAN_RESUME_MEMORY_PREFIX}{bead_id}", "")
 
-    # -- auto-land (alloy-vrh.10, docs/plans/auto-land.md) ------------------
+    # -- epic closing ---------------------------------------------------
 
-    def _auto_land_enabled(self) -> bool:
-        """Local opt-out: touch ``<alloy-root>/disable-auto-land`` to skip auto-landing."""
-        return not (self.engine.paths.root / "disable-auto-land").is_file()
-
-    async def _land_ready_work(self) -> bool:
-        """Land work whose time has come, before the next ready pick: completed
-        epics and beads whose landing repair bug just closed. At most one
-        landing per tick, matching the scheduler's concurrency of one; a
-        landing that refuses (conflict, red checks, parked primary) is logged
-        and left for a later tick or a human, never a serve-loop crash."""
+    async def _close_completed_epics(self) -> bool:
+        """Close tracking epics whose descendants have all finished, before
+        the next ready pick. At most one per tick, matching the scheduler's
+        concurrency of one; a close that refuses is logged and left for a
+        later tick or a human, never a serve-loop crash."""
         with self._beads_snapshot():
-            due = self._completed_epics() + self._repaired_beads()
-        for bead_id in due:
-            bead = self.engine.beads.show(bead_id)
-            if bead.status == bd.STATUS_DONE or bead.manual:
-                continue  # closed since the snapshot, or never Alloy's to land
-            if not self.engine._commit_before_land(bead):
-                log.warning("landing %s skipped; worktree still dirty", bead_id)
-                continue
+            due = self._completed_epics()
+        for epic_id in due:
+            epic = self.engine.beads.show(epic_id)
+            if epic.status == bd.STATUS_DONE or epic.manual:
+                continue  # closed since the snapshot, or never Alloy's to close
             try:
-                await self.engine.land(bead_id)
+                self.engine.close_finished_epic(epic_id)
             except EngineError as exc:
-                log.warning("landing %s did not complete: %s", bead_id, exc)
+                log.warning("closing %s did not complete: %s", epic_id, exc)
             except Exception:
-                log.exception("landing %s crashed", bead_id)
+                log.exception("closing %s crashed", epic_id)
             else:
-                log.info("landed %s before picking new work", bead_id)
+                log.info("closed %s before picking new work", epic_id)
                 return True
         return False
 
     def _completed_epics(self) -> list[str]:
-        """Open epics whose descendants have all closed and that Alloy actually
-        ran (manual or empty epics, never touched by a run, are left alone).
-
-        An epic that opted into an isolated worktree (`alloy_use_worktree`) is
-        marked by that worktree's presence; an in-place epic has no worktree,
-        so a descendant carrying `alloy_run_id` is the signal instead."""
-        worktrees = WorktreeManager(repo=self.engine.repo, root=self.engine.paths.worktrees)
+        """Open epics whose descendants have all closed and that Alloy
+        actually ran (manual or empty epics, never touched by a run, are left
+        alone -- a descendant carrying `alloy_run_id` is the signal)."""
         due: list[str] = []
         for bead in self.engine.beads.list_by_status(bd.STATUS_READY):
             if bead.issue_type != "epic" or bead.manual:
                 continue
             if self.engine.beads.open_descendants(bead.id):
                 continue
-            has_worktree = (worktrees.path_for(bead.id) / ".git").exists()
-            if not has_worktree and not self._any_descendant_ran(bead.id):
+            if not self._any_descendant_ran(bead.id):
                 continue
             due.append(bead.id)
         return due
 
     def _any_descendant_ran(self, epic_id: str) -> bool:
-        """Whether any descendant (closed or not) recorded an Alloy run -- the
-        in-place equivalent of "this epic has a worktree"."""
         for child in self.engine.beads.children(epic_id):
             if child.issue_type == "epic":
                 if self._any_descendant_ran(child.id):
@@ -654,37 +623,6 @@ class Scheduler:
             elif child.metadata.get(bd.META_RUN_ID):
                 return True
         return False
-
-    def _repaired_beads(self) -> list[str]:
-        """Review-ready beads in `repairing` whose repair bug is now closed."""
-        due: list[str] = []
-        for bead in self.engine.beads.list_by_status(bd.STATUS_REVIEW_READY):
-            if bead.metadata.get(bd.META_LAND_STATE) != "repairing" or bead.manual:
-                continue
-            bug_id = bead.metadata.get(bd.META_LAND_REPAIR)
-            if not bug_id:
-                continue
-            try:
-                bug = self.engine.beads.show(str(bug_id))
-            except bd.BeadsError:
-                continue
-            if bug.status == bd.STATUS_DONE:
-                due.append(bead.id)
-        return due
-
-    def _auto_land_due(self, bead: bd.Bead, recipe_name: str | None, result: RunResult) -> bool:
-        """True when a just-settled standalone run's recipe opts into auto-landing."""
-        if result.outcome != Outcome.DONE.value or not recipe_name:
-            return False
-        settled = self.engine.beads.show(bead.id)
-        if settled.status != bd.STATUS_REVIEW_READY:
-            return False  # epic children and repair bugs close on success instead
-        try:
-            config = self.engine.load_config(recipe_name)
-        except (ConfigError, KeyError) as exc:
-            log.warning("auto-land check for %s skipped: %s", bead.id, exc)
-            return False
-        return config.landing.mode == "auto"
 
     def _running(self) -> list[dict]:
         return [run for run in self.engine.store.active_runs() if run["status"] == RUN_RUNNING]

@@ -5,8 +5,6 @@ name: tdd-loop-sonnet
 # The tests role is tiered too, and tests_review adds an independent read-only
 # check of the tests before implementation. The verifier stays on cursor.
 
-landing:
-  mode: auto
 
 complexity:
   routing: live  # live selects tiers for tiered roles; shadow would estimate and record only

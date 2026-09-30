@@ -218,38 +218,27 @@ class _OptionalValueCommand(TyperCommand):
         return super().parse_args(ctx, fixed)
 
 
-@app.command()
-def land(
-    bead_id: str = typer.Argument(..., help="Review-ready bead or finished epic to land"),
+@app.command(name="close-epic")
+def close_epic(
+    bead_id: str = typer.Argument(..., help="Tracking epic whose descendants have all closed"),
     repo: Optional[Path] = RepoOption,
     root: Optional[Path] = RootOption,
     json: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Land finished work: run the land recipe, then merge the bead branch
-    into the primary checkout. Parks at waiting-human when the primary
-    checkout refuses the merge."""
+    """Close a tracking epic by hand (the scheduler already does this on its
+    own once every descendant has closed; use this to force it)."""
     _setup_logging(verbose=not json)
     engine = _engine(repo, root)
     try:
-        result = _run_async(engine.land(bead_id))
-    except (EngineError, ConfigError, bd.BeadsError) as exc:
+        result = engine.close_finished_epic(bead_id)
+    except (EngineError, bd.BeadsError) as exc:
         _fail(str(exc))
         return
-    except asyncio.CancelledError:
-        err.print(f"[yellow]interrupted[/yellow] {bead_id}; the bead stays review-ready")
-        raise typer.Exit(130)
-    bead = engine.beads.show(bead_id)
-    payload = {
-        "bead": bead_id,
-        "run_id": result.run_id,
-        "outcome": result.outcome,
-        "reason": result.reason,
-        "landing": _landing_of(bead),
-    }
+    payload = {"bead": bead_id, "outcome": result.outcome, "reason": result.reason}
     if json:
         _emit(payload, True)
         return
-    console.print(f"[green]landed[/green] {bead_id} -- {payload['landing']['sha']}")
+    console.print(f"[green]closed[/green] {bead_id}")
 
 
 @app.command(cls=_OptionalValueCommand)

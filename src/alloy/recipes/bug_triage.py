@@ -134,41 +134,19 @@ def bug_description(report: BugReport, verdict: BugTriage, parent_id: str, run_i
 
 
 def _blocking_triage_result(ctx, state, report, bug_id, entry, verdict, update, notes, _park):
-    if ctx.is_child:
-        # Depth one: a child does not spawn its own child; the
-        # parent parks through this run's outcome.
-        return {
-            **update,
-            "blocking_bug": {**entry, "reason": verdict.reason},
-            **_park(
-                f"blocking bug '{report.title}' ({bug_id}) found inside remediation "
-                f"child {ctx.run_id}: {verdict.reason}. Remediation is one level "
-                "deep, so the bug is filed unclaimed and this run stops.",
-                f"Fix {bug_id} (or merge its fix into this branch), then resume; the implementer continues from there.",
-            ),
-        }
-    estimate = remediation_call_estimate(state)
-    allowed_calls = ctx.agent_call_limit(state) * ctx.budget(state)
-    remaining = allowed_calls - ctx.store.call_count(ctx.run_id)
-    if remaining < estimate:
-        return {
-            **update,
-            "blocking_bug": {**entry, "reason": verdict.reason},
-            **_park(
-                f"agent call headroom too low to start remediation of blocking "
-                f"bug '{report.title}' ({bug_id}): {remaining}/{allowed_calls} "
-                f"calls remain, estimated {estimate:g} needed. Nothing was spent "
-                "on remediation.",
-                f"Fix {bug_id} (or merge its fix into this branch), then resume; "
-                "resuming grants a fresh budget window and the implementer "
-                "continues from there.",
-            ),
-        }
+    """A blocking finding is this same task's own responsibility: fold it into
+    `instructions` and the run's `journal`, then go straight back to
+    `implement` -- no separate bead run, no worktree, no merge. Whatever the
+    final broader check turns up later is folded in the same way."""
+    notes.append(
+        f"Blocking issue found (filed as {bug_id} for the record): {report.title} -- "
+        f"{verdict.reason}. Fixing it is part of this task; continue and make it green."
+    )
     return {
         **update,
-        "triage_route": "remediate",
-        "blocking_bug": {**entry, "reason": verdict.reason},
+        "triage_route": "implement",
         "instructions": "\n".join(notes),
+        "journal": [f"iteration {state.get('iteration', 0)}: blocking issue folded in -- {report.title}"],
     }
 
 

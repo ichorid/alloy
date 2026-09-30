@@ -5,8 +5,18 @@
                                          |          <bug> reports |  red required     |  -> judge --+
                                          |              v        |  check -> guard  repair -> guard; verify_more -> loop
                                          |            triage ----+
-                                         |         (blocking -> remediate; needs-human -> human gate)
+                                         |         (blocking -> folded into instructions, back to implement;
+                                         |          needs-human -> human gate)
                                          +----- synthesize <- critics (parallel)
+
+    guard: done, no final pass yet -> start_final_pass -> verifier_step (once more, broadest check) -> ... -> guard
+    guard: done, final pass already ran green -> finish
+
+Everything runs directly in the primary checkout, on whatever branch is
+already checked out -- no isolated worktree, no separate bead branch, no
+merge. A blocking bug found mid-run, or a red result on the final broader
+pass, is this task's own responsibility: it loops back to `implement` with
+the finding folded into `instructions` and `journal`, never a separate bead.
 
 Two rules shape everything below:
 
@@ -170,7 +180,7 @@ from alloy.recipes.workflow_nodes import _make_node_prove_red as _make_node_prov
 from alloy.recipes.workflow_nodes import (
     _make_node_record_memory_contradictions as _make_node_record_memory_contradictions,
 )
-from alloy.recipes.workflow_nodes import _make_node_remediate as _make_node_remediate
+from alloy.recipes.workflow_nodes import _make_node_start_final_pass as _make_node_start_final_pass
 from alloy.recipes.workflow_nodes import _make_node_remember_calibration as _make_node_remember_calibration
 from alloy.recipes.workflow_nodes import _make_node_remember_check_hints as _make_node_remember_check_hints
 from alloy.recipes.workflow_nodes import _make_node_remember_lesson as _make_node_remember_lesson
@@ -179,7 +189,6 @@ from alloy.recipes.workflow_nodes import _make_node_route as _make_node_route
 from alloy.recipes.workflow_nodes import _make_node_route_after_human as _make_node_route_after_human
 from alloy.recipes.workflow_nodes import _make_node_route_after_implement as _make_node_route_after_implement
 from alloy.recipes.workflow_nodes import _make_node_route_after_prove_red as _make_node_route_after_prove_red
-from alloy.recipes.workflow_nodes import _make_node_route_after_remediate as _make_node_route_after_remediate
 from alloy.recipes.workflow_nodes import _make_node_route_after_review as _make_node_route_after_review
 from alloy.recipes.workflow_nodes import _make_node_route_after_tests as _make_node_route_after_tests
 from alloy.recipes.workflow_nodes import _make_node_route_after_triage as _make_node_route_after_triage
@@ -265,8 +274,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
     _file_bug = _make_node__file_bug(ctx)
     triage = _make_node_triage(ctx, _first_available, _park, _file_bug)
     route_after_triage = _make_node_route_after_triage()
-    remediate = _make_node_remediate(ctx)
-    route_after_remediate = _make_node_route_after_remediate()
+    start_final_pass = _make_node_start_final_pass(ctx)
     guard = _make_node_guard(ctx)
     _dispatch_critics = _make_node__dispatch_critics(ctx)
     critic = _make_node_critic(ctx)
@@ -292,7 +300,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
     graph.add_node("tests_review", review_tests)
     graph.add_node("implement", implement)
     graph.add_node("triage", triage)
-    graph.add_node("remediate", remediate)
+    graph.add_node("start_final_pass", start_final_pass)
     graph.add_node("verifier_step", verify.verifier_step)
     graph.add_node("run_check_step", verify.run_check_step)
     graph.add_node("acceptance_gate", verify.acceptance_gate)
@@ -321,9 +329,9 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
     graph.add_conditional_edges(
         "triage",
         route_after_triage,
-        ["remediate", "human_gate", "implement", "verifier_step"],
+        ["human_gate", "implement", "verifier_step"],
     )
-    graph.add_conditional_edges("remediate", route_after_remediate, ["implement", "human_gate"])
+    graph.add_edge("start_final_pass", "verifier_step")
     graph.add_conditional_edges(
         "verifier_step",
         verify.route_after_verifier,
@@ -340,7 +348,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         ["guard", "verifier_step", "judge"],
     )
     graph.add_edge("judge", "guard")
-    graph.add_conditional_edges("guard", route, ["implement", "critic", "human_gate", "finish"])
+    graph.add_conditional_edges("guard", route, ["implement", "critic", "human_gate", "finish", "start_final_pass"])
     graph.add_edge("critic", "synthesize")
     graph.add_edge("synthesize", "implement")
     graph.add_conditional_edges("human_gate", route_after_human, ["implement", "tests"])
@@ -397,12 +405,12 @@ def initial_state(ctx: RunContext) -> TddState:
         triaged_titles=[],
         filed_bugs=[],
         implementer_stopped=False,
-        blocking_bug=None,
-        remediations=[],
         triage_route=None,
         critiques=[],
         change_summary="",
         budget_extensions=0,
+        journal=[],
+        final_pass=False,
         stage="starting",
         outcome=None,
         outcome_reason="",

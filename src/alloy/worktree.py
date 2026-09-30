@@ -1,27 +1,18 @@
-"""One git worktree per task.
+"""Inspecting and committing in the one primary checkout.
 
-Isolation is structural, not advisory: each bead gets its own checkout on its own
-branch, so two tasks cannot mutate the same files. Worktrees survive failure so a
-human can inspect them, and are only removed on request.
+Every bead runs directly in the primary checkout, on whatever branch is
+already checked out there -- no isolated worktree, no separate bead branch,
+no merge. What is left here is what a run still needs: what changed since its
+own base commit, and committing its work.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-
-from alloy.procs import stop_processes_under
-
-BRANCH_PREFIX = "alloy"
-SETUP_HOOK = Path(".alloy") / "worktree-setup"
-"""Executable, relative to the primary checkout, run inside every freshly
-created worktree (codegen, dependency fetch): a new checkout has none of the
-generated files a long-lived primary checkout has accumulated."""
-SETUP_TIMEOUT_S = 1800
 
 log = logging.getLogger("alloy.worktree")
 
@@ -87,23 +78,6 @@ class Worktree:
         return (self.path / ".git").exists()
 
 
-@dataclass(frozen=True)
-class MergeResult:
-    ok: bool
-    conflict_files: list[str]
-
-
-@dataclass(frozen=True)
-class LandResult:
-    ok: bool
-    sha: str
-    reason: str
-
-
-def branch_name(bead_id: str) -> str:
-    return f"{BRANCH_PREFIX}/{bead_id}"
-
-
 def _git(args: list[str], cwd: Path, *, check: bool = True) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=120)
     if check and proc.returncode != 0:
@@ -120,95 +94,11 @@ class WorktreeManager:
         self.repo = Path(self.repo).resolve()
         self.root = Path(self.root).resolve()
 
-    def path_for(self, bead_id: str) -> Path:
-        return self.root / bead_id
-
-    def ensure(self, bead_id: str, *, base: str = "HEAD") -> Worktree:
-        """Create the worktree, or adopt the existing one when resuming."""
-        path = self.path_for(bead_id)
-        branch = branch_name(bead_id)
-
-        if path.exists() and (path / ".git").exists():
-            self._assert_owned(path, branch)
-            return Worktree(bead_id, path, branch, self._base_of(path, base))
-
-        if path.exists() and any(path.iterdir()):
-            raise WorktreeError(f"{path} exists but is not an Alloy worktree")
-
-        self.root.mkdir(parents=True, exist_ok=True)
-        base_commit = _git(["rev-parse", base], self.repo).stdout.strip()
-
-        if self._branch_exists(branch):
-            _git(["worktree", "add", str(path), branch], self.repo)
-        else:
-            _git(["worktree", "add", "-b", branch, str(path), base_commit], self.repo)
-        self._run_setup_hook(path)
-        return Worktree(bead_id, path, branch, base_commit)
-
-    def _run_setup_hook(self, path: Path) -> None:
-        """Run the project's SETUP_HOOK in a fresh worktree, if it has one.
-
-        A failure is logged, never raised: the run goes ahead and its checks
-        say what is missing, as they would have without the hook."""
-        hook = self.repo / SETUP_HOOK
-        if not hook.is_file():
-            return
-        if not os.access(hook, os.X_OK):
-            log.warning("%s is not executable; skipped for %s", hook, path)
-            return
-        env = {**os.environ, "ALLOY_PRIMARY_CHECKOUT": str(self.repo), "ALLOY_WORKTREE": str(path)}
-        log.info("running %s in %s", SETUP_HOOK, path)
-        try:
-            proc = subprocess.run(
-                [str(hook)],
-                cwd=str(path),
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=SETUP_TIMEOUT_S,
-                stdin=subprocess.DEVNULL,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            log.warning("%s failed in %s: %s", SETUP_HOOK, path, exc)
-            return
-        if proc.returncode != 0:
-            tail = (proc.stdout + proc.stderr).strip()[-2000:]
-            log.warning("%s exited %d in %s:\n%s", SETUP_HOOK, proc.returncode, path, tail)
-
-    def ensure_from(self, bead_id: str, base_commit: str) -> Worktree:
-        """A worktree cut from a specific commit rather than the repo's HEAD --
-        a remediation child starts from its parent's base, not its parent's work."""
-        return self.ensure(bead_id, base=base_commit)
-
-    def remove(self, bead_id: str, *, force: bool = False, delete_branch: bool = False) -> bool:
-        path = self.path_for(bead_id)
-        if not path.exists():
-            return False
-        self.stop_processes(path)
-        args = ["worktree", "remove", str(path)]
-        if force:
-            args.append("--force")
-        proc = _git(args, self.repo, check=False)
-        if proc.returncode != 0:
-            return False
-        if delete_branch:
-            _git(["branch", "-D", branch_name(bead_id)], self.repo, check=False)
-        return True
-
     def stop_processes(self, path: Path) -> list[int]:
-        """Stop what still runs inside an isolated worktree (a dev server an
-        agent left behind). Refuses anything outside `root`: the primary
-        checkout is the operator's, not Alloy's to clean."""
-        path = Path(path).resolve()
-        if path == self.repo or self.root not in path.parents:
-            return []
-        stopped = stop_processes_under(path)
-        if stopped:
-            log.warning("stopped %d process(es) left running in %s: %s", len(stopped), path, stopped)
-        return stopped
-
-    def prune(self) -> None:
-        _git(["worktree", "prune"], self.repo, check=False)
+        """No-op: every run works in the primary checkout now, which the
+        operator may be using alongside Alloy -- never kill processes there.
+        Kept as a call target so callers do not need their own guard."""
+        return []
 
     # -- inspection -------------------------------------------------------
 
@@ -250,17 +140,6 @@ class WorktreeManager:
         """The worktree's current HEAD commit."""
         return self._head(path)
 
-    def commits_ahead(self, branch: str, target: str) -> int | None:
-        """Commits on `branch` that `target` lacks; None when git cannot tell
-        (a missing branch), which callers must not read as "nothing"."""
-        proc = _git(["rev-list", "--count", f"{target}..{branch}"], self.repo, check=False)
-        if proc.returncode != 0:
-            return None
-        try:
-            return int(proc.stdout.strip())
-        except ValueError:
-            return None
-
     def is_ancestor(self, commit: str, of: str) -> bool:
         return _git(["merge-base", "--is-ancestor", commit, of], self.repo, check=False).returncode == 0
 
@@ -278,42 +157,7 @@ class WorktreeManager:
                 result[path] = hashlib.sha256(target.read_bytes()).hexdigest()
         return result
 
-    def changed_paths(
-        self,
-        worktree: Worktree,
-        since_commit: str,
-        *,
-        until: str | None = None,
-        paths: list[str] | None = None,
-    ) -> list[str]:
-        """Paths that differ between `since_commit` and the working tree (or
-        `until`), optionally restricted to `paths`."""
-        args = ["diff", "--name-only", since_commit]
-        if until:
-            args.append(until)
-        if paths:
-            args += ["--", *paths]
-        proc = _git(args, worktree.path, check=False)
-        return [line for line in proc.stdout.splitlines() if line.strip()]
-
-    def added_paths(self, commit: str) -> list[str]:
-        """Paths the commit introduced (relative to its parent)."""
-        proc = _git(
-            [
-                "diff-tree",
-                "--no-commit-id",
-                "--name-only",
-                "-r",
-                "--root",
-                "--diff-filter=A",
-                commit,
-            ],
-            self.repo,
-            check=False,
-        )
-        return [line for line in proc.stdout.splitlines() if line.strip()]
-
-    # -- commits and merges -----------------------------------------------
+    # -- commits ------------------------------------------------------------
 
     def commit_wip(self, worktree: Worktree, message: str) -> str | None:
         """Commit everything in the working tree; None when there is nothing to commit."""
@@ -323,81 +167,8 @@ class WorktreeManager:
         _git(["commit", "-q", "--no-verify", "-m", message], worktree.path)
         return self._head(worktree.path)
 
-    def merge_branch(self, worktree: Worktree, branch: str) -> MergeResult:
-        """Merge `branch` into the worktree's branch; on conflict, abort and
-        leave the tree exactly where it was."""
-        proc = _git(["merge", "--no-edit", branch], worktree.path, check=False)
-        if proc.returncode == 0:
-            return MergeResult(True, [])
-        conflicts = _git(["diff", "--name-only", "--diff-filter=U"], worktree.path, check=False)
-        _git(["merge", "--abort"], worktree.path, check=False)
-        files = [line for line in conflicts.stdout.splitlines() if line.strip()]
-        return MergeResult(False, files)
-
-    def trial_merge(self, worktree: Worktree, target: str) -> MergeResult:
-        """Merge `target` into the worktree's branch with a merge commit; on
-        conflict, abort and leave the tree exactly where it was."""
-        proc = _git(["merge", "--no-ff", "--no-edit", target], worktree.path, check=False)
-        if proc.returncode == 0:
-            return MergeResult(True, [])
-        conflicts = _git(["diff", "--name-only", "--diff-filter=U"], worktree.path, check=False)
-        _git(["merge", "--abort"], worktree.path, check=False)
-        files = [line for line in conflicts.stdout.splitlines() if line.strip()]
-        return MergeResult(False, files)
-
-    def merge_into_primary(self, branch: str, target: str) -> LandResult:
-        """Merge `branch` into the primary checkout on `target`; refuse when
-        the primary is on another branch or git would overwrite local changes."""
-        current = _git(["rev-parse", "--abbrev-ref", "HEAD"], self.repo, check=False).stdout.strip()
-        if current != target:
-            return LandResult(
-                False,
-                "",
-                f"primary checkout is on '{current}', expected '{target}'",
-            )
-        proc = _git(["merge", "--no-ff", "--no-edit", branch], self.repo, check=False)
-        if proc.returncode == 0:
-            sha = _git(["rev-parse", "HEAD"], self.repo, check=False).stdout.strip()
-            return LandResult(True, sha, "")
-        _git(["merge", "--abort"], self.repo, check=False)
-        reason = proc.stderr.strip() or proc.stdout.strip()
-        return LandResult(False, "", reason)
-
     # -- internals --------------------------------------------------------
 
     def _head(self, path: Path) -> str:
         proc = _git(["rev-parse", "HEAD"], path, check=False)
         return proc.stdout.strip()
-
-    def _base_of(self, path: Path, base: str) -> str:
-        """Where the task's changes start when adopting an existing worktree.
-
-        Not the worktree's HEAD: if the operator merged `main` forward into
-        the branch, or an agent committed, HEAD has moved and a diff against
-        it would hide work the judge must see. The merge-base with the
-        repository's `base` (HEAD by default) is the last commit both sides
-        share, so the diff is exactly what this task added.
-        """
-        repo_base = _git(["rev-parse", base], self.repo, check=False).stdout.strip()
-        head = self._head(path)
-        if not repo_base or not head:
-            return head
-        proc = _git(["merge-base", head, repo_base], path, check=False)
-        return proc.stdout.strip() or head
-
-    def _branch_exists(self, branch: str) -> bool:
-        proc = _git(
-            ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
-            self.repo,
-            check=False,
-        )
-        return proc.returncode == 0
-
-    def _assert_owned(self, path: Path, branch: str) -> None:
-        proc = _git(["rev-parse", "--abbrev-ref", "HEAD"], path, check=False)
-        current = proc.stdout.strip()
-        if current and current != branch:
-            raise WorktreeError(
-                f"worktree {path} is on branch '{current}', expected '{branch}'; "
-                "refusing to let two tasks share a checkout"
-            )

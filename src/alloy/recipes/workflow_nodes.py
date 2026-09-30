@@ -532,7 +532,10 @@ def _make_node__file_bug(ctx):
             priority=3 if severity == "non-blocking" else 1,
             labels=labels,
             metadata=metadata,
-            claim=severity == "blocking" and not ctx.is_child,
+            # Nothing ever dispatches a blocking bug separately any more --
+            # it is folded into this same run's instructions/journal -- so
+            # the bead is never claimed, just filed for the record.
+            claim=False,
         )
         if severity == "needs-human":
             ctx.beads.add_dependency(ctx.bead.id, bug_id)
@@ -553,76 +556,6 @@ def _make_node_route_after_triage():
         return state.get("triage_route") or "verifier_step"
 
     return route_after_triage
-
-
-def _make_node_remediate(ctx):
-    async def remediate(state: TddState) -> dict[str, Any]:
-        """Run the blocking bug as a child of this run and merge its fix in here.
-
-        The parent waits at `remediate:<bug-id>` while the child runs. A merged
-        fix sends the parent back to `implement` with an instruction not to
-        undo it; anything else (child parked, failed, aborted, guard or scope
-        gate refused, merge conflict) parks the parent at the human gate."""
-        bug = state.get("blocking_bug") or {}
-        bug_id = str(bug.get("bead_id") or "")
-        ctx.set_stage(f"remediate:{bug_id}", iteration=state.get("iteration", 0))
-        started_at = utcnow().isoformat()
-        try:
-            result = await ctx.remediate(bug_id)
-            outcome = str(getattr(result, "outcome", "") or Outcome.FAILED.value)
-            reason = str(getattr(result, "reason", "") or "")
-            run_id = getattr(result, "run_id", None)
-        except Exception as exc:
-            outcome, reason, run_id = Outcome.FAILED.value, str(exc), None
-        entry = {
-            "bead_id": bug_id,
-            "run_id": run_id,
-            "outcome": outcome,
-            "reason": reason,
-            "started_at": started_at,
-            "ended_at": utcnow().isoformat(),
-        }
-        update: dict[str, Any] = {
-            "stage": "remediate",
-            "remediations": [entry],
-            "blocking_bug": None,
-        }
-        if outcome == Outcome.DONE.value:
-            notes = [state["instructions"]] if state.get("instructions") else []
-            notes.append(
-                f"Bug '{bug.get('title')}' was fixed and merged into this worktree by "
-                f"{bug_id}; do not undo it; continue with the task."
-            )
-            return {**update, "instructions": "\n".join(notes)}
-        if ctx.beads is not None and ctx.recipe.memory.enabled:
-            try:
-                update["memory_regressions"] = {
-                    key: body for key, body in ctx.beads.memories().items() if key.startswith(REGRESSION_KEY_PREFIX)
-                }
-            except Exception:
-                log.warning("could not refresh regression memories", exc_info=True)
-        return {
-            **update,
-            "resume_to": "implement",
-            "decision": JudgeDecision(
-                decision="human",
-                reason=f"remediation of blocking bug {bug_id} '{bug.get('title')}' "
-                f"ended {outcome}: {reason or 'no reason given'}",
-                next_instructions=f"Fix {bug_id} (or merge its fix into this branch), "
-                "then resume; the implementer continues from there.",
-            ).model_dump(),
-        }
-
-    return remediate
-
-
-def _make_node_route_after_remediate():
-    def route_after_remediate(state: TddState) -> str:
-        remediations = state.get("remediations") or []
-        last = remediations[-1] if remediations else {}
-        return "implement" if last.get("outcome") == Outcome.DONE.value else "human_gate"
-
-    return route_after_remediate
 
 
 def _guard_decision(proposed, tests_green, ctx):
@@ -719,7 +652,17 @@ def _make_node_guard(ctx):
             "instructions": decision.next_instructions,
             "decision": decision.model_dump(),
             "retries_on_tier": retries,
+            # A red check found during the final broader pass re-enters the
+            # ordinary retry path right here; resetting the flag means the
+            # next `done` gets its own fresh final pass, not a stale one.
+            "final_pass": False,
         }
+        if state.get("final_pass"):
+            update["journal"] = [
+                f"iteration {iteration}: the final broader check found a problem -- "
+                f"{decision.reason or 'see the last check'}. Fixing it is this task's "
+                "own responsibility; back to implement."
+            ]
         if ctx.recipe.complexity.routing == "live" and retries >= ctx.recipe.complexity.escalate_after_retries:
             previous = state["complexity"]
             level = next_level(previous)
@@ -749,7 +692,11 @@ def _make_node_route(_dispatch_critics):
     def route(state: TddState) -> str | list[Send]:
         decision = (state.get("decision") or {}).get("decision", "retry")
         if decision == "done":
-            return "finish"
+            # A green iteration goes through one more, broader pass before
+            # finishing -- Alloy's replacement for a separate worktree-merge
+            # landing step. Only once that pass has itself come back done
+            # does the run actually finish.
+            return "finish" if state.get("final_pass") else "start_final_pass"
         if decision == "abort":
             return "finish"
         if decision == "human":
@@ -759,6 +706,32 @@ def _make_node_route(_dispatch_critics):
         return "implement"
 
     return route
+
+
+def _make_node_start_final_pass(ctx):
+    def start_final_pass(state: TddState) -> dict[str, Any]:
+        """Send a green run through the verify loop once more, asking for the
+        broadest check available, in place of a separate landing step. Reuses
+        the same verifier/run_check/acceptance/judge/guard nodes as any other
+        iteration -- a red result there is just an ordinary retry."""
+        iteration = state.get("iteration", 0)
+        ctx.set_stage("final-pass", iteration=iteration)
+        return {
+            "stage": "final-pass",
+            "final_pass": True,
+            "instructions": (
+                "Every check has passed. Before this task finishes, propose the "
+                "broadest, most complete regression check available for this "
+                "change (the full test suite or the closest practical "
+                "equivalent), then verify it is green."
+            ),
+            "journal": [f"iteration {iteration}: starting the final broader check"],
+            "verifier_stop": None,
+            "pending_check": None,
+            "verify_route": None,
+        }
+
+    return start_final_pass
 
 
 def _make_node__dispatch_critics(ctx):

@@ -14,7 +14,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Mapping
+from typing import Any, Mapping
 
 from alloy.beads import META_COMPLEXITY_ESTIMATED, META_STAGE, Bead, BeadsClient
 from alloy.config import RecipeConfig, RoleSpec, resolve_max_agent_calls
@@ -53,10 +53,8 @@ class RunContext:
     checkpointer: Any
     log_dir: Path
     beads: BeadsClient | None = None
-    # Bound by the engine (Engine.run_child); recipes never import the engine.
-    remediator: Callable[[str], Awaitable[Any]] | None = None
     checkout_note: str = ""
-    """Set by the engine for in-place runs; see `task_brief`."""
+    """Set by the engine; see `task_brief`."""
     started_monotonic: float = field(default_factory=time.monotonic)
     _stage: str = "starting"
     _iteration: int = 0
@@ -219,20 +217,6 @@ class RunContext:
             f" -- {result.error[:200]}" if result.error else "",
         )
         return result
-
-    # -- remediation ------------------------------------------------------
-
-    @property
-    def is_child(self) -> bool:
-        """True when this run is itself a remediation child (depth one)."""
-        record = self.store.get_run(self.run_id)
-        return bool(record and record.get("parent_run_id"))
-
-    async def remediate(self, bug_bead_id: str) -> Any:
-        """Run a bug bead as a child of this run and merge its fix in here."""
-        if self.remediator is None:
-            raise RuntimeError("no remediator bound")
-        return await self.remediator(bug_bead_id)
 
     # -- project memory ---------------------------------------------------
 

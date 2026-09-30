@@ -5,8 +5,6 @@ name: tdd-loop-sonnet-no-context
 # build_graph(..., skip_context=True) in recipes/tdd_loop.py). There is no
 # "context" role here on purpose -- nothing ever calls it.
 
-landing:
-  mode: auto
 
 complexity:
   routing: live  # live selects tiers for tiered roles; shadow would estimate and record only

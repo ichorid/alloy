@@ -1,7 +1,5 @@
 name: tdd-loop
 
-landing:
-  mode: auto
 
 complexity:
   routing: live  # live selects tiers for tiered roles; shadow would estimate and record only

@@ -54,16 +54,27 @@ class TddState(TypedDict, total=False):
     triaged_titles: list[str]  # reports the triage role has labelled
     filed_bugs: list[dict[str, Any]]  # {bead_id, title, where, severity}
     implementer_stopped: bool  # the last implement call reported blocks_task yes
-    blocking_bug: dict[str, Any] | None  # the bug currently routed to remediate
-    remediations: Annotated[list[dict[str, Any]], operator.add]  # {bead_id, outcome}, by remediate
     triage_route: str | None  # where the last triage sent the run
     critiques: Annotated[list[dict[str, Any]], reset_or_extend]
     budget_extensions: int
+    journal: Annotated[list[str], operator.add]
+    """Short entries this run appends for itself: a blocking bug folded into
+    `instructions` instead of spawning a child, or a final broader check that
+    came back red. `implement` sees the running history, not just the latest
+    instruction -- the bead is self-contained and may take several such
+    cycles, since anything a later check finds is a direct result of its own
+    diff."""
+    final_pass: bool
+    """True once the normal verify loop said done and Alloy sent the run back
+    through the verify loop one more time asking for the broadest check
+    available, in place of a separate worktree-merge landing step. A red
+    result here re-enters the ordinary retry path just like any other red
+    check; `final_pass` resets to False so the next `done` gets its own
+    final pass."""
 
     stage: str
     outcome: str | None
     outcome_reason: str
-    conflict_files: list[str]  # land: paths the trial merge conflicted on
     limit_hit: str | None
     human_note: str
     implement_unavailable: bool  # implement's whole fallback chain was unavailable

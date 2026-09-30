@@ -10,7 +10,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Any, Callable, NamedTuple
 
-from alloy.recipes import land, tdd_loop
+from alloy.recipes import tdd_loop
 
 
 class Recipe(NamedTuple):
@@ -44,13 +44,6 @@ REGISTRY: dict[str, Recipe] = {
         build_graph=partial(tdd_loop.build_graph, skip_context=True),
         initial_state=tdd_loop.initial_state,
         description="tdd-loop-sonnet with the context-gathering phase removed: estimate runs first, straight off START",
-    ),
-    "land": Recipe(
-        name="land",
-        build_graph=land.build_graph,
-        initial_state=land.initial_state,
-        description="Trial-merge the target into the bead branch, then verify and judge "
-        "the merged tree (done / conflict / red)",
     ),
 }
 
