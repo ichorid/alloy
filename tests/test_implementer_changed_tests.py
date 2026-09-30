@@ -28,7 +28,7 @@ from support import make_harness
 
 from alloy.models import Attempt
 from alloy.recipes.tdd_loop import judge_prompt
-from alloy.worktree import WorktreeManager
+from alloy.worktree import Worktree, WorktreeManager
 
 FULL_SUITE = f"{sys.executable} -m pytest -q"
 IMPLEMENTER_TESTS_HEADING = "## Tests changed by the implementer"
@@ -84,7 +84,7 @@ def _escalate_to_judge_script(**overrides):
 
 def test_worktree_manager_fingerprints_sha256_of_file_contents(project, tmp_path):
     manager = WorktreeManager(repo=project, root=tmp_path / "worktrees")
-    worktree = manager.ensure("bd-1")
+    worktree = Worktree("bd-1", project, "", manager.head(project))
     target = worktree.path / SLUGIFY_TEST
     target.parent.mkdir(parents=True, exist_ok=True)
     content = "def test_marker():\n    assert True\n"

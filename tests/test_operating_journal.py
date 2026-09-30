@@ -16,7 +16,7 @@ from support import make_bead
 
 from alloy import beads as bd
 from alloy.config import MemorySpec
-from alloy.engine import MAX_LAND_ATTEMPTS, Engine, EngineError, RunResult
+from alloy.engine import Engine, EngineError
 from alloy.models import (
     PINNED_CHECK_HINTS_KEY,
     AcceptanceVerdict,
@@ -35,7 +35,7 @@ from alloy.reconcile import recipe_candidates, reconcile
 from alloy.runtime import RunContext
 from alloy.scheduler import RunCancelled, Scheduler
 from alloy.verify import noop_reason, run_check
-from alloy.worktree import SETUP_HOOK, WorktreeManager
+from alloy.worktree import WorktreeManager
 
 
 @pytest.fixture
@@ -137,92 +137,10 @@ def test_an_epic_whose_children_all_closed_is_not_run_as_a_task(engine, beads_pr
     assert scheduler.next_task() is None
 
 
-async def test_manual_beads_are_refused_by_run_and_land(engine, beads_project):
+async def test_manual_beads_are_refused_by_run(engine, beads_project):
     bead_id = bd_create(beads_project, "gate", alloy_recipe="tdd-loop", alloy_manual="true")
     with pytest.raises(EngineError, match="human-operated"):
         await engine.run(bead_id)
-    engine.beads.set_status(bead_id, bd.STATUS_REVIEW_READY)
-    with pytest.raises(EngineError, match="human-operated"):
-        await engine.land(bead_id)
-
-
-# -- 2: landing never reopens closed work nor loops forever ------------------
-
-
-async def test_land_refuses_a_closed_bead(engine, beads_project):
-    bead_id = bd_create(beads_project, "done already", alloy_recipe="tdd-loop")
-    engine.beads.close(bead_id)
-    with pytest.raises(EngineError, match="already closed"):
-        await engine.land(bead_id)
-
-
-async def test_a_branch_with_nothing_to_land_is_closed_without_a_land_run(engine, beads_project, alloy_home):
-    bead_id = bd_create(beads_project, "empty branch", alloy_recipe="tdd-loop", alloy_use_worktree="true")
-    engine.beads.claim(bead_id)
-    engine.beads.set_status(bead_id, bd.STATUS_REVIEW_READY)
-    WorktreeManager(repo=beads_project, root=engine.paths.worktrees).ensure(bead_id)
-
-    result = await engine.land(bead_id)
-
-    assert result.outcome == "landed" and result.reason == "nothing to land"
-    bead = engine.beads.show(bead_id)
-    assert bead.status == bd.STATUS_DONE
-    assert engine.store.latest_run_for_bead(bead_id) is None  # no land run was paid for
-
-
-async def test_an_in_place_bead_lands_against_the_base_its_run_recorded(engine, beads_project, monkeypatch):
-    bead_id = bd_create(beads_project, "in place", alloy_recipe="tdd-loop")
-    engine.beads.claim(bead_id)
-    engine.beads.set_status(bead_id, bd.STATUS_REVIEW_READY)
-    worktrees = WorktreeManager(repo=beads_project, root=engine.paths.worktrees)
-    base = worktrees.head(beads_project)
-    _run_record(engine, bead_id, "work", status="done")
-    with engine.store.connect() as conn:
-        conn.execute("UPDATE runs SET base_commit = ? WHERE run_id = 'work'", (base,))
-    (beads_project / "feature.txt").write_text("work\n", encoding="utf-8")
-    subprocess.run(["git", "add", "feature.txt"], cwd=beads_project, check=True)
-    subprocess.run(["git", "commit", "-qm", "work"], cwd=beads_project, check=True)
-
-    seen: dict = {}
-
-    async def fake_execute(bead, recipe_name, *, run_id, resume_payload, worktree=None, **_):
-        seen["worktree"] = worktree
-        return RunResult(bead.id, "land-run", "done", reason="green")
-
-    monkeypatch.setattr(engine, "_execute", fake_execute)
-    result = await engine.land(bead_id)
-
-    assert result.outcome == "landed"
-    assert seen["worktree"].base_commit == base  # the judge sees the bead's diff, not an empty one
-
-
-def test_a_failed_land_does_not_reopen_a_bead_closed_meanwhile(engine, beads_project):
-    bead_id = bd_create(beads_project, "closed during land", alloy_recipe="tdd-loop")
-    bead = engine.beads.show(bead_id)
-    engine.beads.close(bead_id)
-    config = engine.validate_recipe("land")
-    with pytest.raises(EngineError):
-        engine._settle_failed_land(bead, RunResult(bead_id, "r", "red", reason="empty diff"), config)
-    assert engine.beads.show(bead_id).status == bd.STATUS_DONE
-
-
-def test_repeated_land_failures_park_for_a_human_instead_of_filing_more_bugs(engine, beads_project):
-    bead_id = bd_create(
-        beads_project,
-        "keeps failing",
-        alloy_recipe="tdd-loop",
-        **{bd.META_LAND_ATTEMPTS: MAX_LAND_ATTEMPTS - 1},
-    )
-    engine.beads.claim(bead_id)
-    engine.beads.set_status(bead_id, bd.STATUS_REVIEW_READY)
-    bead = engine.beads.show(bead_id)
-    config = engine.validate_recipe("land")
-    with pytest.raises(EngineError, match="parked after"):
-        engine._settle_failed_land(bead, RunResult(bead_id, "r", "red", reason="empty diff"), config)
-    parked = engine.beads.show(bead_id)
-    assert parked.status == bd.STATUS_WAITING_HUMAN
-    assert parked.metadata.get(bd.META_LAND_STATE) == "parked"
-    assert not parked.metadata.get(bd.META_LAND_REPAIR)
 
 
 # -- 4/5: assign-recipe retargets pinned beads, never epics or gates ---------
@@ -401,13 +319,3 @@ def test_processes_left_in_a_worktree_are_stopped(tmp_path, project):
             server.kill()
 
 
-# -- 12: a fresh worktree runs the project's setup hook ----------------------
-
-
-def test_a_fresh_worktree_runs_the_setup_hook(tmp_path, project):
-    hook = project / SETUP_HOOK
-    hook.parent.mkdir(parents=True, exist_ok=True)
-    hook.write_text('#!/bin/sh\necho "$ALLOY_PRIMARY_CHECKOUT" > generated.txt\n', encoding="utf-8")
-    hook.chmod(0o755)
-    worktree = WorktreeManager(repo=project, root=tmp_path / "worktrees").ensure("b-1")
-    assert (worktree.path / "generated.txt").read_text(encoding="utf-8").strip() == str(project.resolve())

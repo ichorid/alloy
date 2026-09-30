@@ -25,16 +25,14 @@ from conftest import (
     verifier_stop_entry,
     write_tests_entry,
 )
-from support import await_role, load_config, load_land_config
+from support import await_role, load_config
 
 from alloy import beads as bd
-from alloy.config import LandingSpec
 from alloy.engine import Engine, EngineError
 from alloy.memory_embed import BEGIN_MARKER
 from alloy.models import EMBED_KEY, LAST_REVIEW_KEY, MEMORY_REVIEW_LABEL, utcnow
 from alloy.scheduler import Scheduler, read_pid
 from alloy.store import RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN
-from alloy.worktree import Worktree, WorktreeManager, branch_name
 
 
 def script(**overrides):
@@ -171,9 +169,12 @@ async def test_recover_adopts_runs_whose_process_died(scheduler, beads_project, 
     recovered = await scheduler.recover()
 
     assert recovered == [bead_id]
-    assert engine.beads.show(bead_id).status == bd.STATUS_REVIEW_READY
+    assert engine.beads.show(bead_id).status == bd.STATUS_DONE
     assert [call["role"] for call in fake_harnesses.calls] == [
         "implement",
+        "verifier",
+        "acceptance",
+        "judge",
         "verifier",
         "acceptance",
         "judge",
@@ -297,7 +298,7 @@ async def test_scheduler_tick_auto_resumes_when_retry_at_is_past(scheduler, bead
     tests_calls_before = len(fake_harnesses.calls_for("tests"))
     assert await scheduler.tick() is True
 
-    assert scheduler.engine.beads.show(bead_id).status == bd.STATUS_REVIEW_READY
+    assert scheduler.engine.beads.show(bead_id).status == bd.STATUS_DONE
     record = scheduler.engine.store.get_run(paused.run_id)
     assert record["status"] == "done"
     assert record.get("retry_at") is None
@@ -418,6 +419,18 @@ def _configure_memory_reviewer(fake_harnesses) -> None:
 def _seed_embed_memory(engine: Engine) -> None:
     engine.beads.remember(EMBED_KEY, json.dumps(["conv"]))
     engine.beads.remember("conv", "repo uses pathlib")
+
+
+def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+    )
+    if check and proc.returncode != 0:
+        raise AssertionError(f"git {' '.join(args)}: {proc.stderr.strip()}")
+    return proc
 
 
 def _commit_agents(repo: Path) -> Path:
@@ -998,348 +1011,6 @@ def test_next_task_skips_epic_children_when_sibling_has_failed_run_with_dirty_wo
     assert picked is not None
     assert picked.id == standalone
     assert picked.id not in {child_x, child_y}
-
-
-# -- scheduler auto-land (alloy-vrh.10) -----------------------------------
-
-
-FULL_SUITE = f"{sys.executable} -m pytest -q"
-
-
-def _patch_engine_recipes(
-    monkeypatch: pytest.MonkeyPatch,
-    engine: Engine,
-    *,
-    landing_off: bool = False,
-) -> None:
-    def load(name: str):
-        if name == "land":
-            return load_land_config()
-        config = load_config()
-        if landing_off:
-            config = replace(config, landing=LandingSpec(mode="off", target="main"))
-        return config
-
-    monkeypatch.setattr(engine, "load_config", load)
-
-
-def _land_harness_entries(**overrides):
-    base = {
-        "verifier": [
-            verifier_run_entry(FULL_SUITE, kind="regression"),
-            verifier_stop_entry("regression suite green on merged tree"),
-        ],
-        "acceptance": [acceptance_entry("accept", confidence=0.9)],
-        "judge": [judge_entry("done")],
-    }
-    base.update(overrides)
-    return base
-
-
-def _auto_land_script(**overrides):
-    combined = script(**overrides)
-    combined.update(_land_harness_entries())
-    return combined
-
-
-def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    proc = subprocess.run(
-        ["git", *args],
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if check and proc.returncode != 0:
-        raise AssertionError(f"git {' '.join(args)}: {proc.stderr.strip()}")
-    return proc
-
-
-def _head(cwd: Path) -> str:
-    return _git(cwd, "rev-parse", "HEAD").stdout.strip()
-
-
-def _head_parent_count(cwd: Path) -> int:
-    parts = _git(cwd, "rev-list", "--parents", "-n", "1", "HEAD").stdout.strip().split()
-    return len(parts) - 1
-
-
-def _advance_main(repo: Path) -> str:
-    marker = repo / "main-advance.txt"
-    marker.write_text("main-only\n", encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "advance main for landing")
-    return _head(repo)
-
-
-def _prepare_merge_conflict(
-    project: Path,
-    worktree: Worktree,
-    conflict_path: str = "mypkg/__init__.py",
-) -> str:
-    (worktree.path / conflict_path).write_text("bead = 1\n", encoding="utf-8")
-    _git(worktree.path, "add", "-A")
-    _git(worktree.path, "commit", "-m", "bead change")
-    (project / conflict_path).write_text("main = 2\n", encoding="utf-8")
-    _git(project, "add", "-A")
-    _git(project, "commit", "-m", "main change")
-    return _head(worktree.path)
-
-
-def _seed_review_ready(
-    engine: Engine,
-    beads_project: Path,
-    alloy_home: Path,
-    bead_id: str,
-) -> Worktree:
-    engine.beads.claim(bead_id)
-    engine.beads.set_status(bead_id, bd.STATUS_REVIEW_READY)
-    worktrees = WorktreeManager(repo=beads_project, root=alloy_home / "worktrees")
-    worktree = worktrees.ensure(bead_id)
-    engine.beads.set_metadata(
-        bead_id,
-        {
-            bd.META_WORKTREE: str(worktree.path),
-            bd.META_BRANCH: branch_name(bead_id),
-        },
-    )
-    return worktree
-
-
-async def test_scheduler_tick_auto_lands_standalone_tdd_loop_after_success(
-    scheduler,
-    beads_project,
-    alloy_home,
-    fake_harnesses,
-    monkeypatch,
-):
-    """Standalone bead with landing.mode auto closes with a merge commit on main after one tick."""
-    _patch_engine_recipes(monkeypatch, scheduler.engine)
-    fake_harnesses.configure(_auto_land_script())
-    bead_id = bd_create(beads_project, "standalone auto land", alloy_recipe="tdd-loop", alloy_use_worktree="true")
-    primary_before = _head(beads_project)
-    _advance_main(beads_project)
-
-    assert await scheduler.tick() is True
-
-    bead = scheduler.engine.beads.show(bead_id)
-    assert bead.status == bd.STATUS_DONE
-    assert bead.metadata.get(bd.META_LAND_STATE) == "landed"
-    assert bead.metadata.get(bd.META_LAND_SHA)
-    assert _head(beads_project) != primary_before
-    assert _head_parent_count(beads_project) >= 2
-
-
-async def test_scheduler_tick_auto_lands_in_place_bead_on_a_non_main_branch(
-    scheduler,
-    beads_project,
-    alloy_home,
-    fake_harnesses,
-    monkeypatch,
-):
-    """An in-place bead lands on whatever branch is checked out, not main.
-
-    journal-operating-tentura: the land recipe used to hardcode target=main,
-    parking any in-place land attempt on a repo that works off a feature
-    branch with 'primary checkout is on X, expected main' -- even though
-    in-place work already lives on the checked-out branch and there is
-    nothing to merge.
-    """
-    _git(beads_project, "checkout", "-b", "feature/no-main-here")
-    _patch_engine_recipes(monkeypatch, scheduler.engine)
-    fake_harnesses.configure(_auto_land_script())
-    bead_id = bd_create(beads_project, "in place non-main land", alloy_recipe="tdd-loop")
-    primary_before = _head(beads_project)
-
-    assert await scheduler.tick() is True
-
-    bead = scheduler.engine.beads.show(bead_id)
-    assert bead.status == bd.STATUS_DONE
-    assert bead.metadata.get(bd.META_LAND_STATE) == "landed"
-    assert bead.metadata.get(bd.META_LAND_SHA)
-    assert _head(beads_project) != primary_before
-    assert _git(beads_project, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "feature/no-main-here"
-
-
-async def test_scheduler_tick_lands_completed_epic_on_next_tick(
-    scheduler,
-    beads_project,
-    alloy_home,
-    fake_harnesses,
-    monkeypatch,
-):
-    """When an epic's last child closes, the next tick lands the epic into main."""
-    _patch_engine_recipes(monkeypatch, scheduler.engine)
-    fake_harnesses.configure(script())
-    epic_id = _create_epic(beads_project, "auto land epic")
-    scheduler.engine.beads.set_metadata(epic_id, {bd.META_USE_WORKTREE: "true"})
-    child_id = _create_epic_child(
-        beads_project,
-        "only epic child",
-        epic_id,
-        priority=0,
-        alloy_recipe="tdd-loop",
-    )
-
-    await scheduler.engine.run(child_id)
-    assert scheduler.engine.beads.show(child_id).status == bd.STATUS_DONE
-    assert scheduler.engine.beads.show(epic_id).status != bd.STATUS_DONE
-
-    primary_before = _head(beads_project)
-    _advance_main(beads_project)
-    epic_tip = _head(alloy_home / "worktrees" / epic_id)
-    fake_harnesses.reset_calls()
-    fake_harnesses.configure(_land_harness_entries())
-    assert await scheduler.tick() is True
-
-    epic = scheduler.engine.beads.show(epic_id)
-    assert epic.status == bd.STATUS_DONE
-    assert epic.metadata.get(bd.META_LAND_STATE) == "landed"
-    assert _head(beads_project) != primary_before
-    assert _head_parent_count(beads_project) >= 2
-    merge_parents = (
-        _git(
-            beads_project,
-            "rev-list",
-            "--parents",
-            "-n",
-            "1",
-            "HEAD",
-        )
-        .stdout.strip()
-        .split()[1:]
-    )
-    # The merge's second parent is the trial-merge commit the land recipe
-    # verified on alloy/E -- the branch itself is deleted after landing
-    # (docs/plans/auto-land.md), so the epic's own tip arrives as that
-    # commit's parent, not as a branch name (same pattern as test_cli_land.py).
-    trial_merge_parents = (
-        _git(
-            beads_project,
-            "rev-list",
-            "--parents",
-            "-n",
-            "1",
-            merge_parents[1],
-        )
-        .stdout.strip()
-        .split()[1:]
-    )
-    assert epic_tip in trial_merge_parents
-
-
-async def test_scheduler_tick_relands_bead_in_repairing_when_repair_bug_closed(
-    scheduler,
-    beads_project,
-    alloy_home,
-    fake_harnesses,
-    monkeypatch,
-):
-    """A review-ready bead in repairing state is re-landed once its repair bug closes."""
-    _patch_engine_recipes(monkeypatch, scheduler.engine)
-    fake_harnesses.configure(_land_harness_entries())
-    conflict_path = "mypkg/__init__.py"
-    bead_id = bd_create(beads_project, "repair retry auto land", alloy_recipe="tdd-loop", alloy_use_worktree="true")
-    worktree = _seed_review_ready(scheduler.engine, beads_project, alloy_home, bead_id)
-    primary_before = _head(beads_project)
-    _prepare_merge_conflict(beads_project, worktree, conflict_path)
-
-    with pytest.raises(EngineError):
-        await scheduler.engine.land(bead_id)
-
-    landed = scheduler.engine.beads.show(bead_id)
-    assert landed.status == bd.STATUS_REVIEW_READY
-    assert landed.metadata.get(bd.META_LAND_STATE) == "repairing"
-    bug_id = landed.metadata.get(bd.META_LAND_REPAIR)
-    assert bug_id
-
-    # Simulate the repair bug's work the way its acceptance criterion demands:
-    # merge main into the branch and resolve the conflict, leaving a green
-    # suite on the merged tree (a bare commit without the merge would conflict
-    # again at trial-merge time, and without a test file pytest exits 5).
-    _git(worktree.path, "merge", "--no-edit", "main", check=False)
-    (worktree.path / conflict_path).write_text("resolved = 1\n", encoding="utf-8")
-    (worktree.path / "tests").mkdir(exist_ok=True)
-    (worktree.path / "tests" / "test_placeholder.py").write_text(
-        "def test_placeholder():\n    assert True\n",
-        encoding="utf-8",
-    )
-    _git(worktree.path, "add", "-A")
-    _git(worktree.path, "commit", "-m", "resolve landing conflict")
-    scheduler.engine.beads.set_status(bug_id, bd.STATUS_DONE)
-
-    fake_harnesses.reset_calls()
-    fake_harnesses.configure(_land_harness_entries())
-    assert await scheduler.tick() is True
-
-    bead = scheduler.engine.beads.show(bead_id)
-    assert bead.status == bd.STATUS_DONE
-    assert bead.metadata.get(bd.META_LAND_STATE) == "landed"
-    assert _head(beads_project) != primary_before
-
-
-async def test_scheduler_tick_leaves_landing_off_bead_review_ready(
-    scheduler,
-    beads_project,
-    fake_harnesses,
-    monkeypatch,
-):
-    """A bead whose finished recipe has landing.mode off stays review-ready; main unchanged."""
-    import inspect
-
-    from alloy.scheduler import Scheduler as SchedulerClass
-
-    assert "_run_picked" in inspect.getsource(SchedulerClass.tick)
-    assert "_auto_land_after_run" in inspect.getsource(SchedulerClass._run_picked)
-    assert ".land(" in inspect.getsource(SchedulerClass._auto_land_after_run)
-    _patch_engine_recipes(monkeypatch, scheduler.engine, landing_off=True)
-    land_calls: list[str] = []
-    original_land = scheduler.engine.land
-
-    async def track_land(bead_id: str):
-        land_calls.append(bead_id)
-        return await original_land(bead_id)
-
-    monkeypatch.setattr(scheduler.engine, "land", track_land)
-    fake_harnesses.configure(script())
-    bead_id = bd_create(beads_project, "no auto land", alloy_recipe="tdd-loop")
-    primary_before = _head(beads_project)
-
-    assert await scheduler.tick() is True
-
-    bead = scheduler.engine.beads.show(bead_id)
-    assert bead.status == bd.STATUS_REVIEW_READY
-    assert bead.metadata.get(bd.META_LAND_STATE) in (None, "")
-    assert land_calls == []
-    assert _head(beads_project) == primary_before
-
-
-async def test_scheduler_auto_land_disabled_by_root_flag_file(
-    scheduler,
-    beads_project,
-    fake_harnesses,
-    monkeypatch,
-):
-    """``<alloy-root>/disable-auto-land`` skips auto-landing even when mode is auto."""
-    _patch_engine_recipes(monkeypatch, scheduler.engine, landing_off=False)
-    disable = scheduler.engine.paths.root / "disable-auto-land"
-    disable.write_text("", encoding="utf-8")
-    land_calls: list[str] = []
-    original_land = scheduler.engine.land
-
-    async def track_land(bead_id: str):
-        land_calls.append(bead_id)
-        return await original_land(bead_id)
-
-    monkeypatch.setattr(scheduler.engine, "land", track_land)
-    fake_harnesses.configure(script())
-    bead_id = bd_create(beads_project, "flag disables auto land", alloy_recipe="tdd-loop")
-
-    assert await scheduler.tick() is True
-
-    assert scheduler.engine.beads.show(bead_id).status == bd.STATUS_REVIEW_READY
-    assert land_calls == []
-    disable.unlink(missing_ok=True)
 
 
 # -- strict top-level serialization ------------------------------------------

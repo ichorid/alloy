@@ -218,14 +218,6 @@ async def test_a_handled_runner_unavailable_still_finishes_the_call_and_leaves_n
     assert len(ctx.store.agent_calls(ctx.run_id)) == 1
 
 
-async def test_remediate_without_bound_remediator_raises(ctx_factory):
-    ctx = ctx_factory(_StaticRegistry(FailingRunner(RuntimeError("unused"))))
-    assert getattr(ctx, "remediator", None) is None
-
-    with pytest.raises(RuntimeError, match="no remediator bound"):
-        await ctx.remediate("bug-bead-id")
-
-
 async def test_check_limits_counts_only_parent_own_agent_calls(ctx_factory, tmp_path):
     """After a child run with 3 agent calls, parent check_limits uses the parent's own count only."""
     from dataclasses import replace

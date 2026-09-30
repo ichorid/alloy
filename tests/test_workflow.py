@@ -41,6 +41,9 @@ async def test_done_decision_finishes_after_one_iteration(project, alloy_home, f
         "verifier",
         "acceptance",
         "judge",
+        "verifier",
+        "acceptance",
+        "judge",
         "harvest",
     ]
 
@@ -213,7 +216,10 @@ async def test_retry_loops_back_through_implementation_and_verification(project,
     assert final["outcome"] == "done"
     assert final["iteration"] == 2
     assert len(fake_harnesses.calls_for("implement")) == 2
-    assert len(final["attempts"]) == 2
+    # 2 real iterations plus one more attempt row for the final broader pass
+    # (Alloy's replacement for a separate landing step), which shares
+    # iteration 2's number but is still guard's own terminal call.
+    assert len(final["attempts"]) == 3
 
 
 async def test_retry_instructions_reach_the_next_implementation(project, alloy_home, fake_harnesses):
@@ -377,6 +383,9 @@ async def test_failing_tests_role_pauses_for_a_human_before_burning_an_implement
         "tests",
         "tests",
         "implement",
+        "verifier",
+        "acceptance",
+        "judge",
         "verifier",
         "acceptance",
         "judge",

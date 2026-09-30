@@ -157,39 +157,42 @@ async def test_non_blocking_bug_is_filed_and_run_completes(project, alloy_home, 
     assert roles.index("judge") > roles.index("triage")
 
 
-# -- blocking: file at P1 claimed, route to remediate; no remediator -> human gate --
+# -- blocking: filed at P1 for the record, folded into instructions, back to implement --
 
 
-async def test_blocking_bug_routes_to_remediate_and_parks_without_remediator(project, alloy_home, fake_harnesses):
+async def test_blocking_bug_folds_into_instructions_and_continues_to_implement(project, alloy_home, fake_harnesses):
+    """A blocking finding is this same task's own responsibility: no separate
+    bead run, no worktree, no pause -- straight back to `implement` with the
+    finding folded into `instructions` and `journal`."""
     beads = RecordingBeadsClient(bug_ids=["bug-blocking"])
     bead = make_bead(id="parent-2", metadata={"alloy_recipe": "tdd-loop"})
     fake_harnesses.configure(
         script(
-            implement=[implement_stopped_with_bug("Race in worker pool")],
+            implement=[
+                implement_stopped_with_bug("Race in worker pool"),
+                implement_entry(succeed=True),
+            ],
             triage=[triage_entry("blocking", "reproduces on CI")],
         )
     )
     harness = make_harness(project, alloy_home, config=triage_config(), bead=bead, beads=beads)
     try:
-        paused = await harness.start()
+        final = await harness.start()
     finally:
         harness.close()
 
-    assert "__interrupt__" in paused
+    assert "__interrupt__" not in final
     assert len(_triage_ledger_rows(harness)) == 1
     assert len(beads.create_bug_calls) == 1
 
     filed = beads.create_bug_calls[0]
     assert filed["priority"] == 1
     assert filed["labels"] == [bd.LABEL_BUG]
-    assert filed["claim"] is True
+    assert filed["claim"] is False
     assert "no longer reproduces" in filed["acceptance"]
 
-    assert harness.store.get_run(harness.run_id)["stage"] == "remediate:bug-blocking"
-    remediations = paused.get("remediations") or []
-    assert [(r["bead_id"], r["outcome"]) for r in remediations] == [("bug-blocking", "failed")]
-    reason = paused["__interrupt__"][0].value["reason"]
-    assert "bug-blocking" in reason
+    assert final["outcome"] == "done"
+    assert any("Race in worker pool" in entry for entry in final.get("journal") or [])
 
 
 # -- needs-human: file with human label, block parent, resume -> implement --------
@@ -324,11 +327,6 @@ async def test_triage_prompt_lists_filed_bugs_and_remediations(project, alloy_ho
         alloy_home,
         config=triage_config(),
         beads=beads,
-        initial_state_overrides={
-            "remediations": [
-                {"bead_id": "rem-1", "outcome": "merged on parent branch"},
-            ],
-        },
     )
     try:
         await harness.start()
@@ -340,8 +338,6 @@ async def test_triage_prompt_lists_filed_bugs_and_remediations(project, alloy_ho
     second_prompt = triage_prompts[1]
     assert "bug-first" in second_prompt
     assert "First defect" in second_prompt
-    assert "rem-1" in second_prompt
-    assert "merged on parent branch" in second_prompt
 
 
 # -- triage runner missing: human gate, nothing filed -----------------------------

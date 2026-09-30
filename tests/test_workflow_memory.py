@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 from datetime import date
 from pathlib import Path
 
@@ -183,8 +184,12 @@ async def test_done_run_skips_remember_when_alloy_check_hints_unchanged(project,
         _check_hints_done_script(),
         memories={CHECK_HINTS_KEY: first_body},
     )
-    # A fresh bead gets a fresh worktree: the first run's fix already lives in
-    # t-1's worktree, so a second run there would find its baseline green.
+    # Every run works in the same primary checkout now (no isolated worktree
+    # per bead): reset it so t-2 starts from the same clean state t-1 did,
+    # instead of seeing t-1's fix already in place with a green baseline.
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=project, check=True)
+    subprocess.run(["git", "reset", "-q", "--hard", "HEAD"], cwd=project, check=True)
+    subprocess.run(["git", "clean", "-q", "-fd"], cwd=project, check=True)
     second_harness = make_harness(
         project,
         alloy_home,
@@ -478,7 +483,7 @@ def _embed_project_memory() -> ProjectMemory:
 
 
 def _worktree_agents(harness) -> Path:
-    return harness.worktrees.ensure(harness.bead.id).path / "AGENTS.md"
+    return harness.project / "AGENTS.md"
 
 
 def _write_worktree_agents(harness, file_text: str) -> Path:

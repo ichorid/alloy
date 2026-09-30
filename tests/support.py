@@ -7,22 +7,19 @@ import time
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 import yaml
 
 from alloy.beads import Bead
 from alloy.checkpoints import open_checkpointer
-from alloy.config import RecipeConfig, RoleSpec, load_recipe
-from alloy.engine import RunResult
-from alloy.models import utcnow
+from alloy.config import RecipeConfig, RoleSpec
 from alloy.runners import RunnerRegistry
 from alloy.runtime import RunContext
 from alloy.store import Store
-from alloy.worktree import WorktreeManager
+from alloy.worktree import Worktree, WorktreeManager
 
 BASE_RECIPE = Path(__file__).parents[1] / "src" / "alloy" / "recipes" / "tdd-loop.yaml"
-LAND_RECIPE_NAME = "land"
 
 
 def scope_config(**overrides: Any) -> RecipeConfig:
@@ -69,22 +66,6 @@ def load_config(**overrides: Any) -> RecipeConfig:
     return replace(config, **overrides) if overrides else config
 
 
-def load_land_config(**overrides: Any) -> RecipeConfig:
-    """Load the land recipe YAML with jev roles swapped to claude for harness tests."""
-    config = load_recipe(LAND_RECIPE_NAME)
-    roles = dict(config.roles)
-    for role_name, spec in list(roles.items()):
-        if spec.runner == "jev":
-            roles[role_name] = replace(
-                spec,
-                runner="claude",
-                model=spec.model,
-                fallback=None,
-            )
-    config = replace(config, roles=roles)
-    return replace(config, **overrides) if overrides else config
-
-
 def make_bead(bead_id: str = "t-1", **fields: Any) -> Bead:
     defaults = dict(
         id=bead_id,
@@ -96,70 +77,6 @@ def make_bead(bead_id: str = "t-1", **fields: Any) -> Bead:
     )
     defaults.update(fields)
     return Bead(**defaults)
-
-
-@dataclass
-class RemediationStep:
-    """One scripted outcome for :class:`FakeRemediator`."""
-
-    outcome: str = "done"
-    reason: str = ""
-    sleep_s: float = 0.0
-    fix_writes: list[dict[str, str]] | None = None
-
-
-class FakeRemediator:
-    """Stand-in for ``Engine.run_child`` in graph-level remediation tests."""
-
-    def __init__(
-        self,
-        *,
-        worktree_path: Path,
-        steps: list[RemediationStep] | None = None,
-    ) -> None:
-        self.worktree_path = Path(worktree_path)
-        self.steps = list(steps or [RemediationStep()])
-        self.calls: list[dict[str, Any]] = []
-        self._index = 0
-
-    async def __call__(self, bug_bead_id: str) -> RunResult:
-        step = self.steps[min(self._index, len(self.steps) - 1)]
-        self._index += 1
-        started = utcnow()
-        if step.sleep_s:
-            await asyncio.sleep(step.sleep_s)
-        if step.fix_writes:
-            for write in step.fix_writes:
-                path = self.worktree_path / write["path"]
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(write["content"], encoding="utf-8")
-        ended = utcnow()
-        run_id = f"fake-child-{uuid.uuid4().hex[:8]}"
-        self.calls.append(
-            {
-                "bead_id": bug_bead_id,
-                "run_id": run_id,
-                "outcome": step.outcome,
-                "reason": step.reason,
-                "started_at": started.isoformat(),
-                "ended_at": ended.isoformat(),
-            }
-        )
-        return RunResult(
-            bead_id=bug_bead_id,
-            run_id=run_id,
-            outcome=step.outcome,
-            reason=step.reason,
-            worktree=str(self.worktree_path),
-        )
-
-
-def bind_fake_remediator(harness: Harness, **kwargs: Any) -> FakeRemediator:
-    """Attach a :class:`FakeRemediator` to a harness's worktree."""
-    worktree = harness.worktrees.ensure(harness.bead.id)
-    remediator = FakeRemediator(worktree_path=worktree.path, **kwargs)
-    harness.remediator = remediator
-    return remediator
 
 
 class Harness:
@@ -181,7 +98,6 @@ class Harness:
         alloy_home: Path,
         beads: Any = None,
         initial_state_overrides: dict[str, Any] | None = None,
-        remediator: Callable[[str], Awaitable[RunResult]] | None = None,
         recipe_name: str = "tdd-loop",
     ) -> None:
         self.bead = bead
@@ -193,7 +109,6 @@ class Harness:
         self.alloy_home = Path(alloy_home)
         self.beads = beads
         self.initial_state_overrides = initial_state_overrides or {}
-        self.remediator = remediator
         self.thread_id = run_id
         self.worktrees = WorktreeManager(repo=self.project, root=self.alloy_home / "worktrees")
 
@@ -202,7 +117,7 @@ class Harness:
         return {"configurable": {"thread_id": self.thread_id}, "recursion_limit": 200}
 
     def context(self, checkpointer: Any) -> RunContext:
-        worktree = self.worktrees.ensure(self.bead.id)
+        worktree = Worktree(self.bead.id, self.project, "", self.worktrees.head(self.project))
         log_dir = self.alloy_home / "logs" / self.run_id
         log_dir.mkdir(parents=True, exist_ok=True)
         return RunContext(
@@ -216,7 +131,6 @@ class Harness:
             checkpointer=checkpointer,
             log_dir=log_dir,
             beads=self.beads,
-            remediator=self.remediator,
         )
 
     async def start(self) -> dict:
@@ -259,22 +173,17 @@ def make_harness(
     store: Store | None = None,
     beads: Any = None,
     initial_state_overrides: dict[str, Any] | None = None,
-    remediator: Callable[[str], Awaitable[RunResult]] | None = None,
     parent_run_id: str | None = None,
     recipe_name: str = "tdd-loop",
 ) -> Harness:
     bead = bead or make_bead()
     worktrees = WorktreeManager(repo=project, root=alloy_home / "worktrees")
     if config is None:
-        config = load_land_config() if recipe_name == LAND_RECIPE_NAME else load_config()
-        if recipe_name == LAND_RECIPE_NAME and config.landing.target is None:
-            # Mirror Engine.build_context: no recipe-level target means land
-            # on whatever branch the primary checkout is actually on.
-            config = replace(config, landing=replace(config.landing, target=worktrees.current_branch()))
+        config = load_config()
     run_id = run_id or uuid.uuid4().hex
     store = store or Store(alloy_home / "alloy.db")
 
-    worktree = worktrees.ensure(bead.id)
+    worktree = Worktree(bead.id, project, "", worktrees.head(project))
 
     if store.get_run(run_id) is None:
         store.create_run(
@@ -298,7 +207,6 @@ def make_harness(
         alloy_home=alloy_home,
         beads=beads,
         initial_state_overrides=initial_state_overrides,
-        remediator=remediator,
         recipe_name=recipe_name,
     )
 

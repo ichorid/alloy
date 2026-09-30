@@ -136,5 +136,8 @@ async def test_cancelled_harness_start_leaves_resumable_checkpoint(
         "verifier",
         "acceptance",
         "judge",
+        "verifier",
+        "acceptance",
+        "judge",
         "harvest",
     ]

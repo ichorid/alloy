@@ -81,7 +81,9 @@ async def test_verifier_batch_response_records_three_subprocess_runs_in_one_agen
     assert final["outcome"] == "done"
 
     verifier_calls = fake_harnesses.calls_for("verifier")
-    assert len(verifier_calls) == 2  # the batch call plus the stop call
+    # The batch call, the stop call, and one more stop call for the final
+    # broader pass (Alloy's replacement for a separate landing step).
+    assert len(verifier_calls) == 3
 
     batch_commands = {CMD_A, CMD_B, CMD_C}
     recorded = [c for c in final["checks"] if c["command"] in batch_commands]
@@ -90,4 +92,4 @@ async def test_verifier_batch_response_records_three_subprocess_runs_in_one_agen
     assert all(c["exit_code"] == 0 for c in recorded)
 
     verifier_rows = [row for row in harness.store.agent_calls(harness.run_id) if row["role"] == "verifier"]
-    assert len(verifier_rows) == 2
+    assert len(verifier_rows) == 3

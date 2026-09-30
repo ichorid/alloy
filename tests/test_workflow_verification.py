@@ -85,8 +85,11 @@ async def test_verifier_builds_on_green_targeted_before_regression_and_judge(pro
     assert "-> exit 0" in verifier_calls[1]["prompt"] or "passed" in verifier_calls[1]["prompt"].lower()
 
     roles = [call["role"] for call in fake_harnesses.calls]
-    last_verifier = max(i for i, role in enumerate(roles) if role == "verifier")
+    # The first judge call ends the main verify loop; a second verifier/judge
+    # round follows for the final broader pass (Alloy's replacement for a
+    # separate landing step), so restrict this check to the main loop.
     judge_idx = roles.index("judge")
+    last_verifier = max(i for i, role in enumerate(roles[:judge_idx]) if role == "verifier")
     assert judge_idx > last_verifier
     assert "implement" not in roles[last_verifier + 1 : judge_idx]
 
@@ -304,8 +307,10 @@ async def test_verify_more_without_new_evidence_escalates_to_judge(project, allo
     finally:
         harness.close()
 
-    assert len(fake_harnesses.calls_for("acceptance")) == 2
-    assert len(fake_harnesses.calls_for("judge")) == 1
+    # +1 more for the final broader pass (Alloy's replacement for a separate
+    # landing step), which reaches acceptance once more before finishing.
+    assert len(fake_harnesses.calls_for("acceptance")) == 3
+    assert len(fake_harnesses.calls_for("judge")) == 2
     assert final["outcome"] == "done"
     second = fake_harnesses.calls_for("acceptance")[1]["prompt"]
     assert "asked for more verification 1 time(s)" in second
@@ -620,6 +625,13 @@ async def test_implement_prefix_hash_matches_across_runs_with_different_bead_bri
         await harness_a.start()
     finally:
         harness_a.close()
+
+    # Every run works in the same primary checkout now (no isolated worktree
+    # per bead): reset it so bead-b starts from the same clean state bead-a
+    # did, instead of seeing bead-a's committed work.
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=project, check=True)
+    subprocess.run(["git", "reset", "-q", "--hard", "HEAD"], cwd=project, check=True)
+    subprocess.run(["git", "clean", "-q", "-fd"], cwd=project, check=True)
 
     fake_harnesses.reset_calls()
     harness_b = make_harness(project, alloy_home, bead=bead_b, store=Store(db_path), run_id="run-b")

@@ -18,7 +18,7 @@ from alloy.recipes.tdd_loop import (
     judge_prompt,
     verifier_prompt,
 )
-from alloy.worktree import WorktreeManager
+from alloy.worktree import Worktree, WorktreeManager
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TDD_LOOP = REPO_ROOT / "src" / "alloy" / "recipes" / "tdd_loop.py"
@@ -87,8 +87,8 @@ def test_junk_patterns_constant_lists_expected_globs():
     assert EXPECTED_JUNK_PATTERNS <= set(JUNK_PATTERNS)
 
 
-def test_diff_and_changed_files_exclude_junk_but_keep_real_src_file(manager):
-    worktree = manager.ensure("bd-1")
+def test_diff_and_changed_files_exclude_junk_but_keep_real_src_file(manager, project):
+    worktree = Worktree("bd-1", project, "", manager.head(project))
     (worktree.path / "uv.lock").write_text("lock " * 500, encoding="utf-8")
     (worktree.path / ".serena").mkdir(parents=True)
     (worktree.path / ".serena" / "project.yml").write_text("name: junk\n", encoding="utf-8")

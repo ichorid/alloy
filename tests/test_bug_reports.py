@@ -149,14 +149,6 @@ def test_critic_prompt_excludes_bug_report_protocol():
 
 
 async def test_non_blocking_implement_bug_is_recorded_without_changing_outcome(project, alloy_home, fake_harnesses):
-    fake_harnesses.configure(script())
-    baseline_harness = make_harness(project, alloy_home)
-    try:
-        baseline = await baseline_harness.start()
-    finally:
-        baseline_harness.close()
-
-    fake_harnesses.reset_calls()
     fake_harnesses.configure(
         script(
             implement=[_implement_with_trailing_bug()],
@@ -164,16 +156,14 @@ async def test_non_blocking_implement_bug_is_recorded_without_changing_outcome(p
         )
     )
 
-    # A fresh bead gets a fresh worktree: the first run's worktree already
-    # contains the implementation, so its targeted baseline would be green.
-    bug_harness = make_harness(project, alloy_home, bead=make_bead("t-2"))
+    bug_harness = make_harness(project, alloy_home)
     try:
         with_bug = await bug_harness.start()
     finally:
         bug_harness.close()
 
-    assert with_bug["outcome"] == baseline["outcome"]
-    assert with_bug["iteration"] == baseline["iteration"]
+    assert with_bug["outcome"] == "done"
+    assert with_bug["iteration"] == 1
 
     reported = with_bug.get("reported_bugs", [])
     assert len(reported) == 1

@@ -109,6 +109,9 @@ async def test_an_interrupted_run_resumes_without_repeating_finished_stages(proj
         "verifier",
         "acceptance",
         "judge",
+        "verifier",
+        "acceptance",
+        "judge",
         "harvest",
     ]
 
@@ -179,9 +182,12 @@ async def test_a_killed_process_leaves_an_orphaned_run_that_can_be_adopted(beads
         "verifier",
         "acceptance",
         "judge",
+        "verifier",
+        "acceptance",
+        "judge",
         "harvest",
     ]
-    assert engine.beads.show(bead_id).status == bd.STATUS_REVIEW_READY
+    assert engine.beads.show(bead_id).status == bd.STATUS_DONE
 
 
 async def test_restart_can_answer_what_was_running_and_where(beads_project, alloy_home, fake_harnesses):
