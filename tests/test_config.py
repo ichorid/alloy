@@ -83,7 +83,7 @@ def test_builtin_recipe_medium_tier_chain(recipe_name):
     fb1 = medium.fallback
     assert fb1 is not None
     assert fb1.runner == "codex"
-    assert fb1.model == "gpt-6-sol"
+    assert fb1.model == "gpt-6.1-sol"
     assert fb1.effort == "high"
 
     fb2 = fb1.fallback

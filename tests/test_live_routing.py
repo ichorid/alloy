@@ -158,7 +158,7 @@ async def test_live_medium_tier_fails_over_to_codex_terra_when_cursor_missing(pr
     assert len(rows) >= 2
     second = rows[1]
     assert second["runner"] == "codex"
-    assert second["model"] == "gpt-6-sol"
+    assert second["model"] == "gpt-6.1-sol"
     assert second["ok"]
 
 
@@ -311,7 +311,7 @@ async def test_live_escalation_changes_codex_fallback_when_cursor_missing(projec
 
     row3 = _ok_implement_rows(harness, iteration=3)[0]
     assert row3["runner"] == "codex"
-    assert row3["model"] == "gpt-6-sol"
+    assert row3["model"] == "gpt-6.1-sol"
 
 
 async def test_live_escalates_medium_to_complex_after_two_consecutive_judge_retries(

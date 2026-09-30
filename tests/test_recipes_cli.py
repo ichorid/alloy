@@ -35,7 +35,7 @@ EXPECTED_PROBE_KEYS = {
     ("cursor", "composer-2.5", None),
     ("codex", "gpt-6-luna", None),
     ("claude-write", "haiku", "low"),
-    ("codex", "gpt-6-sol", "high"),
+    ("codex", "gpt-6.1-sol", "high"),
     ("claude-write", "sonnet", "high"),
     ("cursor", "kimi-k3-high", None),
     ("claude-write", "opus", None),
