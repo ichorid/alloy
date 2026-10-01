@@ -45,6 +45,12 @@ REGISTRY: dict[str, Recipe] = {
         initial_state=tdd_loop.initial_state,
         description="tdd-loop-sonnet with the context-gathering phase removed: estimate runs first, straight off START",
     ),
+    "tdd-loop-sol-no-context": Recipe(
+        name="tdd-loop-sol-no-context",
+        build_graph=partial(tdd_loop.build_graph, skip_context=True),
+        initial_state=tdd_loop.initial_state,
+        description="tdd-loop-sonnet-no-context with every Claude model slot replaced by Codex gpt-6.1-sol",
+    ),
 }
 
 
