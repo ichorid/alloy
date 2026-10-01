@@ -1,8 +1,9 @@
 name: tdd-loop-sol-no-context
 
-# Same as tdd-loop-sonnet-no-context, except every Claude model slot (sonnet,
-# claude-sonnet-5-5, haiku, fable) is replaced by codex:gpt-6.1-sol. The
-# context-gathering phase before writing tests is removed entirely: the graph
+# Same as tdd-loop-sonnet-no-context, except every primary Claude model slot
+# (sonnet, claude-sonnet-5-5, haiku, fable) is replaced by codex:gpt-6.1-sol,
+# with plain Sonnet kept as the backup model everywhere. The context-gathering
+# phase before writing tests is removed entirely: the graph
 # runs estimate straight off START (see build_graph(..., skip_context=True)
 # in recipes/tdd_loop.py). There is no "context" role here on purpose --
 # nothing ever calls it.
@@ -19,16 +20,22 @@ complexity:
       - {runner: cursor, model: composer-2.5}
       - {runner: codex, model: gpt-6-luna}
       - {runner: codex, model: gpt-6.1-sol, effort: low}
+      - {runner: claude-write, model: sonnet, effort: low}
     medium:
       - {runner: codex, model: gpt-6.1-sol, effort: high}
+      - {runner: claude-write, model: sonnet, effort: high}
     complex:
       - {runner: codex, model: gpt-6.1-sol, effort: max}
       - {runner: cursor, model: kimi-k3-high}
+      - {runner: claude-write, model: sonnet}
 
 roles:
   harvest:
     runner: codex
     model: gpt-6.1-sol
+    fallback:
+      runner: claude
+      model: sonnet
   memory_reviewer:
     runner: cursor
     model: composer-2.5
@@ -74,8 +81,8 @@ roles:
     model: composer-2.5
     timeout_minutes: 20
     fallback:
-      runner: codex
-      model: gpt-6.1-sol
+      runner: claude-write
+      model: sonnet
       timeout_minutes: 20
 
   tests_review:
@@ -95,8 +102,8 @@ roles:
         model: gpt-6-luna
         timeout_minutes: 10
     fallback:
-      runner: codex
-      model: gpt-6.1-sol
+      runner: claude
+      model: sonnet
       effort: low
       timeout_minutes: 10
 
@@ -105,8 +112,8 @@ roles:
     runner: astra                # aliases to codex; override under `runners:` to swap
     timeout_minutes: 25
     fallback:                    # when codex is missing, rate-limited or times out
-      runner: codex
-      model: gpt-6.1-sol
+      runner: claude-write
+      model: sonnet
       timeout_minutes: 25
 
   verifier:
@@ -120,8 +127,8 @@ roles:
     model: composer-2.5
     timeout_minutes: 10
     fallback:
-      runner: codex
-      model: gpt-6.1-sol
+      runner: claude-write
+      model: sonnet
       timeout_minutes: 10
 
   acceptance:
@@ -132,14 +139,18 @@ roles:
     model: jev-latest
     timeout_minutes: 5
     fallback:
-      runner: codex
-      model: gpt-6.1-sol
+      runner: claude
+      model: sonnet
       timeout_minutes: 5
 
   judge:
     runner: codex
     model: gpt-6.1-sol
     timeout_minutes: 10
+    fallback:
+      runner: claude
+      model: sonnet
+      timeout_minutes: 10
 
 consilium:
   critics:
@@ -147,9 +158,14 @@ consilium:
       model: gpt-6.1-sol
     - runner: codex-readonly
     - runner: pi                 # skipped automatically when the CLI is absent
+    - runner: claude
+      model: sonnet
   synthesizer:
     runner: codex
     model: gpt-6.1-sol
+    fallback:
+      runner: claude
+      model: sonnet
 
 # There is no fixed test command. The verifier role names each check; the
 # bead's optional alloy_test_cmd and project-layout autodetection reach it
