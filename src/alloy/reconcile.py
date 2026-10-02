@@ -153,7 +153,11 @@ def _check_bead(engine: Engine, bead: bd.Bead, scheduler_pid: int | None) -> lis
         )
 
     stale_land = [key for key in LAND_KEYS if key in bead.metadata]
-    if closed and bead.metadata.get(bd.META_LAND_STATE) not in (None, "landed") and stale_land:
+    # Any LAND_KEYS entry at all is stale on a closed bead -- land state never
+    # outlives a close in current code. Requiring META_LAND_STATE specifically
+    # to be set and non-"landed" missed a bead carrying only META_LAND_REPAIR
+    # or META_LAND_ATTEMPTS with META_LAND_STATE already absent or "landed".
+    if closed and stale_land:
         findings.append(
             Finding(
                 bead.id,

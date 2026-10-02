@@ -155,14 +155,21 @@ class BeadsClient:
     def _run(self, args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
         import os
 
-        proc = subprocess.run(
-            [self.binary, *args],
-            cwd=str(self.repo),
-            capture_output=True,
-            text=True,
-            timeout=self.timeout_s,
-            env={**os.environ, **self.env},
-        )
+        try:
+            proc = subprocess.run(
+                [self.binary, *args],
+                cwd=str(self.repo),
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_s,
+                env={**os.environ, **self.env},
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            # A timeout or a missing/unexecutable binary never reaches the
+            # returncode check below -- without this, every caller's `except
+            # BeadsError` (the one exception type this client promises) is
+            # silently bypassed by exactly the outages it exists to catch.
+            raise BeadsError(f"bd {' '.join(args)} could not run: {exc}") from exc
         if check and proc.returncode != 0:
             raise BeadsError(
                 f"bd {' '.join(args)} failed (exit {proc.returncode}): {proc.stderr.strip() or proc.stdout.strip()}"
@@ -292,7 +299,15 @@ class BeadsClient:
         for bead_id in bead_ids:
             rows = self._show_rows(bead_id)
             if not rows and self._rows is not None:
-                rows = self._json(["show", bead_id])
+                try:
+                    rows = self._json(["show", bead_id])
+                except BeadsError:
+                    # Genuinely gone, not just stale in the snapshot -- `bd
+                    # show` exits nonzero for a real miss. Without this, one
+                    # deleted bead in the caller's id set aborts the whole
+                    # call instead of leaving it absent from the result, same
+                    # as a snapshot miss already does.
+                    rows = []
             if rows:
                 found[bead_id] = Bead.model_validate(rows[0])
         return found

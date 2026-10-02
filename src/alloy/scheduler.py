@@ -183,10 +183,12 @@ class Scheduler:
         except Exception:
             log.exception("outbox drain failed")
 
-    async def recover(self) -> list[str]:
-        """Adopt runs whose process died -- the reboot-survival path."""
-        self.engine.store.reconcile_inflight()
-        self._drain_outbox()
+    def _resolve_stuck_claims(self) -> None:
+        """Settle any `claiming` row whose owning process died. `recover()`
+        runs this once at startup, but a claim can also go stuck mid-session
+        (the process that created it crashes between claiming and its next
+        checkpoint) -- `tick()` calls this too so such a row doesn't sit
+        wedged until the next restart."""
         for record in self.engine.store.stuck_claiming_runs():
             log.info("resolving stuck claiming run %s for %s", record["run_id"], record["bead_id"])
             try:
@@ -194,9 +196,15 @@ class Scheduler:
             except bd.BeadsError as exc:
                 # Could not confirm or deny the claim right now (bd itself
                 # unreachable): leave the row as `claiming` for the next
-                # recovery pass rather than guessing -- discarding it here
-                # could strand the real winner of the claim race.
+                # pass rather than guessing -- discarding it here could
+                # strand the real winner of the claim race.
                 log.warning("could not resolve stuck claiming run %s: %s", record["run_id"], exc)
+
+    async def recover(self) -> list[str]:
+        """Adopt runs whose process died -- the reboot-survival path."""
+        self.engine.store.reconcile_inflight()
+        self._drain_outbox()
+        self._resolve_stuck_claims()
         recovered: list[str] = []
         for record in self.engine.store.orphaned_runs():
             bead_id = record["bead_id"]
@@ -223,6 +231,7 @@ class Scheduler:
     async def tick(self) -> bool:
         """Claim and run at most one ready task. True if work was started."""
         self._drain_outbox()
+        self._resolve_stuck_claims()
         if len(self._running()) >= self.concurrency:
             return False
         due = self.due_resume() or self.due_human_resume()

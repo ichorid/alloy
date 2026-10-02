@@ -273,6 +273,25 @@ class Store:
         with self.connect() as conn:
             conn.execute("DELETE FROM runs WHERE run_id = ? AND status = ?", (run_id, RUN_CLAIMING))
 
+    def promote_claiming_run(self, run_id: str) -> bool:
+        """`claiming` -> `running`, but only if the row is still `claiming`.
+
+        A concurrent `cancel()` of this same run_id (the narrow window is real:
+        bd's claim already landed, but this row hasn't been promoted yet) can
+        race in and book the row `cancelled` first. An unconditional promotion
+        would silently revive that cancellation back to a live `running` row.
+        This CAS-style update loses that race instead: False means someone
+        already moved the row on, so the caller must not proceed as if it
+        still owns a running slot.
+        """
+        now = utcnow().isoformat()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "UPDATE runs SET status = ?, updated_at = ? WHERE run_id = ? AND status = ?",
+                (RUN_RUNNING, now, run_id, RUN_CLAIMING),
+            )
+            return cursor.rowcount > 0
+
     def stuck_claiming_runs(self) -> list[dict[str, Any]]:
         """`claiming` rows whose owning process is gone -- the narrow window
         between creating the row and confirming bd's claim survived a crash."""

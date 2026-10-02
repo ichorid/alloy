@@ -94,8 +94,14 @@ class Engine:
             # There is always something to resolve here -- unlike claiming bd
             # first, which could strand the bead `implementing` with no row
             # anywhere for recovery to find.
-            latest = self._resolve_stuck_claiming(latest)
+            self._resolve_stuck_claiming(latest)
             bead = self.beads.show(bead_id)
+            # Re-fetch rather than trust the resolver's return value: if
+            # `latest` was a *losing* claimant's row, discarding it can expose
+            # an older, still-live *winner's* row as the new latest -- and
+            # that must still refuse dispatch below, not be silently skipped
+            # because the stale `latest` we were about to check was `None`.
+            latest = self.store.latest_run_for_bead(bead_id)
         self._refuse_if_live(bead_id, latest)
         existing = self._resumable_run(bead_id)
         if existing is not None:
@@ -149,7 +155,12 @@ class Engine:
                 self.store.discard_claiming_run(run_id)
                 raise EngineError(f"{bead_id} was claimed by someone else")
             claimed = True
-            self.store.update_run(run_id, status=RUN_RUNNING)
+            if not self.store.promote_claiming_run(run_id):
+                # Lost to a concurrent cancel of this very run_id between the
+                # claim landing in bd and this promotion: the row is already
+                # booked cancelled (and bd already reverted), so there is
+                # nothing left to execute.
+                raise EngineError(f"{bead_id}: run {run_id} was cancelled before it could start")
         else:
             # Already `implementing` with no row (a stuck-claiming retry, or
             # pre-dating this mechanism): no new bd claim needed.
@@ -219,6 +230,12 @@ class Engine:
             worktree=str(self.repo),
             branch=worktrees.current_branch() or "HEAD",
             log_dir=str(self.paths.run_logs(run_id)),
+            # `_execute`'s own later repair (see its non-fresh branch) only
+            # fires when `worktree` is still NULL -- filling that in above
+            # without also recording `base_commit` here would leave it NULL
+            # forever, letting a later resume pick a different HEAD as this
+            # run's diff base.
+            base_commit=worktrees.head(self.repo),
         )
         return self.store.get_run(run_id)
 
@@ -229,6 +246,14 @@ class Engine:
             raise EngineError(f"no run recorded for {bead_id}")
         if record["status"] in (RUN_DONE, RUN_CANCELLED):
             raise EngineError(f"run for {bead_id} already finished ({record['status']})")
+        if record["status"] == RUN_CLAIMING and not pid_alive(record.get("pid")):
+            # Same resolution `run()` applies: without it, `resume` could be
+            # pointed at a losing claimant's row (bd's status alone can't
+            # tell winner from loser) and promote/continue it regardless.
+            self._resolve_stuck_claiming(record)
+            record = self.store.get_run(record["run_id"])
+            if record is None:
+                raise EngineError(f"{bead_id}: that claim never landed in bd; nothing to resume")
         self._refuse_if_live(bead_id, record)
         bead = self.beads.show(bead_id)
         pending = has_pending_interrupt(self.paths.workflows_db, record["thread_id"])
@@ -256,7 +281,7 @@ class Engine:
         if record is None or record["status"] in (RUN_DONE, RUN_FAILED, RUN_CANCELLED):
             return False
         pid = record.get("pid")
-        if record["status"] == RUN_RUNNING and pid_alive(pid) and pid != os.getpid():
+        if record["status"] in (RUN_RUNNING, RUN_CLAIMING) and pid_alive(pid) and pid != os.getpid():
             scheduler_pid = read_pid(self.paths.scheduler_pid)
             if scheduler_pid is not None and int(pid) == scheduler_pid:
                 return self._cancel_via_scheduler(bead_id, record, scheduler_pid, timeout_s=scheduler_timeout_s)
@@ -318,13 +343,19 @@ class Engine:
         # so a cancel never reopens work a human (or a prior run) already
         # closed. The read and the write being two separate steps is fine;
         # it's the local commit and its outbox rows that must never split.
-        if self._bead_status(bead_id) == bd.STATUS_DONE:
+        current_bd_status = self._bead_status(bead_id)
+        if current_bd_status == bd.STATUS_DONE:
             outbox: list[tuple[str, dict[str, Any]]] = [
                 ("note", {"text": f"alloy: run {record['run_id']} cancelled; the bead stays closed"})
             ]
         else:
             outbox = [
-                ("status", {"status": bd.STATUS_READY, "if_status": None}),
+                # Guarded on the status just read, not unconditional: if a
+                # later write (e.g. this same run settling on its own, or a
+                # retried outbox delivery) already moved bd past this point,
+                # this stale cancellation-revert must lose the CAS, not
+                # silently overwrite whatever bd now correctly says.
+                ("status", {"status": bd.STATUS_READY, "if_status": current_bd_status}),
                 (
                     "note",
                     {"text": f"alloy: run {record['run_id']} cancelled; worktree left at {record['worktree']}"},
@@ -518,7 +549,7 @@ class Engine:
             }
             dispatch_outbox: list[tuple[str, dict[str, Any]]] = [("metadata", {"values": dispatch_metadata})]
             if bead.status != bd.STATUS_IMPLEMENTING:
-                dispatch_outbox.append(("status", {"status": bd.STATUS_IMPLEMENTING, "if_status": None}))
+                dispatch_outbox.append(("status", {"status": bd.STATUS_IMPLEMENTING, "if_status": bead.status}))
 
             if fresh:
                 # The row already exists (`run()` created it, running, before
@@ -597,7 +628,7 @@ class Engine:
                     reason=str(exc),
                     bead_id=bead.id,
                     outbox=[
-                        ("status", {"status": bd.STATUS_FAILED, "if_status": None}),
+                        ("status", {"status": bd.STATUS_FAILED, "if_status": bd.STATUS_IMPLEMENTING}),
                         ("note", {"text": f"alloy: run {run_id} crashed: {exc}. Worktree kept at {ctx.worktree.path}"}),
                     ],
                 )
@@ -628,7 +659,7 @@ class Engine:
                 run_id,
                 bead_id=bead.id,
                 outbox=[
-                    ("status", {"status": bd.STATUS_WAITING_HUMAN, "if_status": None}),
+                    ("status", {"status": bd.STATUS_WAITING_HUMAN, "if_status": bd.STATUS_IMPLEMENTING}),
                     ("metadata", {"values": {bd.META_STAGE: "waiting-human"}}),
                     (
                         "note",
@@ -660,14 +691,42 @@ class Engine:
 
         if outcome == Outcome.DONE.value:
             # The commit happens *before* any of this is recorded, local or
-            # bd-facing -- a crash or a failed commit_wip here leaves the run
-            # still `running` (recoverable the ordinary way) rather than
-            # locally `done` with nothing proving the work was ever saved.
+            # bd-facing: if the *process* dies here the run stays `running`,
+            # recoverable the ordinary way. But if `commit_wip` merely
+            # *raises* while the owning process survives (e.g. the live
+            # scheduler, running this in-process) -- nothing would ever mark
+            # the row terminal: its pid stays genuinely alive, so
+            # `orphaned_runs()` never adopts it, and a single bad commit would
+            # permanently occupy the scheduler's (usually one) concurrency
+            # slot. So a raised commit_wip is caught here specifically, just
+            # to settle the run as failed, then re-raised unchanged.
+            try:
+                commit_sha = ctx.worktrees.commit_wip(ctx.worktree, f"{bead.id}: {bead.title}")
+            except Exception as exc:
+                log.exception("%s: run %s verified done but commit_wip failed", bead.id, run_id)
+                self.store.finish_run(
+                    run_id,
+                    status=RUN_FAILED,
+                    outcome=Outcome.FAILED.value,
+                    reason=f"commit failed after a done verdict: {exc}",
+                    bead_id=bead.id,
+                    outbox=[
+                        ("status", {"status": bd.STATUS_FAILED, "if_status": bd.STATUS_IMPLEMENTING}),
+                        (
+                            "note",
+                            {
+                                "text": f"alloy: {recipe_name} verified done, but committing the work failed: "
+                                f"{exc}. Worktree kept at {ctx.worktree.path}"
+                            },
+                        ),
+                    ],
+                )
+                deliver_pending(self.store, self.beads, bead_id=bead.id)
+                raise
             # `committed_sha` (even the "none" sentinel, for a verification-
             # only task with nothing to commit) is what lets reconcile tell
             # "done and verified" from "done locally, commit unconfirmed" --
             # see `reconcile._status_after`.
-            commit_sha = ctx.worktrees.commit_wip(ctx.worktree, f"{bead.id}: {bead.title}")
             self.store.finish_run(
                 run_id,
                 status=RUN_DONE,
@@ -676,7 +735,7 @@ class Engine:
                 bead_id=bead.id,
                 committed_sha=commit_sha or "none",
                 outbox=[
-                    ("status", {"status": bd.STATUS_DONE, "if_status": None}),
+                    ("status", {"status": bd.STATUS_DONE, "if_status": bd.STATUS_IMPLEMENTING}),
                     ("metadata", {"values": {bd.META_STAGE: "finished"}}),
                     (
                         "note",
@@ -696,7 +755,7 @@ class Engine:
                 reason=reason,
                 bead_id=bead.id,
                 outbox=[
-                    ("status", {"status": bd.STATUS_FAILED, "if_status": None}),
+                    ("status", {"status": bd.STATUS_FAILED, "if_status": bd.STATUS_IMPLEMENTING}),
                     ("metadata", {"values": {bd.META_STAGE: outcome}}),
                     (
                         "note",
