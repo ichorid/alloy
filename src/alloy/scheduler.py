@@ -468,7 +468,7 @@ class Scheduler:
             except bd.BeadsError:
                 status = "missing"
             return f"review-ready, waiting on land-repair bug {repair} ({status})"
-        return f"review-ready and not landed; `alloy land {held.id}` lands it"
+        return f"review-ready; a human must close or reopen {held.id} (`alloy land` no longer exists)"
 
     def _note_hold(self, hold: tuple[str, str] | None) -> None:
         """Log a dispatch hold when it starts or changes, and re-announce it

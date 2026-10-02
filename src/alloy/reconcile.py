@@ -144,8 +144,11 @@ def _check_bead(engine: Engine, bead: bd.Bead, scheduler_pid: int | None) -> lis
 
 
 def _check_review_ready(engine: Engine, bead: bd.Bead) -> list[Finding]:
-    """A review-ready bead holds top-level dispatch until it lands; say why it
-    has not, and clear a repair link that points nowhere."""
+    """A review-ready bead holds top-level dispatch for its unit. Alloy has no
+    separate land step any more (a run finishes straight to `done`), so this
+    only happens from old data (set before that removal) or a manual `bd
+    update -s review-ready`; either way the bead itself decides it, not a
+    land command that no longer exists."""
     repair = bead.metadata.get(bd.META_LAND_REPAIR)
     if bead.metadata.get(bd.META_LAND_STATE) == "repairing" and repair:
         try:
@@ -155,7 +158,7 @@ def _check_review_ready(engine: Engine, bead: bd.Bead) -> list[Finding]:
                 Finding(
                     bead.id,
                     f"review-ready, waiting on land-repair bug {repair}, which bd cannot find",
-                    f"unset {bd.META_LAND_STATE}/{bd.META_LAND_REPAIR}; then `alloy land {bead.id}`",
+                    f"unset {bd.META_LAND_STATE}/{bd.META_LAND_REPAIR}; then close {bead.id} or reopen it",
                     lambda: engine.beads.unset_metadata(bead.id, [bd.META_LAND_STATE, bd.META_LAND_REPAIR]),
                 )
             ]
@@ -163,22 +166,22 @@ def _check_review_ready(engine: Engine, bead: bd.Bead) -> list[Finding]:
             return [
                 Finding(
                     bead.id,
-                    f"review-ready; its land-repair bug {repair} is closed, so the scheduler retries the land",
-                    f"none needed (or `alloy land {bead.id}` now)",
+                    f"review-ready; its old land-repair bug {repair} is closed",
+                    f"close {bead.id} now (or reopen it if it still needs work)",
                 )
             ]
         return [
             Finding(
                 bead.id,
                 f"review-ready and holding dispatch until land-repair bug {repair} ({status}) is fixed",
-                f"fix {repair}, or close {bead.id} by hand if it needs no landing",
+                f"fix {repair}, or close {bead.id} by hand if it needs no further work",
             )
         ]
     return [
         Finding(
             bead.id,
-            "review-ready and not landed: it holds top-level dispatch until it lands",
-            f"`alloy land {bead.id}`",
+            "review-ready: it holds top-level dispatch until a human closes or reopens it",
+            f"close {bead.id} now (or reopen it if it still needs work)",
         )
     ]
 
@@ -189,7 +192,11 @@ def _status_after(record: dict[str, Any] | None) -> str:
     if record["status"] == RUN_FAILED:
         return bd.STATUS_FAILED
     if record["status"] == RUN_DONE:
-        return bd.STATUS_REVIEW_READY
+        # engine.py sets STATUS_DONE directly on a finished run; there is no
+        # separate land step any more, so a drifted bd status heals the same
+        # way -- never to STATUS_REVIEW_READY, a state nothing can clear any
+        # more since `alloy land` was removed.
+        return bd.STATUS_DONE
     return bd.STATUS_READY
 
 

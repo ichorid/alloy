@@ -87,7 +87,7 @@ def test_a_lasting_dispatch_hold_is_reannounced_as_a_stalled_event(engine, beads
     stalled = [e for e in engine.store.events.read() if e["event"] == "stalled"]
     assert len(stalled) == 1
     assert stalled[0]["bead"] == holder
-    assert "not landed" in stalled[0]["reason"] and "alloy reconcile" in stalled[0]["reason"]
+    assert "review-ready" in stalled[0]["reason"] and "alloy reconcile" in stalled[0]["reason"]
     assert any("dispatch held by" in r.message and r.levelname == "WARNING" for r in caplog.records)
 
 

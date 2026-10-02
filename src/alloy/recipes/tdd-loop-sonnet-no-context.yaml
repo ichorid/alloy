@@ -176,8 +176,6 @@ limits:
     medium: 24
     complex: 32
 
-on_success_status: review-ready
-cleanup_worktree_on_success: false
 
 runners:
   jev:

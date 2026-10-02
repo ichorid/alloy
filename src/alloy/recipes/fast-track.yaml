@@ -22,5 +22,3 @@ limits:
   max_consiliums: 0
   max_wall_time_minutes: 45
   max_agent_calls: 10
-on_success_status: review-ready
-cleanup_worktree_on_success: false
