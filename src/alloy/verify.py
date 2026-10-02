@@ -22,6 +22,15 @@ from alloy.procs import terminate_process_tree
 
 DEFAULT_TIMEOUT_S = 900.0
 
+# Agents write check commands assuming bash (process substitution, `mapfile`,
+# arrays) because that is what every script and recipe example in this
+# codebase uses. asyncio.create_subprocess_shell defaults to /bin/sh, which on
+# a dash-as-sh system (most Debian/Ubuntu installs) rejects that syntax with a
+# generic "Syntax error: redirection unexpected" that reads like a real check
+# failure. Run under bash when it is present; fall back to the platform
+# default shell otherwise rather than fail outright on a system without bash.
+_CHECK_SHELL = shutil.which("bash")
+
 
 def verifier_check_requests(action: VerifierAction) -> list[CheckRequest]:
     """Expand a verifier response into the checks Alloy should run.
@@ -216,6 +225,7 @@ async def run_check(
     started = time.monotonic()
     process = await asyncio.create_subprocess_shell(
         request.command,
+        executable=_CHECK_SHELL,
         cwd=str(worktree),
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
