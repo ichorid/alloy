@@ -24,7 +24,7 @@ from alloy.limits import installed_harnesses, read_cache, unavailable
 from alloy.memory_schedule import MEMORY_REVIEW_BEAD
 from alloy.models import DEFAULT_RECIPE_KEY
 from alloy.runners import RunnerRegistry
-from alloy.scheduler import read_pid, read_session
+from alloy.scheduler import FALLBACK_DEFAULT_RECIPE, read_pid, read_session
 from alloy.store import RUN_CANCELLED, RUN_DONE, RUN_FAILED
 from alloy.verify import checks_summary
 
@@ -252,7 +252,9 @@ def _build_queue(prefetch: _Prefetch, index: _BeadIndex) -> dict[str, Any]:
     default = prefetch.get("memories").get(DEFAULT_RECIPE_KEY)
     if default and default not in known:
         default = None
-    default_recipe = default or None
+    # Mirrors Scheduler.next_task: no known alloy:default:recipe memory falls
+    # back to fast-track rather than leaving unassigned beads undispatchable.
+    default_recipe = default or FALLBACK_DEFAULT_RECIPE
 
     dispatchable: list[bd.Bead] = []
     for bead in prefetch.get("ready"):

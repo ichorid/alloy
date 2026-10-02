@@ -61,11 +61,16 @@ def test_the_highest_priority_ready_bead_is_selected(scheduler, beads_project):
     assert scheduler.next_task().id == urgent
 
 
-def test_beads_without_a_known_recipe_are_ignored(scheduler, beads_project):
-    bd_create(beads_project, "unassigned")
+def test_an_unassigned_bead_is_picked_up_via_the_fast_track_fallback(scheduler, beads_project):
+    """No --recipe, no alloy:default:recipe memory: an unassigned bead still
+    dispatches, via the fast-track fallback -- but a bead with its own bogus
+    recipe metadata is still ignored, fallback or not."""
+    unassigned = bd_create(beads_project, "unassigned")
     bd_create(beads_project, "bogus recipe", alloy_recipe="does-not-exist")
 
-    assert scheduler.next_task() is None
+    picked = scheduler.next_task()
+
+    assert picked is not None and picked.id == unassigned
 
 
 def test_selection_makes_no_agent_calls(scheduler, beads_project, fake_harnesses):
@@ -612,23 +617,29 @@ def test_next_task_selects_unassigned_bead_when_default_recipe_memory_set(
     assert picked.recipe is None
 
 
-def test_next_task_skips_unassigned_bead_without_default_recipe_memory(
+def test_next_task_falls_back_to_fast_track_without_default_recipe_memory(
     scheduler,
     beads_project,
 ):
-    bd_create(beads_project, "needs default recipe")
+    bead_id = bd_create(beads_project, "needs default recipe")
 
-    assert scheduler.next_task() is None
+    picked = scheduler.next_task()
+
+    assert picked is not None and picked.id == bead_id
+    assert scheduler._default_recipe == "fast-track"
 
 
-def test_next_task_skips_unassigned_bead_when_default_recipe_is_unknown(
+def test_next_task_falls_back_to_fast_track_when_default_recipe_is_unknown(
     scheduler,
     beads_project,
 ):
-    bd_create(beads_project, "needs default recipe")
+    bead_id = bd_create(beads_project, "needs default recipe")
     scheduler.engine.beads.remember(DEFAULT_RECIPE_KEY, "no-such-recipe")
 
-    assert scheduler.next_task() is None
+    picked = scheduler.next_task()
+
+    assert picked is not None and picked.id == bead_id
+    assert scheduler._default_recipe == "fast-track"
 
 
 def test_next_task_logs_once_when_default_recipe_is_unknown(
@@ -640,8 +651,8 @@ def test_next_task_logs_once_when_default_recipe_is_unknown(
     scheduler.engine.beads.remember(DEFAULT_RECIPE_KEY, "no-such-recipe")
 
     with caplog.at_level(logging.INFO, logger="alloy.scheduler"):
-        assert scheduler.next_task() is None
-        assert scheduler.next_task() is None
+        assert scheduler.next_task() is not None
+        assert scheduler.next_task() is not None
 
     matches = [record for record in caplog.records if "no-such-recipe" in record.message]
     assert len(matches) == 1

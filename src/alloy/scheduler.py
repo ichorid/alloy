@@ -48,6 +48,11 @@ from alloy.store import RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN, _p
 DEFAULT_POLL_SECONDS = 15.0
 DEFAULT_STALL_MINUTES = 30.0
 HUMAN_RESUME_MEMORY_PREFIX = "alloy:human:"
+FALLBACK_DEFAULT_RECIPE = "fast-track"
+"""Session default when neither `--recipe` nor `alloy:default:recipe` names
+one: most beads now carry their own `alloy_recipe` metadata set at intake, so
+this only ever picks up the minority that slipped through without it -- a
+single conservative, fast role beats leaving them undispatched forever."""
 
 log = logging.getLogger("alloy.scheduler")
 
@@ -390,6 +395,11 @@ class Scheduler:
             else:
                 self._unknown_default_recipe = None
                 self._default_recipe = default or None
+            if self._default_recipe is None:
+                # Neither --recipe nor alloy:default:recipe named one: fall
+                # back to fast-track rather than leaving unassigned beads
+                # undispatched forever.
+                self._default_recipe = FALLBACK_DEFAULT_RECIPE
         ready = self.engine.beads.ready(include_unassigned=self._default_recipe is not None)
         self._report_pinned_recipes(ready)
         held_by: tuple[str, str] | None = None

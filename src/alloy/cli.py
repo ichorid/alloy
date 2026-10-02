@@ -401,7 +401,9 @@ def start(
         None,
         "--recipe",
         help="Force this recipe as the session default for unassigned beads "
-        "(overrides alloy:default:recipe memory; errors if unknown)",
+        "(overrides alloy:default:recipe memory; errors if unknown). "
+        "Without this or a known alloy:default:recipe memory, unassigned "
+        "beads fall back to fast-track",
     ),
     foreground: bool = typer.Option(False, "--foreground", help="Do not detach"),
 ) -> None:
