@@ -58,12 +58,12 @@ class FakeBeadsClient:
         self._maybe_fail("set_metadata")
         self.metadata.setdefault(bead_id, {}).update(values)
 
-    def note(self, bead_id: str, text: str) -> None:
+    def note(self, bead_id: str, text: str, *, check: bool = False) -> None:
         self.calls.append(("note", (bead_id, text)))
         self._maybe_fail("note")
         self.notes.append((bead_id, text))
 
-    def close(self, bead_id: str) -> None:
+    def close(self, bead_id: str, *, check: bool = False) -> None:
         self.calls.append(("close", (bead_id,)))
         self._maybe_fail("close")
         self.closed.append(bead_id)
@@ -204,4 +204,35 @@ def test_redelivering_an_already_delivered_row_is_a_noop(store: Store, beads: Fa
     deliver_pending(store, beads)
 
     assert beads.calls == []
+    assert beads.statuses["b-1"] == "closed"
+
+
+# -- a failed row stalls later rows for that bead, not other beads -----------
+
+
+def test_a_failed_row_stalls_later_rows_for_the_same_bead_only(store: Store, beads: FakeBeadsClient):
+    """A dependent row (`implementing -> closed`) must not be attempted after
+    an earlier one for the same bead (`open -> implementing`) failed --
+    attempting it anyway would either silently skip ahead or manufacture a
+    false CAS conflict that looks like a human intervened."""
+    beads.statuses["b-1"] = "open"
+    beads.fail_next("set_status")
+    store.enqueue_bd_status("b-1", "implementing", if_status="open")
+    store.enqueue_bd_status("b-1", "closed", if_status="implementing")
+    store.enqueue_bd_note("b-2", "unaffected")
+
+    results = deliver_pending(store, beads)
+
+    b1_results = [r for r in results if r.bead_id == "b-1"]
+    assert len(b1_results) == 1  # the second row for b-1 was never attempted
+    assert not b1_results[0].ok
+    assert beads.statuses["b-1"] == "open"  # neither write landed
+
+    pending = {row["bead_id"] for row in store.pending_bd_updates()}
+    assert pending == {"b-1"}  # both b-1 rows still pending; b-2 was delivered
+    assert beads.notes == [("b-2", "unaffected")]
+
+    # Once bd is reachable again, both pending rows for b-1 deliver in order.
+    second = deliver_pending(store, beads)
+    assert [r.ok for r in second] == [True, True]
     assert beads.statuses["b-1"] == "closed"

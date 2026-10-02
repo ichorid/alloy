@@ -236,17 +236,14 @@ class BeadsClient:
 
     def alloy_beads(self) -> list[Bead]:
         """Every bead Alloy has ever touched or been assigned."""
-        rows = self._json(
-            [
-                "list",
-                "--all",
-                "--limit",
-                "0",
-                "--flat",
-                "--has-metadata-key",
-                META_RECIPE,
-            ]
-        )
+        return self.with_metadata_key(META_RECIPE)
+
+    def with_metadata_key(self, key: str) -> list[Bead]:
+        """Every bead carrying `key`, whatever its status -- one bulk `bd
+        list` call, not one `bd show` per bead. Bounded by how many beads
+        actually still carry that key, which only shrinks as stale metadata
+        gets cleaned up."""
+        rows = self._json(["list", "--all", "--limit", "0", "--flat", "--has-metadata-key", key])
         return [Bead.model_validate(row) for row in rows]
 
     def all_rows(self) -> list[dict[str, Any]]:
@@ -284,10 +281,18 @@ class BeadsClient:
         subprocess each (idle ~0.25s, more under contention) -- call this
         inside a `snapshot()` block to serve every one of them from that single
         bulk fetch instead. Ids bd cannot find are simply absent from the
-        result, same as a failed `show()` raising would otherwise signal."""
+        result, same as a failed `show()` raising would otherwise signal.
+
+        A miss against an active snapshot falls back to one live `bd show`:
+        the snapshot is a point-in-time copy, so a bead created after it was
+        taken (e.g. the caller's own second bulk call surfaced an id the
+        first one predates) would otherwise be reported as not found even
+        though bd can genuinely show it."""
         found: dict[str, Bead] = {}
         for bead_id in bead_ids:
             rows = self._show_rows(bead_id)
+            if not rows and self._rows is not None:
+                rows = self._json(["show", bead_id])
             if rows:
                 found[bead_id] = Bead.model_validate(rows[0])
         return found
@@ -457,16 +462,23 @@ class BeadsClient:
         """Register Alloy's execution statuses with Beads (idempotent)."""
         self._run(["config", "set", "status.custom", CUSTOM_STATUSES])
 
-    def claim(self, bead_id: str, *, expect: str = STATUS_READY) -> bool:
+    def claim(self, bead_id: str, *, expect: str = STATUS_READY, run_id: str | None = None) -> bool:
         """Move ready -> implementing, but only if nobody else got there first.
+
+        `run_id`, when given, is stamped as `alloy_run_id` metadata in the
+        *same* `bd update` call as the status CAS -- so the instant bd agrees
+        the claim landed, it also already says which run owns it. Without
+        this, two racing claimants' `claiming` rows are indistinguishable
+        from bd's status alone, and a crash-recovery pass resolving one could
+        silently promote the loser's row instead of the winner's.
 
         Returns False on a lost race rather than raising, so the scheduler can
         simply try the next bead.
         """
-        proc = self._run(
-            ["update", bead_id, "-s", STATUS_IMPLEMENTING, "--if-status", expect],
-            check=False,
-        )
+        args = ["update", bead_id, "-s", STATUS_IMPLEMENTING, "--if-status", expect]
+        if run_id is not None:
+            args += ["--set-metadata", f"{META_RUN_ID}={run_id}"]
+        proc = self._run(args, check=False)
         if proc.returncode == 0:
             return True
         if proc.returncode == CAS_CONFLICT_EXIT:
@@ -500,12 +512,19 @@ class BeadsClient:
             args += ["--unset-metadata", key]
         self._run(args, check=False)
 
-    def note(self, bead_id: str, text: str) -> None:
-        """Append an execution note. Summaries only -- transcripts stay in logs/."""
-        self._run(["note", bead_id, text], check=False)
+    def note(self, bead_id: str, text: str, *, check: bool = False) -> None:
+        """Append an execution note. Summaries only -- transcripts stay in logs/.
 
-    def close(self, bead_id: str) -> None:
-        self._run(["close", bead_id], check=False)
+        Defaults to best-effort (`check=False`): most callers note something
+        alongside other work and must not crash over a note failing. The
+        outbox (`alloy.outbox`) passes `check=True` -- there, a silently
+        swallowed failure would mark an undelivered row delivered forever.
+        """
+        self._run(["note", bead_id, text], check=check)
+
+    def close(self, bead_id: str, *, check: bool = False) -> None:
+        """See `note`'s `check` docstring -- same reasoning applies here."""
+        self._run(["close", bead_id], check=check)
 
     def create_bug(
         self,

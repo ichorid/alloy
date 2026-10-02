@@ -84,6 +84,13 @@ def _touched_beads(engine: Engine) -> list[str]:
     ids |= {bead.id for bead in engine.beads.alloy_beads()}
     for status in (bd.STATUS_REVIEW_READY, bd.STATUS_IMPLEMENTING, bd.STATUS_WAITING_HUMAN):
         ids |= {bead.id for bead in engine.beads.list_by_status(status)}
+    # A closed bead whose `alloy_recipe` was already cleaned up (e.g. by the
+    # manual-bead-with-recipe fix below) drops out of `alloy_beads()` -- but
+    # could still carry stale land metadata from before that cleanup. Each of
+    # these is its own bounded, self-shrinking `bd list` call, not a reason to
+    # fall back to scanning everything.
+    for key in LAND_KEYS:
+        ids |= {bead.id for bead in engine.beads.with_metadata_key(key)}
     return sorted(ids)
 
 
@@ -117,14 +124,24 @@ def _check_bead(engine: Engine, bead: bd.Bead, scheduler_pid: int | None) -> lis
     if not active and bead.status == bd.STATUS_IMPLEMENTING:
         target = _status_after(record)
         last = f"its last run {record['run_id']} is {record['status']}" if record else "no run is recorded"
-        findings.append(
-            Finding(
-                bead.id,
-                f"bd says implementing, but {last}",
-                f"set the bead to {target}",
-                lambda: engine.beads.set_status(bead.id, target),
+        if target is None:
+            findings.append(
+                Finding(
+                    bead.id,
+                    f"bd says implementing, but {last}, and the commit was never confirmed "
+                    "-- the work may not actually be saved",
+                    "none; verify by hand whether the commit landed, then close or reopen it",
+                )
             )
-        )
+        else:
+            findings.append(
+                Finding(
+                    bead.id,
+                    f"bd says implementing, but {last}",
+                    f"set the bead to {target}",
+                    lambda: engine.beads.set_status(bead.id, target),
+                )
+            )
     if not active and bead.status == bd.STATUS_WAITING_HUMAN and bead.metadata.get(bd.META_LAND_STATE) != "parked":
         findings.append(
             Finding(
@@ -204,7 +221,9 @@ def _check_review_ready(engine: Engine, bead: bd.Bead) -> list[Finding]:
     ]
 
 
-def _status_after(record: dict[str, Any] | None) -> str:
+def _status_after(record: dict[str, Any] | None) -> str | None:
+    """The bd status a drifted `implementing` bead should heal to, or `None`
+    when that can't be decided automatically and a human should look."""
     if record is None or record["status"] == RUN_CANCELLED:
         return bd.STATUS_READY
     if record["status"] == RUN_FAILED:
@@ -213,8 +232,11 @@ def _status_after(record: dict[str, Any] | None) -> str:
         # engine.py sets STATUS_DONE directly on a finished run; there is no
         # separate land step any more, so a drifted bd status heals the same
         # way -- never to STATUS_REVIEW_READY, a state nothing can clear any
-        # more since `alloy land` was removed.
-        return bd.STATUS_DONE
+        # more since `alloy land` was removed. But only once `committed_sha`
+        # confirms the commit itself actually happened: a crash or a failed
+        # `commit_wip` between the commit and recording it would otherwise
+        # let this auto-heal close a bead whose work was never saved.
+        return bd.STATUS_DONE if record.get("committed_sha") else None
     return bd.STATUS_READY
 
 

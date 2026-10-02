@@ -41,6 +41,7 @@ from alloy.models import (
     ProjectMemory,
     utcnow,
 )
+from alloy.outbox import deliver_pending
 from alloy.paths import AlloyPaths
 from alloy.procs import read_pid
 from alloy.store import RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN, _pid_alive
@@ -171,12 +172,31 @@ class Scheduler:
         self._stalled = current
         return flagged
 
+    def _drain_outbox(self) -> None:
+        """Retry whatever is still undelivered. `engine.py` already delivers
+        inline right after enqueueing, so this only matters when that inline
+        attempt failed (bd transiently unreachable) and nothing else would
+        ever retry it -- bounded by `Store.pending_bd_bead_ids` (what's
+        actually outstanding), not Alloy's whole history."""
+        try:
+            deliver_pending(self.engine.store, self.engine.beads)
+        except Exception:
+            log.exception("outbox drain failed")
+
     async def recover(self) -> list[str]:
         """Adopt runs whose process died -- the reboot-survival path."""
         self.engine.store.reconcile_inflight()
+        self._drain_outbox()
         for record in self.engine.store.stuck_claiming_runs():
             log.info("resolving stuck claiming run %s for %s", record["run_id"], record["bead_id"])
-            self.engine._resolve_stuck_claiming(record)
+            try:
+                self.engine._resolve_stuck_claiming(record)
+            except bd.BeadsError as exc:
+                # Could not confirm or deny the claim right now (bd itself
+                # unreachable): leave the row as `claiming` for the next
+                # recovery pass rather than guessing -- discarding it here
+                # could strand the real winner of the claim race.
+                log.warning("could not resolve stuck claiming run %s: %s", record["run_id"], exc)
         recovered: list[str] = []
         for record in self.engine.store.orphaned_runs():
             bead_id = record["bead_id"]
@@ -202,6 +222,7 @@ class Scheduler:
 
     async def tick(self) -> bool:
         """Claim and run at most one ready task. True if work was started."""
+        self._drain_outbox()
         if len(self._running()) >= self.concurrency:
             return False
         due = self.due_resume() or self.due_human_resume()

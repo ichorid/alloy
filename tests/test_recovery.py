@@ -321,7 +321,7 @@ async def test_a_stuck_claiming_row_is_promoted_and_adopted_when_bd_saw_the_clai
     fake_harnesses.configure(script())
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
     engine = Engine.open(beads_project, alloy_home)
-    assert engine.beads.claim(bead_id) is True
+    assert engine.beads.claim(bead_id, run_id="stuck-2") is True
     engine.store.create_claiming_run(
         run_id="stuck-2",
         bead_id=bead_id,
@@ -351,7 +351,7 @@ async def test_recover_resolves_stuck_claiming_runs_before_adopting_orphans(bead
     fake_harnesses.configure(script())
     bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
     engine = Engine.open(beads_project, alloy_home)
-    assert engine.beads.claim(bead_id) is True
+    assert engine.beads.claim(bead_id, run_id="stuck-3") is True
     engine.store.create_claiming_run(
         run_id="stuck-3",
         bead_id=bead_id,
@@ -387,3 +387,85 @@ async def test_a_lost_claim_race_discards_the_row_and_raises(beads_project, allo
         await engine.run(bead_id)
 
     assert engine.store.latest_run_for_bead(bead_id) is None
+
+
+async def test_a_losing_claimants_stuck_row_is_discarded_not_promoted(beads_project, alloy_home, fake_harnesses):
+    """Two processes race to claim the same bead; both create their own
+    `claiming` row before either calls `claim()`, and both crash before
+    learning the outcome. Only the winner's claim actually landed in bd (with
+    its run_id stamped as `alloy_run_id` in the same CAS write) -- bd's bare
+    `implementing` status cannot distinguish the two rows, but the stamped
+    metadata can. The loser's row must be discarded, not promoted and
+    adopted as if it had won."""
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    engine = Engine.open(beads_project, alloy_home)
+
+    # The winner: its claim actually landed in bd, stamping its run_id.
+    assert engine.beads.claim(bead_id, run_id="winner") is True
+    engine.store.create_claiming_run(
+        run_id="winner",
+        bead_id=bead_id,
+        thread_id="winner",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    engine.store.update_run("winner", pid=dead_pid())
+
+    # The loser: created its own row before losing the CAS, then crashed
+    # before `run()` ever got to call `discard_claiming_run` for it.
+    engine.store.create_claiming_run(
+        run_id="loser",
+        bead_id=bead_id,
+        thread_id="loser",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    engine.store.update_run("loser", pid=dead_pid())
+
+    engine._resolve_stuck_claiming(engine.store.get_run("loser"))
+
+    assert engine.store.get_run("loser") is None  # discarded
+    assert engine.store.get_run("winner")["status"] == "claiming"  # untouched by resolving the loser
+
+
+async def test_a_transient_bd_read_failure_never_discards_the_stuck_row(
+    beads_project, alloy_home, fake_harnesses, monkeypatch
+):
+    """bd being briefly unreachable must not look like "the claim never
+    landed" -- that would discard the one row that could later be confirmed
+    as the winner. `_resolve_stuck_claiming` must let the read failure
+    propagate (the caller decides to retry later), never silently discard."""
+    from alloy import beads as bd_module
+
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    engine = Engine.open(beads_project, alloy_home)
+    assert engine.beads.claim(bead_id, run_id="r1") is True
+    engine.store.create_claiming_run(
+        run_id="r1",
+        bead_id=bead_id,
+        thread_id="r1",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    engine.store.update_run("r1", pid=dead_pid())
+
+    def _raise(*a, **k):
+        raise bd_module.BeadsError("bd temporarily unreachable")
+
+    monkeypatch.setattr(engine.beads, "show", _raise)
+
+    with pytest.raises(bd_module.BeadsError):
+        engine._resolve_stuck_claiming(engine.store.get_run("r1"))
+
+    assert engine.store.get_run("r1")["status"] == "claiming"  # left alone, not discarded

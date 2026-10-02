@@ -144,6 +144,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "escalations": "INTEGER DEFAULT 0",
         "retry_at": "TEXT",  # when a parked run may resume on its own (alloy-5wb.4)
         "base_commit": "TEXT",  # where this run's diff starts (alloy-vrh.4)
+        "committed_sha": "TEXT",  # set only once commit_wip has actually run; "none" means nothing to commit
     },
     "agent_calls": {
         "structured_json": "TEXT",  # the raw structured output, e.g. the judge's verdict
@@ -441,6 +442,7 @@ class Store:
         reason: str = "",
         bead_id: str | None = None,
         outbox: list[tuple[str, dict[str, Any]]] | None = None,
+        **extra_fields: Any,
     ) -> None:
         self.update_run(
             run_id,
@@ -452,6 +454,7 @@ class Store:
             event_reason=reason or outcome,
             bead_id=bead_id,
             outbox=outbox,
+            **extra_fields,
         )
         self.set_finished_runs_since_last_review(self.finished_runs_since_last_review() + 1)
 

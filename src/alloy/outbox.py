@@ -33,12 +33,27 @@ class DeliveryResult:
 
 
 def deliver_pending(store: Store, beads: BeadsClient, *, bead_id: str | None = None) -> list[DeliveryResult]:
-    """Deliver every pending row, in id order (per bead, rows are never
-    reordered -- a later row for the same bead assumes an earlier one already
-    landed). `bead_id=None` sweeps every bead with something pending, which is
-    the bounded set `Store.pending_bd_bead_ids` names, not Alloy's whole
-    history."""
-    return [_deliver_one(store, beads, row) for row in store.pending_bd_updates(bead_id)]
+    """Deliver every pending row, in id order. Per bead, a failed row (a
+    transient bd error, not a CAS conflict) stops delivery for *that bead*
+    for this call -- a later row might be a status transition that assumed
+    the failed one already landed (`implementing -> closed` assuming
+    `open -> implementing` succeeded); delivering it anyway would either
+    silently reorder bd's history or manufacture a CAS conflict that looks
+    like a human intervened when the real cause was Alloy's own failed
+    delivery. Other beads are unaffected. `bead_id=None` sweeps every bead
+    with something pending, which is the bounded set
+    `Store.pending_bd_bead_ids` names, not Alloy's whole history."""
+    results: list[DeliveryResult] = []
+    stalled: set[str] = set()
+    for row in store.pending_bd_updates(bead_id):
+        owner = row["bead_id"]
+        if owner in stalled:
+            continue
+        result = _deliver_one(store, beads, row)
+        results.append(result)
+        if not result.ok:
+            stalled.add(owner)
+    return results
 
 
 def _deliver_one(store: Store, beads: BeadsClient, row: dict[str, Any]) -> DeliveryResult:
@@ -66,9 +81,12 @@ def _deliver_one(store: Store, beads: BeadsClient, row: dict[str, Any]) -> Deliv
         if kind == "metadata":
             beads.set_metadata(bead_id, payload["values"])
         elif kind == "note":
-            beads.note(bead_id, payload["text"])
+            # check=True: note()/close() default to best-effort (never raise)
+            # for their many direct callers, but a silently swallowed failure
+            # here would mark an undelivered row delivered forever.
+            beads.note(bead_id, payload["text"], check=True)
         elif kind == "close":
-            beads.close(bead_id)
+            beads.close(bead_id, check=True)
         else:
             raise ValueError(f"unknown bd_outbox kind: {kind!r}")
         store.mark_bd_delivered(row["id"])

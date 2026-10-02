@@ -145,7 +145,7 @@ class Engine:
                 branch=None,
                 log_dir=None,
             )
-            if not self.beads.claim(bead_id):
+            if not self.beads.claim(bead_id, run_id=run_id):
                 self.store.discard_claiming_run(run_id)
                 raise EngineError(f"{bead_id} was claimed by someone else")
             claimed = True
@@ -185,16 +185,31 @@ class Engine:
     def _resolve_stuck_claiming(self, record: dict[str, Any]) -> dict[str, Any] | None:
         """A `claiming` row survived a crash with its owning process gone.
 
-        If bd never saw the claim, there is nothing to adopt: discard the row
-        and let the bead be offered fresh. If bd shows it `implementing`, the
-        claim did land -- promote the row to `running` (filling in the
+        If bd never saw *this* claim, there is nothing to adopt: discard the
+        row and let the bead be offered fresh. If bd shows it `implementing`
+        with `alloy_run_id` metadata matching this row's run_id -- stamped
+        atomically with the claim itself, see `BeadsClient.claim` -- the claim
+        did land: promote the row to `running` (filling in the
         worktree/branch/log_dir a crash this early never recorded) so the
         ordinary orphan-adoption path in `run()`/`Scheduler.recover()` picks
         it up exactly like any other crash survivor.
+
+        Checking `alloy_run_id`, not just the status, matters: two racing
+        claimants each create their own `claiming` row before either calls
+        `claim()`. Only one's claim can land in bd, but *both* rows could
+        independently crash before learning the outcome. Bd's status alone
+        can't tell which row is the real winner; the metadata bd's own CAS
+        update recorded can.
+
+        A transient read failure (bd itself unreachable) must never discard
+        the row -- that would be indistinguishable from "the claim never
+        landed" and strand the real winner. Only bd genuinely answering
+        "not this one" does.
         """
         bead_id = record["bead_id"]
         run_id = record["run_id"]
-        if self._bead_status(bead_id) != bd.STATUS_IMPLEMENTING:
+        bead = self.beads.show(bead_id)  # BeadsError propagates: unknown stays unresolved, not discarded
+        if bead.status != bd.STATUS_IMPLEMENTING or bead.metadata.get(bd.META_RUN_ID) != run_id:
             self.store.discard_claiming_run(run_id)
             return None
         worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
@@ -298,26 +313,31 @@ class Engine:
             self.store.discard_call(call["call_id"])
         if record.get("worktree"):
             WorktreeManager(repo=self.repo, root=self.paths.worktrees).stop_processes(Path(record["worktree"]))
+        # Which note/status to send depends on bd's current status -- read
+        # (never a write) *before* the atomic finish_run+outbox commit below,
+        # so a cancel never reopens work a human (or a prior run) already
+        # closed. The read and the write being two separate steps is fine;
+        # it's the local commit and its outbox rows that must never split.
+        if self._bead_status(bead_id) == bd.STATUS_DONE:
+            outbox: list[tuple[str, dict[str, Any]]] = [
+                ("note", {"text": f"alloy: run {record['run_id']} cancelled; the bead stays closed"})
+            ]
+        else:
+            outbox = [
+                ("status", {"status": bd.STATUS_READY, "if_status": None}),
+                (
+                    "note",
+                    {"text": f"alloy: run {record['run_id']} cancelled; worktree left at {record['worktree']}"},
+                ),
+            ]
         self.store.finish_run(
             record["run_id"],
             status=RUN_CANCELLED,
             outcome=Outcome.CANCELLED.value,
             reason="cancelled by operator",
+            bead_id=bead_id,
+            outbox=outbox,
         )
-        # Which note/status to send depends on bd's current status, read here
-        # rather than assumed -- a cancel must never reopen work a human (or
-        # a prior run) already closed.
-        if self._bead_status(bead_id) == bd.STATUS_DONE:
-            self.store.enqueue_bd_note(
-                bead_id, f"alloy: run {record['run_id']} cancelled; the bead stays closed", run_id=record["run_id"]
-            )
-        else:
-            self.store.enqueue_bd_status(bead_id, bd.STATUS_READY, run_id=record["run_id"])
-            self.store.enqueue_bd_note(
-                bead_id,
-                f"alloy: run {record['run_id']} cancelled; worktree left at {record['worktree']}",
-                run_id=record["run_id"],
-            )
         deliver_pending(self.store, self.beads, bead_id=bead_id)
 
     def _bead_status(self, bead_id: str) -> str | None:
@@ -364,15 +384,20 @@ class Engine:
         return RunResult(bead_id, "", Outcome.DONE.value, reason="all descendants closed")
 
     def _refuse_if_live(self, bead_id: str, record: dict[str, Any] | None) -> None:
+        # `claiming` counts as live too: a second process racing in while the
+        # first has already won bd's CAS but not yet promoted its row to
+        # `running` must not be let through to dispatch a second execution --
+        # bd's own status alone can't tell "mid-claim" from "stuck claim" (see
+        # `_resolve_stuck_claiming`), but a live pid here proves it's neither.
         if (
             record is not None
-            and record["status"] == RUN_RUNNING
+            and record["status"] in (RUN_RUNNING, RUN_CLAIMING)
             and pid_alive(record.get("pid"))
             and record.get("pid") != os.getpid()
         ):
             raise EngineError(
-                f"{bead_id} is already being run by pid {record['pid']} "
-                f"(run {record['run_id']}); `alloy cancel {bead_id}` stops it"
+                f"{bead_id} is already being {'claimed' if record['status'] == RUN_CLAIMING else 'run'} "
+                f"by pid {record['pid']} (run {record['run_id']}); `alloy cancel {bead_id}` stops it"
             )
 
     # -- graph plumbing ---------------------------------------------------
@@ -519,8 +544,25 @@ class Engine:
             else:
                 self.store.reconcile_inflight()
                 self.store.mark_resumed(run_id)
+                repair: dict[str, Any] = {}
+                if prior is not None and not prior.get("worktree"):
+                    # Adopting a row whose fresh pass never got far enough to
+                    # fill these in (a crash between promoting to `running`
+                    # and that first update) -- backfill them now rather than
+                    # leaving them NULL forever; nothing else ever will.
+                    repair = dict(
+                        worktree=str(ctx.worktree.path),
+                        branch=ctx.worktree.branch,
+                        log_dir=str(ctx.log_dir),
+                        base_commit=ctx.worktree.base_commit,
+                    )
                 self.store.update_run(
-                    run_id, bead_id=bead.id, outbox=dispatch_outbox, status=RUN_RUNNING, pid=os.getpid()
+                    run_id,
+                    bead_id=bead.id,
+                    outbox=dispatch_outbox,
+                    status=RUN_RUNNING,
+                    pid=os.getpid(),
+                    **repair,
                 )
                 log.info("%s: run %s resumed (%s)", bead.id, run_id, recipe_name)
 
@@ -617,12 +659,22 @@ class Engine:
         reason = final.get("outcome_reason", "")
 
         if outcome == Outcome.DONE.value:
+            # The commit happens *before* any of this is recorded, local or
+            # bd-facing -- a crash or a failed commit_wip here leaves the run
+            # still `running` (recoverable the ordinary way) rather than
+            # locally `done` with nothing proving the work was ever saved.
+            # `committed_sha` (even the "none" sentinel, for a verification-
+            # only task with nothing to commit) is what lets reconcile tell
+            # "done and verified" from "done locally, commit unconfirmed" --
+            # see `reconcile._status_after`.
+            commit_sha = ctx.worktrees.commit_wip(ctx.worktree, f"{bead.id}: {bead.title}")
             self.store.finish_run(
                 run_id,
                 status=RUN_DONE,
                 outcome=outcome,
                 reason=reason,
                 bead_id=bead.id,
+                committed_sha=commit_sha or "none",
                 outbox=[
                     ("status", {"status": bd.STATUS_DONE, "if_status": None}),
                     ("metadata", {"values": {bd.META_STAGE: "finished"}}),
@@ -635,10 +687,6 @@ class Engine:
                     ),
                 ],
             )
-            # bd is told "done" only once the real commit has actually
-            # happened: enqueueing happens with the local DONE status above,
-            # but delivery (the bd-facing side effect) waits until here.
-            ctx.worktrees.commit_wip(ctx.worktree, f"{bead.id}: {bead.title}")
             deliver_pending(self.store, self.beads, bead_id=bead.id)
         else:
             self.store.finish_run(
