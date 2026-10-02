@@ -1,0 +1,32 @@
+name: tdd-loop-complex-no-context
+roles:
+  harvest: {runner: claude, model: sonnet}
+  memory_reviewer: {runner: cursor, model: composer-2.5}
+  estimate: {runner: jev, model: jev-latest, timeout_minutes: 5, fallback: {runner: cursor, model: composer-2.5, timeout_minutes: 5}}
+  triage: {runner: jev, model: jev-latest, timeout_minutes: 5, fallback: {runner: cursor, model: composer-2.5, timeout_minutes: 5}}
+  scope: {runner: jev, model: jev-latest, timeout_minutes: 5, fallback: {runner: cursor, model: composer-2.5, timeout_minutes: 5}}
+  tests: {runner: claude-write, model: claude-sonnet-5-5, timeout_minutes: 20, fallback: {runner: codex, model: gpt-6.1-sol, effort: max, timeout_minutes: 20, fallback: {runner: cursor, model: kimi-k3-high, timeout_minutes: 20}}}
+  tests_review: {panel: [{runner: cursor-plan, model: composer-2.5, timeout_minutes: 10}, {runner: codex-readonly, model: gpt-6-luna, timeout_minutes: 10}], fallback: {runner: claude, model: sonnet, effort: low, timeout_minutes: 10}}
+  implement: {runner: claude-write, model: claude-sonnet-5-5, timeout_minutes: 25, fallback: {runner: codex, model: gpt-6.1-sol, effort: max, timeout_minutes: 25, fallback: {runner: cursor, model: kimi-k3-high, timeout_minutes: 25}}}
+  verifier: {runner: cursor, model: composer-2.5, timeout_minutes: 10, fallback: {runner: claude-write, model: sonnet, timeout_minutes: 10}}
+  acceptance: {runner: jev, model: jev-latest, timeout_minutes: 5, fallback: {runner: claude, model: sonnet, timeout_minutes: 5}}
+  judge: {runner: claude, model: sonnet, timeout_minutes: 10}
+consilium:
+  critics: [{runner: claude, model: sonnet}, {runner: codex-readonly}, {runner: pi}]
+  synthesizer: {runner: claude, model: sonnet}
+verification:
+  max_checks_per_iteration: 5
+  max_total_checks: 20
+  max_command_timeout_minutes: 15
+  max_baseline_repairs: 2
+  max_test_reviews: 2
+  min_acceptance_confidence: 0.6
+limits:
+  max_iterations: 5
+  max_consiliums: 1
+  max_wall_time_minutes: 90
+  max_agent_calls: 32
+on_success_status: review-ready
+cleanup_worktree_on_success: false
+runners:
+  jev: {api_key_file: ~/MY_SRC/jev.key}
