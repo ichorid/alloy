@@ -92,6 +92,19 @@ CREATE TABLE IF NOT EXISTS scheduler_meta (
     key          TEXT PRIMARY KEY,
     value        TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS bd_outbox (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    bead_id      TEXT NOT NULL,
+    run_id       TEXT,
+    kind         TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    delivered_at TEXT,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    last_error   TEXT
+);
+CREATE INDEX IF NOT EXISTS bd_outbox_pending_idx ON bd_outbox(bead_id, id) WHERE delivered_at IS NULL;
 """
 
 # scheduler_meta keys (alloy-4ef.19)
@@ -265,6 +278,105 @@ class Store:
         with self.connect() as conn:
             rows = conn.execute("SELECT * FROM runs WHERE status = ?", (RUN_CLAIMING,)).fetchall()
         return [dict(row) for row in rows if not _pid_alive(row["pid"])]
+
+    # -- bd outbox ----------------------------------------------------------
+    #
+    # A local SQLite commit is the one authoritative write; delivering it to
+    # bd (an external process, no shared transaction) is a replayable side
+    # effect, not a second authoritative write that can half-land. See
+    # `alloy.outbox.deliver_pending`.
+
+    def _enqueue_bd(
+        self, conn: sqlite3.Connection, *, bead_id: str, run_id: str | None, kind: str, payload: dict[str, Any]
+    ) -> int:
+        cursor = conn.execute(
+            "INSERT INTO bd_outbox (bead_id, run_id, kind, payload_json, created_at) VALUES (?,?,?,?,?)",
+            (bead_id, run_id, kind, json.dumps(payload), utcnow().isoformat()),
+        )
+        return int(cursor.lastrowid)
+
+    def enqueue_bd_status(
+        self,
+        bead_id: str,
+        status: str,
+        *,
+        if_status: str | None = None,
+        run_id: str | None = None,
+        conn: sqlite3.Connection | None = None,
+    ) -> int:
+        payload = {"status": status, "if_status": if_status}
+        if conn is not None:
+            return self._enqueue_bd(conn, bead_id=bead_id, run_id=run_id, kind="status", payload=payload)
+        with self.connect() as owned:
+            return self._enqueue_bd(owned, bead_id=bead_id, run_id=run_id, kind="status", payload=payload)
+
+    def enqueue_bd_metadata(
+        self,
+        bead_id: str,
+        values: dict[str, Any],
+        *,
+        run_id: str | None = None,
+        conn: sqlite3.Connection | None = None,
+    ) -> int:
+        payload = {"values": values}
+        if conn is not None:
+            return self._enqueue_bd(conn, bead_id=bead_id, run_id=run_id, kind="metadata", payload=payload)
+        with self.connect() as owned:
+            return self._enqueue_bd(owned, bead_id=bead_id, run_id=run_id, kind="metadata", payload=payload)
+
+    def enqueue_bd_note(
+        self,
+        bead_id: str,
+        text: str,
+        *,
+        run_id: str | None = None,
+        conn: sqlite3.Connection | None = None,
+    ) -> int:
+        payload = {"text": text}
+        if conn is not None:
+            return self._enqueue_bd(conn, bead_id=bead_id, run_id=run_id, kind="note", payload=payload)
+        with self.connect() as owned:
+            return self._enqueue_bd(owned, bead_id=bead_id, run_id=run_id, kind="note", payload=payload)
+
+    def enqueue_bd_close(
+        self, bead_id: str, *, run_id: str | None = None, conn: sqlite3.Connection | None = None
+    ) -> int:
+        if conn is not None:
+            return self._enqueue_bd(conn, bead_id=bead_id, run_id=run_id, kind="close", payload={})
+        with self.connect() as owned:
+            return self._enqueue_bd(owned, bead_id=bead_id, run_id=run_id, kind="close", payload={})
+
+    def pending_bd_updates(self, bead_id: str | None = None) -> list[dict[str, Any]]:
+        where = " WHERE delivered_at IS NULL" + (" AND bead_id = ?" if bead_id is not None else "")
+        params = (bead_id,) if bead_id is not None else ()
+        with self.connect() as conn:
+            rows = conn.execute(f"SELECT * FROM bd_outbox{where} ORDER BY id", params).fetchall()
+        return [dict(row) for row in rows]
+
+    def pending_bd_bead_ids(self) -> list[str]:
+        """Distinct beads with something still undelivered -- what a bounded
+        sweep needs to visit, instead of every bead Alloy has ever touched."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT bead_id FROM bd_outbox WHERE delivered_at IS NULL ORDER BY bead_id"
+            ).fetchall()
+        return [row["bead_id"] for row in rows]
+
+    def mark_bd_delivered(self, outbox_id: int, *, error: str | None = None) -> None:
+        """`error=None` marks the row delivered (or consumed as a CAS
+        conflict -- either way, done). An `error` leaves `delivered_at` NULL
+        and records the attempt, so the next sweep retries it."""
+        with self.connect() as conn:
+            if error is None:
+                conn.execute(
+                    "UPDATE bd_outbox SET delivered_at = ?, last_error = NULL WHERE id = ?",
+                    (utcnow().isoformat(), outbox_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE bd_outbox SET attempts = attempts + 1, last_error = ? WHERE id = ?",
+                    (error, outbox_id),
+                )
 
     @property
     def events(self) -> EventLog:
