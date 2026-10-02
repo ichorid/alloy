@@ -145,6 +145,11 @@ Requirements:
 - The tests must fail right now, because the behavior does not exist yet.
 - Do not write or modify implementation code. Tests only.
 - Do not weaken or delete existing tests.
+- Name test files, `group()`/`describe()` blocks and individual test descriptions after the
+  behavior they guarantee, not after this task's id, iteration number, or the bug report's own
+  wording. A reader with no access to this task should understand what each test is for. (A
+  bead-id prefix on the filename, if this repo's convention uses one, is only for collision
+  avoidance and carries no other meaning -- it does not belong in the test description itself.)
 - Alloy owns task tracking, verification and git: do not run `bd`, do not commit,
   and do not run the whole test suite -- run only the tests you wrote.
 
@@ -206,7 +211,10 @@ Only then read the tests and compare. Look for:
 - a test that pins incidental implementation details and would reject a correct solution;
 - edge cases, error paths and regressions the criteria imply but the tests skip;
 - tests that fail for the wrong reason (import error, typo, missing fixture) instead of
-  the missing behaviour.
+  the missing behaviour;
+- a test or group name that only makes sense with this task's report in hand (encodes the
+  task's id, iteration count, or the reporter's own narrative) instead of naming the behaviour
+  it guarantees -- flag this as an issue, it is not a style nit.
 
 Answer "sound" when the tests are a faithful, sufficient specification; small style points
 are not a reason to revise. Answer "revise" only with concrete, actionable `issues`, each

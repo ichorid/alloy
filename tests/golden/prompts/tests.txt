@@ -5,6 +5,11 @@ Requirements:
 - The tests must fail right now, because the behavior does not exist yet.
 - Do not write or modify implementation code. Tests only.
 - Do not weaken or delete existing tests.
+- Name test files, `group()`/`describe()` blocks and individual test descriptions after the
+  behavior they guarantee, not after this task's id, iteration number, or the bug report's own
+  wording. A reader with no access to this task should understand what each test is for. (A
+  bead-id prefix on the filename, if this repo's convention uses one, is only for collision
+  avoidance and carries no other meaning -- it does not belong in the test description itself.)
 - Alloy owns task tracking, verification and git: do not run `bd`, do not commit,
   and do not run the whole test suite -- run only the tests you wrote.
 
