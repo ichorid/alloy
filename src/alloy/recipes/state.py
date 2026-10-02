@@ -82,6 +82,60 @@ class TddState(TypedDict, total=False):
     resume_target: str | None  # where human_gate sends the resumed run
 
 
+class FastTrackState(TypedDict, total=False):
+    """State for the `fast-track` recipe: one role implements, proposes and
+    runs its own real checks, and judges its own done/retry/human. A deliberate
+    subset of TddState -- only the fields fast_track's own nodes read or write,
+    plus the handful of fields the reused `guard`/`finish`/`harvest`/
+    `start_final_pass`/`human_gate` closures read defensively via `.get(...)`."""
+
+    bead_id: str
+    run_id: str
+    title: str
+
+    memory_block: str
+    memory_check_hints: str
+    memory_pinned_checks: str
+    memory_calibration: str
+    memory_keys: list[str]
+    memory_lessons: dict[str, str]
+    memory_regressions: dict[str, str]
+
+    iteration: int
+    consiliums: int
+    retries_on_tier: int
+    escalations: Annotated[list[dict[str, Any]], operator.add]
+
+    instructions: str
+    implementer: str
+    worker_session: dict[str, Any] | None  # {runner, session_id} of the last implement call
+
+    pending_checks: list[dict[str, Any]]  # CheckRequest dicts the implementer proposed
+    checks: Annotated[list[dict[str, Any]], operator.add]
+    iteration_checks: int
+    unrunnable_streak: int
+    last_check: dict[str, Any] | None
+    last_instructions: str
+    verify_route: str | None  # where implement / run_check sent the run
+
+    attempts: Annotated[list[dict[str, Any]], operator.add]
+    reported_bugs: Annotated[list[dict[str, Any]], operator.add]
+    implementer_stopped: bool
+    change_summary: str
+    budget_extensions: int
+    journal: Annotated[list[str], operator.add]
+    final_pass: bool
+
+    stage: str
+    outcome: str | None
+    outcome_reason: str
+    limit_hit: str | None
+    human_note: str
+    resume_to: str | None
+    resume_target: str | None
+    decision: dict[str, Any] | None
+
+
 class CriticInput(TypedDict):
     """Each critic sees the same evidence and nothing from its peers."""
 

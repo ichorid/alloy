@@ -539,6 +539,52 @@ class JudgeDecision(BaseModel):
         }
 
 
+FAST_TRACK_ACTIONS: tuple[str, ...] = ("run_check", "done", "retry", "human")
+FastTrackAction = Literal["run_check", "done", "retry", "human"]
+
+
+class FastTrackVerdict(BaseModel):
+    """The fast-track role's single answer: propose checks to run, or judge
+    its own work done/retry/human. There is no separate verifier/acceptance/
+    judge role in this recipe -- one model does all three jobs; Alloy's only
+    enforcement is refusing a `done` with no check run this iteration (see
+    `fast_track._make_node_fast_implement`)."""
+
+    action: FastTrackAction
+    checks: list[CheckRequest] = Field(default_factory=list)
+    reason: str = ""
+    next_instructions: str = ""
+    confidence: float = 0.0
+
+    @classmethod
+    def schema_for_agents(cls) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": list(FAST_TRACK_ACTIONS)},
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "string"},
+                            "purpose": {"type": "string"},
+                            "kind": {"type": "string", "enum": list(CHECK_KINDS)},
+                            "required": {"type": "boolean"},
+                        },
+                        "required": ["command", "purpose", "kind", "required"],
+                        "additionalProperties": False,
+                    },
+                },
+                "reason": {"type": "string"},
+                "next_instructions": {"type": "string"},
+                "confidence": {"type": "number"},
+            },
+            "required": ["action", "checks", "reason", "next_instructions", "confidence"],
+            "additionalProperties": False,
+        }
+
+
 class Critique(BaseModel):
     """One consilium critic's independent opinion. Critics never touch code."""
 

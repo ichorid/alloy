@@ -27,6 +27,7 @@ ROLE_MARKERS = [
     ("triage", "You are triaging a bug report"),
     ("scope", "You are deciding whether a bug fix is safe to merge"),
     ("implement", "Implement the smallest change"),
+    ("implement", "Implement this task yourself, end to end"),
     ("verifier", "You are choosing the next verification check"),
     ("acceptance", "You are deciding whether there is enough evidence"),
     ("judge", "You are judging whether"),

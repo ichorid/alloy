@@ -10,7 +10,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Any, Callable, NamedTuple
 
-from alloy.recipes import tdd_loop
+from alloy.recipes import fast_track, tdd_loop
 
 
 class Recipe(NamedTuple):
@@ -62,6 +62,14 @@ REGISTRY: dict[str, Recipe] = {
         build_graph=partial(tdd_loop.build_graph, skip_context=True),
         initial_state=tdd_loop.initial_state,
         description="Fixed complex-tier tdd-loop (no live complexity routing): Sonnet primary, Codex gpt-6.1-sol then Cursor kimi-k3-high fallback",
+    ),
+    "fast-track": Recipe(
+        name="fast-track",
+        build_graph=fast_track.build_graph,
+        initial_state=fast_track.initial_state,
+        description="Single-role autonomous loop: one agent implements, proposes and runs its "
+        "own real verification commands, and self-judges done/retry -- for simple beads or "
+        "beads TDD fits poorly",
     ),
 }
 

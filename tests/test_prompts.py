@@ -123,7 +123,20 @@ HARVEST_EXISTING_LESSONS = {
     "alloy:lesson:prior-a": "Run targeted tests before the full suite.",
 }
 
-TDD_LOOP_ROLE_MARKERS = tuple((role, marker) for role, marker in ROLE_MARKERS if role in PROMPT_ROLES)
+def _first_marker_per_role(markers):
+    """The first ROLE_MARKERS entry for each role: the one `find_prompt`
+    actually matches first, and the only one tdd_loop's own prompt for that
+    role is guaranteed to contain (a role can have more than one marker --
+    e.g. `implement` also matches fast_track's distinct prompt)."""
+    seen: dict[str, str] = {}
+    for role, marker in markers:
+        seen.setdefault(role, marker)
+    return tuple(seen.items())
+
+
+TDD_LOOP_ROLE_MARKERS = _first_marker_per_role(
+    (role, marker) for role, marker in ROLE_MARKERS if role in PROMPT_ROLES
+)
 
 # Distinctive rule sentences that must survive the refactor (grep list).
 RULE_SENTENCES = [

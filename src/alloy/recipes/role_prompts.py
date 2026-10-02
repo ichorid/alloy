@@ -302,6 +302,65 @@ def implement_prompt(
     ).text
 
 
+FAST_TRACK_STATIC = f"""Implement this task yourself, end to end, in one autonomous loop. There is no
+separate tests-writer, verifier, acceptance or judge role here -- you do all of it:
+
+- Make the change.
+- Propose the narrowest real command(s) that prove it works (a targeted test, a build, a
+  lint -- whatever actually verifies this change in this repo). Alloy runs them for real
+  and reports the exit codes and output back to you; you never get to assume a result.
+- Decide for yourself when you are actually done, when you need another cycle, or when you
+  are stuck and a human should look.
+
+Rules:
+- Do not claim `done` without Alloy having run at least one real check this iteration that
+  supports it. A `done` with no checks proposed is rejected and forced back into verification.
+- Do not disable, skip, or loosen checks to get green.
+- Alloy owns task tracking and git: do not run `bd`, do not commit.
+
+Answer with the structured output:
+- action: "run_check" to propose checks and keep going, "done" once verified, "retry" if you
+  need another implementation pass without new checks yet, "human" if you are stuck.
+- checks: the CheckRequest(s) to run now (only meaningful with action="run_check" or alongside
+  "done").
+- reason / next_instructions / confidence: your reasoning, what you did or will do next, and
+  how confident you are.
+
+{BUG_PROTOCOL}"""
+
+
+def fast_track_prompt(
+    brief: str,
+    acceptance: str,
+    instructions: str,
+    history: list[dict[str, Any]],
+    *,
+    last_checks: list[dict[str, Any]] | None = None,
+    diff: str = "",
+    memory: str = "",
+) -> str:
+    task = [_task_layer(brief, acceptance)]
+    volatile: list[str] = []
+    if last_checks:
+        volatile.append("## Last checks\n" + _render_results(last_checks))
+    if diff:
+        volatile.append(_diff_section(diff))
+    if history:
+        volatile.append("## Previous attempts\n" + _render_history(history))
+    if instructions:
+        volatile.append(f"## Required changes this iteration\n{instructions}")
+    return assemble(
+        FAST_TRACK_STATIC,
+        _project_layer(memory),
+        "",
+        "\n\n".join(task),
+        "\n\n".join(volatile),
+    ).text
+
+
+fast_track_prompt.__test__ = False
+
+
 def triage_prompt(
     brief: str,
     acceptance: str,
