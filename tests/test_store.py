@@ -726,6 +726,76 @@ def test_call_count_include_children_sums_child_agent_calls(store: Store):
     assert store.call_count("parent", include_children=True) == 5
 
 
+# -- claiming runs (the claim/create_run race fix) -------------------------
+
+
+def _make_claiming_run(store: Store, run_id: str, *, bead_id: str | None = None, pid: int | None = None) -> None:
+    store.create_claiming_run(
+        run_id=run_id,
+        bead_id=bead_id or f"bead-{run_id}",
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=Path("/repo"),
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    if pid is not None:
+        store.update_run(run_id, pid=pid)
+
+
+def test_create_claiming_run_inserts_a_row_in_claiming_status(store: Store):
+    from alloy.store import RUN_CLAIMING
+
+    _make_claiming_run(store, "r1")
+
+    record = store.get_run("r1")
+    assert record["status"] == RUN_CLAIMING
+    assert record["worktree"] is None
+
+
+def test_discard_claiming_run_deletes_the_row(store: Store):
+    _make_claiming_run(store, "r1")
+
+    store.discard_claiming_run("r1")
+
+    assert store.get_run("r1") is None
+
+
+def test_discard_claiming_run_never_deletes_a_promoted_row(store: Store):
+    """A row that already left `claiming` must survive a stale discard call
+    (e.g. a lost-race path racing against a concurrent promotion)."""
+    from alloy.store import RUN_RUNNING
+
+    _make_claiming_run(store, "r1")
+    store.update_run("r1", status=RUN_RUNNING)
+
+    store.discard_claiming_run("r1")
+
+    assert store.get_run("r1") is not None
+    assert store.get_run("r1")["status"] == RUN_RUNNING
+
+
+def test_stuck_claiming_runs_only_returns_rows_with_a_dead_pid(store: Store):
+    import os
+
+    _make_claiming_run(store, "alive", pid=os.getpid())
+    _make_claiming_run(store, "dead", pid=dead_pid())
+
+    stuck_ids = {run["run_id"] for run in store.stuck_claiming_runs()}
+
+    assert stuck_ids == {"dead"}
+
+
+def test_stuck_claiming_runs_omits_rows_already_promoted_to_running(store: Store):
+    from alloy.store import RUN_RUNNING
+
+    _make_claiming_run(store, "r1", pid=dead_pid())
+    store.update_run("r1", status=RUN_RUNNING)
+
+    assert store.stuck_claiming_runs() == []
+
+
 def test_orphaned_runs_omits_child_while_parent_still_running(store: Store):
     import os
 

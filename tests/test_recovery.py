@@ -272,3 +272,118 @@ async def test_killed_mid_check_resumes_without_rerunning_finished_stages_or_che
 
     check_logs = list(log_dir.glob("check-*.log"))
     assert len(check_logs) == len(checks) + 1
+
+
+# -- the claim/create_run race (a `claiming` row always exists to recover from) --
+
+
+def dead_pid() -> int:
+    """The pid of a process that has exited and been reaped."""
+    process = subprocess.Popen([sys.executable, "-c", "pass"])
+    process.wait(timeout=30)
+    return process.pid
+
+
+async def test_a_stuck_claiming_row_is_discarded_when_bd_never_saw_the_claim(beads_project, alloy_home, fake_harnesses):
+    """Crash between creating the row and calling `beads.claim`: bd still says
+    `open`, so there is nothing to adopt -- the row is discarded and the bead
+    is offered fresh."""
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    engine = Engine.open(beads_project, alloy_home)
+    engine.store.create_claiming_run(
+        run_id="stuck-1",
+        bead_id=bead_id,
+        thread_id="stuck-1",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    engine.store.update_run("stuck-1", pid=dead_pid())
+    assert engine.beads.show(bead_id).status == bd.STATUS_READY
+
+    result = await engine.run(bead_id)
+
+    assert result.outcome == "done"
+    assert engine.store.get_run("stuck-1") is None  # discarded, not left behind
+    assert result.run_id != "stuck-1"  # a fresh run, not an adoption
+    assert engine.beads.show(bead_id).status == bd.STATUS_DONE
+
+
+async def test_a_stuck_claiming_row_is_promoted_and_adopted_when_bd_saw_the_claim(
+    beads_project, alloy_home, fake_harnesses
+):
+    """Crash between `beads.claim` succeeding and promoting the row to
+    `running`: bd already says `implementing`, so the row is promoted and
+    adopted exactly like any other crash survivor -- same run_id continued."""
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    engine = Engine.open(beads_project, alloy_home)
+    assert engine.beads.claim(bead_id) is True
+    engine.store.create_claiming_run(
+        run_id="stuck-2",
+        bead_id=bead_id,
+        thread_id="stuck-2",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    engine.store.update_run("stuck-2", pid=dead_pid())
+
+    result = await engine.run(bead_id)
+
+    assert result.outcome == "done"
+    assert result.run_id == "stuck-2"  # the same run, continued
+    record = engine.store.get_run("stuck-2")
+    assert record["status"] == "done"
+    assert record["worktree"] == str(beads_project)  # filled in at promotion
+    assert engine.beads.show(bead_id).status == bd.STATUS_DONE
+
+
+async def test_recover_resolves_stuck_claiming_runs_before_adopting_orphans(beads_project, alloy_home, fake_harnesses):
+    """`Scheduler.recover()` sweeps `claiming` rows too, not just `running` ones."""
+    from alloy.scheduler import Scheduler
+
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    engine = Engine.open(beads_project, alloy_home)
+    assert engine.beads.claim(bead_id) is True
+    engine.store.create_claiming_run(
+        run_id="stuck-3",
+        bead_id=bead_id,
+        thread_id="stuck-3",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    engine.store.update_run("stuck-3", pid=dead_pid())
+
+    scheduler = Scheduler(engine=engine, poll_seconds=0.01, once=True)
+    recovered = await scheduler.recover()
+
+    assert recovered == [bead_id]
+    assert engine.store.get_run("stuck-3")["status"] == "done"
+    assert engine.beads.show(bead_id).status == bd.STATUS_DONE
+
+
+async def test_a_lost_claim_race_discards_the_row_and_raises(beads_project, alloy_home, fake_harnesses, monkeypatch):
+    """`beads.claim` losing the CAS race must not leave an orphaned `claiming`
+    row behind -- there is nothing for recovery to adopt, so there must be
+    nothing left to find."""
+    from alloy.engine import EngineError
+
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    engine = Engine.open(beads_project, alloy_home)
+    monkeypatch.setattr(engine.beads, "claim", lambda *a, **k: False)
+
+    with pytest.raises(EngineError, match="claimed by someone else"):
+        await engine.run(bead_id)
+
+    assert engine.store.latest_run_for_bead(bead_id) is None

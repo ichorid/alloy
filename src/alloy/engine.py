@@ -32,6 +32,7 @@ from alloy.runners import RunnerRegistry
 from alloy.runtime import RunContext
 from alloy.store import (
     RUN_CANCELLED,
+    RUN_CLAIMING,
     RUN_DONE,
     RUN_FAILED,
     RUN_RUNNING,
@@ -87,6 +88,13 @@ class Engine:
         """Start a fresh run, or continue one that was interrupted by a crash."""
         bead = self.beads.show(bead_id)
         latest = self.store.latest_run_for_bead(bead_id)
+        if latest is not None and latest["status"] == RUN_CLAIMING and not pid_alive(latest.get("pid")):
+            # A crash between creating the row and confirming the bd claim.
+            # There is always something to resolve here -- unlike claiming bd
+            # first, which could strand the bead `implementing` with no row
+            # anywhere for recovery to find.
+            latest = self._resolve_stuck_claiming(latest)
+            bead = self.beads.show(bead_id)
         self._refuse_if_live(bead_id, latest)
         existing = self._resumable_run(bead_id)
         if existing is not None:
@@ -113,25 +121,83 @@ class Engine:
             raise EngineError(
                 f"{bead_id} has no recipe; set one with `bd update {bead_id} --set-metadata {bd.META_RECIPE}=tdd-loop`"
             )
-        # Everything that can be checked without touching the bead is checked
-        # first: a claim followed by a crash used to strand the bead in
-        # `implementing` with no run record for recovery to find.
         self.validate_recipe(name)
         if bead.status not in (bd.STATUS_READY, bd.STATUS_IMPLEMENTING):
             raise EngineError(f"{bead_id} is '{bead.status}'; only '{bd.STATUS_READY}' beads can start")
+
+        run_id = uuid.uuid4().hex
         claimed = False
         if bead.status == bd.STATUS_READY:
+            # The row is created before bd is ever touched: a crash between
+            # this and the claim leaves a `claiming` row with nothing in bd
+            # yet (discarded below on a lost race, or by `recover()` on a
+            # crash); a crash between the claim and promoting to `running`
+            # leaves a row bd already agrees the bead is claimed for (also
+            # resolved by `recover()`). Either window always has a row.
+            self.store.create_claiming_run(
+                run_id=run_id,
+                bead_id=bead_id,
+                thread_id=run_id,
+                recipe=name,
+                repo=self.repo,
+                worktree=None,
+                branch=None,
+                log_dir=None,
+            )
             if not self.beads.claim(bead_id):
+                self.store.discard_claiming_run(run_id)
                 raise EngineError(f"{bead_id} was claimed by someone else")
             claimed = True
+            self.store.update_run(run_id, status=RUN_RUNNING)
+        else:
+            # Already `implementing` with no row (a stuck-claiming retry, or
+            # pre-dating this mechanism): no new bd claim needed.
+            self.store.create_run(
+                run_id=run_id,
+                bead_id=bead_id,
+                thread_id=run_id,
+                recipe=name,
+                repo=self.repo,
+                worktree=None,
+                branch=None,
+                log_dir=None,
+            )
         try:
-            return await self._execute(bead, name, run_id=None, resume_payload=None)
-        except EngineError:
-            # Failed before a run record existed (worktree, config): hand the
+            return await self._execute(bead, name, run_id=run_id, thread_id=run_id, resume_payload=None, fresh=True)
+        except EngineError as exc:
+            # Failed before any real work started (worktree, config): hand the
             # bead back so it is offered again instead of looking busy forever.
-            if claimed and self.store.latest_run_for_bead(bead_id) == latest:
-                self.beads.set_status(bead_id, bd.STATUS_READY, if_status=bd.STATUS_IMPLEMENTING)
+            if claimed:
+                current = self.store.get_run(run_id)
+                if current is not None and current["status"] == RUN_RUNNING:
+                    self.store.finish_run(run_id, status=RUN_CANCELLED, outcome=Outcome.CANCELLED.value, reason=str(exc))
+                    self.beads.set_status(bead_id, bd.STATUS_READY, if_status=bd.STATUS_IMPLEMENTING)
             raise
+
+    def _resolve_stuck_claiming(self, record: dict[str, Any]) -> dict[str, Any] | None:
+        """A `claiming` row survived a crash with its owning process gone.
+
+        If bd never saw the claim, there is nothing to adopt: discard the row
+        and let the bead be offered fresh. If bd shows it `implementing`, the
+        claim did land -- promote the row to `running` (filling in the
+        worktree/branch/log_dir a crash this early never recorded) so the
+        ordinary orphan-adoption path in `run()`/`Scheduler.recover()` picks
+        it up exactly like any other crash survivor.
+        """
+        bead_id = record["bead_id"]
+        run_id = record["run_id"]
+        if self._bead_status(bead_id) != bd.STATUS_IMPLEMENTING:
+            self.store.discard_claiming_run(run_id)
+            return None
+        worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
+        self.store.update_run(
+            run_id,
+            status=RUN_RUNNING,
+            worktree=str(self.repo),
+            branch=worktrees.current_branch() or "HEAD",
+            log_dir=str(self.paths.run_logs(run_id)),
+        )
+        return self.store.get_run(run_id)
 
     async def resume(self, bead_id: str, instructions: str = "") -> RunResult:
         """Continue a paused or crashed run, optionally answering the human gate."""
@@ -308,6 +374,7 @@ class Engine:
         checkpointer: Any,
         worktree: Worktree | None = None,
         base_commit: str | None = None,
+        fresh: bool = False,
     ) -> RunContext:
         config = self.load_config(recipe_name)
         worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
@@ -316,7 +383,13 @@ class Engine:
             # branch is already checked out there -- no isolated worktree, no
             # separate bead branch.
             worktree = Worktree(bead.id, self.repo, "", base_commit or worktrees.head(self.repo))
-            retrying_own_work = self.store.latest_run_for_bead(bead.id) is not None
+            # `run()` always creates this run's own row before calling here,
+            # so on a true first-ever dispatch this run_id is the only row
+            # for the bead. A resume/orphan-adopt (`not fresh`) or a fresh
+            # retry after a past attempt (a *different*, prior run_id already
+            # on record) both mean dirty state here is this bead's own work,
+            # not something foreign to refuse on.
+            retrying_own_work = not fresh or any(r["run_id"] != run_id for r in self.store.runs_for_bead(bead.id))
             if not base_commit and not retrying_own_work and worktrees.has_uncommitted_tracked_changes(self.repo):
                 # commit_wip does `git add -A`: on a truly fresh in-place
                 # start (never run before, not a resume/retry of this
@@ -361,15 +434,20 @@ class Engine:
         bead: Bead,
         recipe_name: str,
         *,
-        run_id: str | None,
+        run_id: str,
         resume_payload: dict[str, Any] | None,
         thread_id: str | None = None,
         worktree: Worktree | None = None,
         parent_run_id: str | None = None,
+        fresh: bool = False,
     ) -> RunResult:
+        """`fresh=True` means `run_id` already names a `running` row `run()`
+        created and populated with bd's claim before calling here (see
+        `Engine.run`); this only fills in the worktree/branch/log_dir/
+        base_commit a claim-time row cannot know yet. `fresh=False` (resuming
+        an existing run, orphaned or paused) never touches those -- they were
+        already recorded by this same run's own earlier fresh pass."""
         recipe = recipes.get(recipe_name)
-        fresh = run_id is None
-        run_id = run_id or uuid.uuid4().hex
         # One graph thread per run, not per bead: re-running a cancelled bead
         # must start from an empty graph, not inherit the abandoned one.
         thread_id = thread_id or run_id
@@ -387,20 +465,20 @@ class Engine:
                     checkpointer=checkpointer,
                     worktree=worktree,
                     base_commit=recorded_base,
+                    fresh=fresh,
                 )
             except (ConfigError, KeyError, WorktreeError) as exc:
                 raise EngineError(str(exc)) from exc
 
             if fresh:
-                self.store.create_run(
-                    run_id=run_id,
-                    bead_id=bead.id,
-                    thread_id=thread_id,
-                    recipe=recipe_name,
-                    repo=self.repo,
-                    worktree=ctx.worktree.path,
+                # The row already exists (`run()` created it, running, before
+                # ever calling here) -- this only fills in what a claim-time
+                # row cannot know yet.
+                self.store.update_run(
+                    run_id,
+                    worktree=str(ctx.worktree.path),
                     branch=ctx.worktree.branch,
-                    log_dir=ctx.log_dir,
+                    log_dir=str(ctx.log_dir),
                     parent_run_id=parent_run_id,
                     base_commit=ctx.worktree.base_commit,
                 )

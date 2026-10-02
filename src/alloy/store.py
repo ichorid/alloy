@@ -98,6 +98,10 @@ CREATE TABLE IF NOT EXISTS scheduler_meta (
 META_FINISHED_RUNS_SINCE_REVIEW = "finished_runs_since_last_review"
 META_LAST_MEMORY_REVIEW_DAY = "last_memory_review_day"
 
+RUN_CLAIMING = "claiming"
+"""The run row exists, but the bd claim (open -> implementing) has not been
+confirmed yet. A crash in this narrow window is what `Store.stuck_claiming_runs`
+recovers -- distinct from `RUN_RUNNING`, where the claim is already settled."""
 RUN_RUNNING = "running"
 RUN_WAITING_HUMAN = "waiting-human"
 RUN_DONE = "done"
@@ -201,6 +205,66 @@ class Store:
                     base_commit,
                 ),
             )
+
+    def create_claiming_run(
+        self,
+        *,
+        run_id: str,
+        bead_id: str,
+        thread_id: str,
+        recipe: str,
+        repo: Path,
+        worktree: Path | None,
+        branch: str | None,
+        log_dir: Path | None,
+        parent_run_id: str | None = None,
+        base_commit: str | None = None,
+    ) -> None:
+        """A run row that exists before bd has been asked to claim the bead.
+
+        A crash between this and the bd claim leaves a `claiming` row with
+        nothing in bd yet (`stuck_claiming_runs` discards it, the bead is
+        retried fresh); a crash between the bd claim and `update_run(...,
+        status=RUN_RUNNING)` leaves a `claiming` row bd already agreed to
+        (`stuck_claiming_runs` promotes and adopts it). Either way there is
+        always a row to recover from -- unlike claiming bd first.
+        """
+        now = utcnow().isoformat()
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO runs (run_id, bead_id, thread_id, recipe, repo, worktree, branch,"
+                " status, stage, started_at, updated_at, log_dir, pid, parent_run_id, base_commit)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    run_id,
+                    bead_id,
+                    thread_id,
+                    recipe,
+                    str(repo),
+                    str(worktree) if worktree else None,
+                    branch,
+                    RUN_CLAIMING,
+                    "claiming",
+                    now,
+                    now,
+                    str(log_dir) if log_dir else None,
+                    os.getpid(),
+                    parent_run_id,
+                    base_commit,
+                ),
+            )
+
+    def discard_claiming_run(self, run_id: str) -> None:
+        """The bd claim was lost: nothing else can reference this row yet."""
+        with self.connect() as conn:
+            conn.execute("DELETE FROM runs WHERE run_id = ? AND status = ?", (run_id, RUN_CLAIMING))
+
+    def stuck_claiming_runs(self) -> list[dict[str, Any]]:
+        """`claiming` rows whose owning process is gone -- the narrow window
+        between creating the row and confirming bd's claim survived a crash."""
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM runs WHERE status = ?", (RUN_CLAIMING,)).fetchall()
+        return [dict(row) for row in rows if not _pid_alive(row["pid"])]
 
     @property
     def events(self) -> EventLog:
