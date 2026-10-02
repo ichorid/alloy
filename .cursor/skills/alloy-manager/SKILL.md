@@ -16,9 +16,22 @@ Act rather than ask. Stop and escalate only for the cases under "Hard limits".
 3. Make sure a scheduler is running: `alloy status --json`. If none is, run `alloy start`.
 4. Tail `alloy events --follow --attention`. Every ~15 min, also run `alloy status --json`.
 
+## Bead intake: pre-seed complexity and recipe
+Small tasks going through the full TDD-loop pipeline (tests role, triage, verifier, acceptance, judge) waste calls they don't need. Alloy no longer estimates complexity with an LLM call when a bead already carries `alloy_complexity` metadata — the `estimate` node short-circuits to that override. So: before (or as part of) activating any bead that doesn't yet carry `alloy_complexity`/`alloy_recipe` — including bugs Alloy's own triage auto-files, which you don't create by hand — set both:
+
+```
+bd update <bead> --set-metadata alloy_complexity=<simple|medium|complex> --set-metadata alloy_recipe=<recipe-name>
+```
+
+Rule:
+- **simple**, or TDD is a poor fit by your own judgment (pure config/doc edits, one-liners, environment/investigation tasks with no meaningful red/green cycle) → `alloy_recipe=fast-track`. One role implements, proposes and runs its own real checks, and self-judges done/retry — no separate tests/verifier/acceptance/judge round.
+- **medium** → `alloy_recipe=tdd-loop-medium-no-context`.
+- **complex** → `alloy_recipe=tdd-loop-complex-no-context`.
+
+Do this during the periodic grooming sweep too, to backfill any bead that slipped through without this metadata — not only at the moment a bead is first created.
+
 ## Main loop: react to each event
 - **nothing dispatches or a `stalled` hold**: run `alloy reconcile <holder>`.
-  - review-ready holder: `alloy land <holder>`.
   - holder waiting on an open repair bug: let it run, or fix it yourself (below).
   - holder whose run has no live process: `alloy run <holder>` adopts it; `alloy cancel <holder>` drops it.
 - **needs-human**: read the reason, then verify the tree yourself (run the tests, lint, build). Then do one of:
@@ -28,25 +41,25 @@ Act rather than ask. Stop and escalate only for the cases under "Hard limits".
 - **failed**: read `alloy logs <bead>` and the bead notes.
   - Environment problem: fix it, `bd update <bead> -s open`, let it re-run.
   - Task problem: tighten the description or acceptance, or split the bead into smaller ones, then reopen.
-- **landing parked or repeated land failures**: the cause is almost always outside the bead's code (a stale test, a check command, branch state). Fix it directly on `main`, commit, then `alloy land <bead>`.
+
+A bead runs directly on the primary checkout and finishes `done` on its own once its own in-loop broader check passes — there is no separate land step or `review-ready`-awaiting-land state to act on.
 
 ## Fix things once, at the source
 - **Check-command gaps**: when a failure recurs, put the verified command in `bd remember --key check-hints "<kind>: <full command>"`, or fix the target repo's script or test. Never fix it only for one run.
-- **Missing codegen in worktrees**: add an executable `<repo>/.alloy/worktree-setup`.
 - **Recipe switch**: `alloy assign-recipe <new> --apply`. It skips epics and manual beads.
 - **Tests that compare against `main`** break in in-place mode: fix or drop that comparison in the target repo.
 - **Oversized remediation rejected as too-broad**: cherry-pick the files listed as needed, commit, then resume the parent.
 
 ## Doing work by hand
-- Beads run in place on the primary checkout. Don't edit the checkout while a bead runs in place. Either stop first (`alloy stop`, then wait), or set `alloy_use_worktree=true` on beads that must run alongside you.
+- Beads run in place on the primary checkout, always. Don't edit the checkout while a bead runs; stop first (`alloy stop`, then wait).
 - Commit before letting Alloy start again: an in-place start refuses while tracked files are uncommitted.
-- Finishing a bead yourself: run the quality gates (tests, lint, build), commit, `git push`, `bd close <bead>`, then `alloy reconcile <bead> --apply` to clear stale run or land state.
-- Epics close by landing once all their children are closed. Don't run epics.
+- Finishing a bead yourself: run the quality gates (tests, lint, build), commit, `git push`, `bd close <bead>`, then `alloy reconcile <bead> --apply` to clear stale run state.
+- Epics close once all their children are closed. Don't run epics.
 - Checklists and gates: label them `manual`, complete them yourself, then close them.
 
 ## Commits and pushes
 - Commit small and often, with messages naming the bead.
-- After each land or manual fix: `git pull --rebase && git push`. If the push fails, resolve it and retry; never force-push `main`.
+- After each manual fix: `git pull --rebase && git push`. If the push fails, resolve it and retry; never force-push `main`.
 - Run the full suite before any push that touches shared code.
 
 ## Hard limits: escalate instead of acting
