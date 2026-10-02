@@ -279,6 +279,19 @@ class BeadsClient:
             return [row] if row else []
         return self._json(["show", bead_id])
 
+    def show_many(self, bead_ids: list[str]) -> dict[str, Bead]:
+        """Resolve several ids at once: one `bd show` per id normally costs a
+        subprocess each (idle ~0.25s, more under contention) -- call this
+        inside a `snapshot()` block to serve every one of them from that single
+        bulk fetch instead. Ids bd cannot find are simply absent from the
+        result, same as a failed `show()` raising would otherwise signal."""
+        found: dict[str, Bead] = {}
+        for bead_id in bead_ids:
+            rows = self._show_rows(bead_id)
+            if rows:
+                found[bead_id] = Bead.model_validate(rows[0])
+        return found
+
     def epic_for(self, bead_id: str, *, max_depth: int = 3) -> str | None:
         """Return the nearest epic ancestor's id, or None when there isn't one."""
         current = bead_id

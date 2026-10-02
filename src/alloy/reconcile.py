@@ -42,17 +42,24 @@ class Finding:
 
 
 def reconcile(engine: Engine, bead_ids: list[str] | None = None, *, apply: bool = False) -> list[Finding]:
-    """Every mismatch for `bead_ids` (default: every bead Alloy has touched)."""
-    ids = bead_ids or _touched_beads(engine)
+    """Every mismatch for `bead_ids` (default: `_touched_beads`'s bounded set).
+
+    Reads happen inside one `snapshot()` -- a single bulk `bd list` instead of
+    one `bd show` subprocess per bead (the actual cost of a full pass: ~394
+    beads at ~0.25s each is minutes, the bulk fetch is one call). Writes, in
+    `--apply`, happen afterward and are never snapshotted.
+    """
     scheduler_pid = read_pid(engine.paths.scheduler_pid)
     findings: list[Finding] = []
-    for bead_id in ids:
-        try:
-            bead = engine.beads.show(bead_id)
-        except bd.BeadsError as exc:
-            findings.append(Finding(bead_id, f"bd cannot show it: {exc}", "none; check the id"))
-            continue
-        findings += _check_bead(engine, bead, scheduler_pid)
+    with engine.beads.snapshot():
+        ids = bead_ids or _touched_beads(engine)
+        resolved = engine.beads.show_many(ids)
+        for bead_id in ids:
+            bead = resolved.get(bead_id)
+            if bead is None:
+                findings.append(Finding(bead_id, "bd cannot show it", "none; check the id"))
+                continue
+            findings += _check_bead(engine, bead, scheduler_pid)
     if apply:
         for finding in findings:
             if finding.action is not None:
@@ -62,8 +69,19 @@ def reconcile(engine: Engine, bead_ids: list[str] | None = None, *, apply: bool 
 
 
 def _touched_beads(engine: Engine) -> list[str]:
-    ids = {bead.id for bead in engine.beads.alloy_beads()}
-    ids |= {run["bead_id"] for run in engine.store.all_runs(limit=10_000, repo=engine.repo)}
+    """Every bead worth checking: active runs (where bd and the run ledger
+    could have drifted -- the outbox makes Alloy's own writes land together,
+    but bd still accepts writes Alloy never asked for, like a manual `bd
+    close`), every bead that has ever carried a recipe (one bulk `bd list`
+    call, needed for the legacy-land-metadata and manual-bead-with-recipe
+    checks below -- not one `bd show` per bead), and beads currently in a
+    status only Alloy's own write paths should produce. Not every bead Alloy
+    has ever run a workflow for -- that was `all_runs(limit=10_000)`, scanning
+    every run of every bead ever, the actual source of a 10+ minute pass over
+    this project's history.
+    """
+    ids = {run["bead_id"] for run in engine.store.active_runs(engine.repo)}
+    ids |= {bead.id for bead in engine.beads.alloy_beads()}
     for status in (bd.STATUS_REVIEW_READY, bd.STATUS_IMPLEMENTING, bd.STATUS_WAITING_HUMAN):
         ids |= {bead.id for bead in engine.beads.list_by_status(status)}
     return sorted(ids)
