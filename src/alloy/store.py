@@ -383,19 +383,39 @@ class Store:
         """The attention feed next to the database (see alloy.events)."""
         return EventLog(self.path.parent / "events.jsonl")
 
-    def update_run(self, run_id: str, *, event_reason: str = "", **fields: Any) -> None:
-        if not fields:
+    def update_run(
+        self,
+        run_id: str,
+        *,
+        event_reason: str = "",
+        bead_id: str | None = None,
+        outbox: list[tuple[str, dict[str, Any]]] | None = None,
+        **fields: Any,
+    ) -> None:
+        """`outbox` (kind, payload) pairs, e.g. from `Store.enqueue_bd_status`'s
+        own payload shape, are inserted into `bd_outbox` in the *same*
+        transaction as this row's update -- `bead_id` is then required, since
+        there is no other way to know whose outbox the rows belong to. This is
+        the one write Alloy itself is authoritative for; delivering it to bd
+        is `alloy.outbox.deliver_pending`'s job, called separately."""
+        if not fields and not outbox:
             return
-        fields["updated_at"] = utcnow().isoformat()
-        assignments = ", ".join(f"{key} = ?" for key in fields)
+        if outbox:
+            assert bead_id is not None, "bead_id is required to enqueue outbox rows"
+        if fields:
+            fields["updated_at"] = utcnow().isoformat()
         with self.connect() as conn:
             previous = None
             if "status" in fields:
                 previous = conn.execute("SELECT status, bead_id FROM runs WHERE run_id = ?", (run_id,)).fetchone()
-            conn.execute(
-                f"UPDATE runs SET {assignments} WHERE run_id = ?",
-                (*fields.values(), run_id),
-            )
+            if fields:
+                assignments = ", ".join(f"{key} = ?" for key in fields)
+                conn.execute(
+                    f"UPDATE runs SET {assignments} WHERE run_id = ?",
+                    (*fields.values(), run_id),
+                )
+            for kind, payload in outbox or ():
+                self._enqueue_bd(conn, bead_id=bead_id, run_id=run_id, kind=kind, payload=payload)
         if previous is not None and previous["status"] != fields["status"]:
             self._announce(
                 run_id,
@@ -412,7 +432,16 @@ class Store:
         if event is not None:
             self.events.emit(event, bead=bead_id, run=run_id, reason=reason)
 
-    def finish_run(self, run_id: str, *, status: str, outcome: str, reason: str = "") -> None:
+    def finish_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        outcome: str,
+        reason: str = "",
+        bead_id: str | None = None,
+        outbox: list[tuple[str, dict[str, Any]]] | None = None,
+    ) -> None:
         self.update_run(
             run_id,
             status=status,
@@ -421,6 +450,8 @@ class Store:
             ended_at=utcnow().isoformat(),
             pid=None,
             event_reason=reason or outcome,
+            bead_id=bead_id,
+            outbox=outbox,
         )
         self.set_finished_runs_since_last_review(self.finished_runs_since_last_review() + 1)
 

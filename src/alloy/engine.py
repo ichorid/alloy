@@ -26,6 +26,7 @@ from alloy.beads import Bead, BeadsClient
 from alloy.checkpoints import has_pending_interrupt, open_checkpointer, read_checkpoint
 from alloy.config import ConfigError, RecipeConfig, load_recipe
 from alloy.models import Outcome
+from alloy.outbox import deliver_pending
 from alloy.paths import AlloyPaths
 from alloy.procs import pid_alive, read_pid, terminate_group, terminate_pid
 from alloy.runners import RunnerRegistry
@@ -170,8 +171,15 @@ class Engine:
             if claimed:
                 current = self.store.get_run(run_id)
                 if current is not None and current["status"] == RUN_RUNNING:
-                    self.store.finish_run(run_id, status=RUN_CANCELLED, outcome=Outcome.CANCELLED.value, reason=str(exc))
-                    self.beads.set_status(bead_id, bd.STATUS_READY, if_status=bd.STATUS_IMPLEMENTING)
+                    self.store.finish_run(
+                        run_id,
+                        status=RUN_CANCELLED,
+                        outcome=Outcome.CANCELLED.value,
+                        reason=str(exc),
+                        bead_id=bead_id,
+                        outbox=[("status", {"status": bd.STATUS_READY, "if_status": bd.STATUS_IMPLEMENTING})],
+                    )
+                    deliver_pending(self.store, self.beads, bead_id=bead_id)
             raise
 
     def _resolve_stuck_claiming(self, record: dict[str, Any]) -> dict[str, Any] | None:
@@ -296,14 +304,21 @@ class Engine:
             outcome=Outcome.CANCELLED.value,
             reason="cancelled by operator",
         )
+        # Which note/status to send depends on bd's current status, read here
+        # rather than assumed -- a cancel must never reopen work a human (or
+        # a prior run) already closed.
         if self._bead_status(bead_id) == bd.STATUS_DONE:
-            self.beads.note(bead_id, f"alloy: run {record['run_id']} cancelled; the bead stays closed")
-            return
-        self.beads.set_status(bead_id, bd.STATUS_READY)
-        self.beads.note(
-            bead_id,
-            f"alloy: run {record['run_id']} cancelled; worktree left at {record['worktree']}",
-        )
+            self.store.enqueue_bd_note(
+                bead_id, f"alloy: run {record['run_id']} cancelled; the bead stays closed", run_id=record["run_id"]
+            )
+        else:
+            self.store.enqueue_bd_status(bead_id, bd.STATUS_READY, run_id=record["run_id"])
+            self.store.enqueue_bd_note(
+                bead_id,
+                f"alloy: run {record['run_id']} cancelled; worktree left at {record['worktree']}",
+                run_id=record["run_id"],
+            )
+        deliver_pending(self.store, self.beads, bead_id=bead_id)
 
     def _bead_status(self, bead_id: str) -> str | None:
         try:
@@ -470,12 +485,24 @@ class Engine:
             except (ConfigError, KeyError, WorktreeError) as exc:
                 raise EngineError(str(exc)) from exc
 
+            dispatch_metadata = {
+                bd.META_RUN_ID: run_id,
+                bd.META_WORKTREE: str(ctx.worktree.path),
+                bd.META_BRANCH: ctx.worktree.branch,
+                bd.META_RECIPE: recipe_name,
+            }
+            dispatch_outbox: list[tuple[str, dict[str, Any]]] = [("metadata", {"values": dispatch_metadata})]
+            if bead.status != bd.STATUS_IMPLEMENTING:
+                dispatch_outbox.append(("status", {"status": bd.STATUS_IMPLEMENTING, "if_status": None}))
+
             if fresh:
                 # The row already exists (`run()` created it, running, before
                 # ever calling here) -- this only fills in what a claim-time
                 # row cannot know yet.
                 self.store.update_run(
                     run_id,
+                    bead_id=bead.id,
+                    outbox=dispatch_outbox,
                     worktree=str(ctx.worktree.path),
                     branch=ctx.worktree.branch,
                     log_dir=str(ctx.log_dir),
@@ -492,20 +519,12 @@ class Engine:
             else:
                 self.store.reconcile_inflight()
                 self.store.mark_resumed(run_id)
-                self.store.update_run(run_id, status=RUN_RUNNING, pid=os.getpid())
+                self.store.update_run(
+                    run_id, bead_id=bead.id, outbox=dispatch_outbox, status=RUN_RUNNING, pid=os.getpid()
+                )
                 log.info("%s: run %s resumed (%s)", bead.id, run_id, recipe_name)
 
-            self.beads.set_metadata(
-                bead.id,
-                {
-                    bd.META_RUN_ID: run_id,
-                    bd.META_WORKTREE: str(ctx.worktree.path),
-                    bd.META_BRANCH: ctx.worktree.branch,
-                    bd.META_RECIPE: recipe_name,
-                },
-            )
-            if bead.status != bd.STATUS_IMPLEMENTING:
-                self.beads.set_status(bead.id, bd.STATUS_IMPLEMENTING)
+            deliver_pending(self.store, self.beads, bead_id=bead.id)
 
             graph = recipe.build_graph(ctx)
             config = {
@@ -534,12 +553,13 @@ class Engine:
                     status=RUN_FAILED,
                     outcome=Outcome.FAILED.value,
                     reason=str(exc),
+                    bead_id=bead.id,
+                    outbox=[
+                        ("status", {"status": bd.STATUS_FAILED, "if_status": None}),
+                        ("note", {"text": f"alloy: run {run_id} crashed: {exc}. Worktree kept at {ctx.worktree.path}"}),
+                    ],
                 )
-                self.beads.set_status(bead.id, bd.STATUS_FAILED)
-                self.beads.note(
-                    bead.id,
-                    f"alloy: run {run_id} crashed: {exc}. Worktree kept at {ctx.worktree.path}",
-                )
+                deliver_pending(self.store, self.beads, bead_id=bead.id)
                 raise
             except BaseException:
                 log.warning("%s: run %s interrupted; it stays resumable", bead.id, run_id)
@@ -561,8 +581,21 @@ class Engine:
         if pending:
             payload = _interrupt_payload(pending)
             retry_at = payload.get("retry_at") or None
+            scheduled = f"; the scheduler resumes it after {retry_at}" if retry_at else ""
             self.store.update_run(
                 run_id,
+                bead_id=bead.id,
+                outbox=[
+                    ("status", {"status": bd.STATUS_WAITING_HUMAN, "if_status": None}),
+                    ("metadata", {"values": {bd.META_STAGE: "waiting-human"}}),
+                    (
+                        "note",
+                        {
+                            "text": f"alloy: waiting for human -- {payload.get('reason', '')} "
+                            f"(resume with `alloy resume {bead.id}`{scheduled})"
+                        },
+                    ),
+                ],
                 status=RUN_WAITING_HUMAN,
                 stage="waiting-human",
                 pid=None,
@@ -570,14 +603,7 @@ class Engine:
                 event_reason=str(payload.get("reason", "")),
             )
             self.store.mark_paused(run_id)
-            self.beads.set_status(bead.id, bd.STATUS_WAITING_HUMAN)
-            self.beads.set_metadata(bead.id, {bd.META_STAGE: "waiting-human"})
-            scheduled = f"; the scheduler resumes it after {retry_at}" if retry_at else ""
-            self.beads.note(
-                bead.id,
-                f"alloy: waiting for human -- {payload.get('reason', '')} "
-                f"(resume with `alloy resume {bead.id}`{scheduled})",
-            )
+            deliver_pending(self.store, self.beads, bead_id=bead.id)
             return RunResult(
                 bead.id,
                 run_id,
@@ -591,24 +617,49 @@ class Engine:
         reason = final.get("outcome_reason", "")
 
         if outcome == Outcome.DONE.value:
-            self.store.finish_run(run_id, status=RUN_DONE, outcome=outcome, reason=reason)
+            self.store.finish_run(
+                run_id,
+                status=RUN_DONE,
+                outcome=outcome,
+                reason=reason,
+                bead_id=bead.id,
+                outbox=[
+                    ("status", {"status": bd.STATUS_DONE, "if_status": None}),
+                    ("metadata", {"values": {bd.META_STAGE: "finished"}}),
+                    (
+                        "note",
+                        {
+                            "text": f"alloy: {recipe_name} succeeded in {final.get('iteration', 0)} iteration(s) "
+                            f"on branch {ctx.worktree.branch}. {reason}"
+                        },
+                    ),
+                ],
+            )
+            # bd is told "done" only once the real commit has actually
+            # happened: enqueueing happens with the local DONE status above,
+            # but delivery (the bd-facing side effect) waits until here.
             ctx.worktrees.commit_wip(ctx.worktree, f"{bead.id}: {bead.title}")
-            self.beads.set_status(bead.id, bd.STATUS_DONE)
-            self.beads.set_metadata(bead.id, {bd.META_STAGE: "finished"})
-            self.beads.note(
-                bead.id,
-                f"alloy: {recipe_name} succeeded in {final.get('iteration', 0)} iteration(s) "
-                f"on branch {ctx.worktree.branch}. {reason}",
-            )
+            deliver_pending(self.store, self.beads, bead_id=bead.id)
         else:
-            self.store.finish_run(run_id, status=RUN_FAILED, outcome=outcome, reason=reason)
-            self.beads.set_status(bead.id, bd.STATUS_FAILED)
-            self.beads.set_metadata(bead.id, {bd.META_STAGE: outcome})
-            self.beads.note(
-                bead.id,
-                f"alloy: {recipe_name} failed after {final.get('iteration', 0)} iteration(s): "
-                f"{reason}. Worktree kept at {ctx.worktree.path}",
+            self.store.finish_run(
+                run_id,
+                status=RUN_FAILED,
+                outcome=outcome,
+                reason=reason,
+                bead_id=bead.id,
+                outbox=[
+                    ("status", {"status": bd.STATUS_FAILED, "if_status": None}),
+                    ("metadata", {"values": {bd.META_STAGE: outcome}}),
+                    (
+                        "note",
+                        {
+                            "text": f"alloy: {recipe_name} failed after {final.get('iteration', 0)} iteration(s): "
+                            f"{reason}. Worktree kept at {ctx.worktree.path}"
+                        },
+                    ),
+                ],
             )
+            deliver_pending(self.store, self.beads, bead_id=bead.id)
         return RunResult(bead.id, run_id, outcome, reason=reason, worktree=str(ctx.worktree.path))
 
     def _resumable_run(self, bead_id: str) -> dict[str, Any] | None:
