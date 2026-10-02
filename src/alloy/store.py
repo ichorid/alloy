@@ -131,6 +131,19 @@ _STATUS_EVENTS = {
 
 TERMINAL_RUN_STATUSES = {RUN_DONE, RUN_FAILED, RUN_CANCELLED}
 
+
+class ActiveRunExists(RuntimeError):
+    """`create_claiming_run(exclusive=True)` found a row that still owns the
+    bead locally -- a live `claiming`/`running` row, or a dead `claiming` row
+    whose claim has not been resolved yet. `record` is that row."""
+
+    def __init__(self, record: dict[str, Any]) -> None:
+        super().__init__(
+            f"run {record['run_id']} ({record['status']}, pid {record.get('pid')}) already owns {record['bead_id']}"
+        )
+        self.record = record
+
+
 # Columns added after the first release. `CREATE TABLE IF NOT EXISTS` never
 # alters an existing table, so each is added on open when missing. Keep this
 # additive: a column is never renamed or dropped here.
@@ -233,6 +246,7 @@ class Store:
         log_dir: Path | None,
         parent_run_id: str | None = None,
         base_commit: str | None = None,
+        exclusive: bool = False,
     ) -> None:
         """A run row that exists before bd has been asked to claim the bead.
 
@@ -242,9 +256,28 @@ class Store:
         status=RUN_RUNNING)` leaves a `claiming` row bd already agreed to
         (`stuck_claiming_runs` promotes and adopts it). Either way there is
         always a row to recover from -- unlike claiming bd first.
+
+        `exclusive=True` makes this store the local arbiter of who may claim
+        the bead: under one `BEGIN IMMEDIATE` (every other writer of this
+        database waits), it refuses with `ActiveRunExists` if any row already
+        owns the bead -- a `claiming` row (live, or dead and not yet resolved:
+        its claim may have landed) or a `running` row with a live pid other
+        than ours. bd's own status CAS cannot do this: two claimants of an
+        already-`implementing` bead (a takeover) both pass
+        `--if-status implementing`, so only a local check-and-insert in one
+        transaction can stop the second from executing beside the first.
         """
         now = utcnow().isoformat()
         with self.connect() as conn:
+            if exclusive:
+                conn.execute("BEGIN IMMEDIATE")
+                for row in conn.execute(
+                    "SELECT * FROM runs WHERE bead_id = ? AND status IN (?, ?) ORDER BY started_at",
+                    (bead_id, RUN_CLAIMING, RUN_RUNNING),
+                ).fetchall():
+                    live = _pid_alive(row["pid"]) and row["pid"] != os.getpid()
+                    if row["status"] == RUN_CLAIMING or live:
+                        raise ActiveRunExists(dict(row))
             conn.execute(
                 "INSERT INTO runs (run_id, bead_id, thread_id, recipe, repo, worktree, branch,"
                 " status, stage, started_at, updated_at, log_dir, pid, parent_run_id, base_commit)"
@@ -273,7 +306,7 @@ class Store:
         with self.connect() as conn:
             conn.execute("DELETE FROM runs WHERE run_id = ? AND status = ?", (run_id, RUN_CLAIMING))
 
-    def promote_claiming_run(self, run_id: str) -> bool:
+    def promote_claiming_run(self, run_id: str, **fields: Any) -> bool:
         """`claiming` -> `running`, but only if the row is still `claiming`.
 
         A concurrent `cancel()` of this same run_id (the narrow window is real:
@@ -283,14 +316,12 @@ class Store:
         This CAS-style update loses that race instead: False means someone
         already moved the row on, so the caller must not proceed as if it
         still owns a running slot.
+
+        `fields` are written in the same guarded UPDATE -- crash recovery's
+        promotion backfills worktree/branch/log_dir/base_commit with it, so
+        that path is fenced by exactly the same CAS as the claim-time one.
         """
-        now = utcnow().isoformat()
-        with self.connect() as conn:
-            cursor = conn.execute(
-                "UPDATE runs SET status = ?, updated_at = ? WHERE run_id = ? AND status = ?",
-                (RUN_RUNNING, now, run_id, RUN_CLAIMING),
-            )
-            return cursor.rowcount > 0
+        return self.update_run(run_id, expect={"status": RUN_CLAIMING}, status=RUN_RUNNING, **fields)
 
     def stuck_claiming_runs(self) -> list[dict[str, Any]]:
         """`claiming` rows whose owning process is gone -- the narrow window
@@ -410,30 +441,41 @@ class Store:
         event_reason: str = "",
         bead_id: str | None = None,
         outbox: list[tuple[str, dict[str, Any]]] | None = None,
+        expect: dict[str, Any] | None = None,
         **fields: Any,
-    ) -> None:
+    ) -> bool:
         """`outbox` (kind, payload) pairs, e.g. from `Store.enqueue_bd_status`'s
         own payload shape, are inserted into `bd_outbox` in the *same*
         transaction as this row's update -- `bead_id` is then required, since
         there is no other way to know whose outbox the rows belong to. This is
         the one write Alloy itself is authoritative for; delivering it to bd
-        is `alloy.outbox.deliver_pending`'s job, called separately."""
+        is `alloy.outbox.deliver_pending`'s job, called separately.
+
+        `expect` makes the whole write a compare-and-set on the run row
+        itself: `{column: value}` pairs (compared with SQL `IS`, so `None`
+        matches NULL) that must all still hold, or nothing is written --
+        neither the row nor its outbox rows -- and False is returned. Every
+        status transition a *specific owner* makes (the executing process
+        settling its own run, an adopter taking over a dead one, a cancel
+        booking what it just stopped) passes the `(status, pid)` it read, so
+        two writers can never clobber each other's transition: whoever moved
+        the row first wins and the other learns it lost. True otherwise."""
         if not fields and not outbox:
-            return
+            return True
         if outbox:
             assert bead_id is not None, "bead_id is required to enqueue outbox rows"
         if fields:
             fields["updated_at"] = utcnow().isoformat()
         with self.connect() as conn:
             previous = None
+            if "status" in fields or expect:
+                # One writer at a time from the read below to the commit: the
+                # status this announces as "previous" is the one replaced.
+                conn.execute("BEGIN IMMEDIATE")
             if "status" in fields:
                 previous = conn.execute("SELECT status, bead_id FROM runs WHERE run_id = ?", (run_id,)).fetchone()
-            if fields:
-                assignments = ", ".join(f"{key} = ?" for key in fields)
-                conn.execute(
-                    f"UPDATE runs SET {assignments} WHERE run_id = ?",
-                    (*fields.values(), run_id),
-                )
+            if (fields or expect) and not _guarded_update(conn, run_id, fields, expect):
+                return False
             for kind, payload in outbox or ():
                 self._enqueue_bd(conn, bead_id=bead_id, run_id=run_id, kind=kind, payload=payload)
         if previous is not None and previous["status"] != fields["status"]:
@@ -444,6 +486,7 @@ class Store:
                 fields["status"],
                 event_reason,
             )
+        return True
 
     def _announce(self, run_id: str, bead_id: str, old: str, new: str, reason: str) -> None:
         event = _STATUS_EVENTS.get(new)
@@ -461,9 +504,12 @@ class Store:
         reason: str = "",
         bead_id: str | None = None,
         outbox: list[tuple[str, dict[str, Any]]] | None = None,
+        expect: dict[str, Any] | None = None,
         **extra_fields: Any,
-    ) -> None:
-        self.update_run(
+    ) -> bool:
+        """See `update_run` for `expect`; False means the CAS lost and
+        nothing (row, outbox, finished-run count) was recorded."""
+        ok = self.update_run(
             run_id,
             status=status,
             outcome=outcome,
@@ -473,9 +519,12 @@ class Store:
             event_reason=reason or outcome,
             bead_id=bead_id,
             outbox=outbox,
+            expect=expect,
             **extra_fields,
         )
-        self.set_finished_runs_since_last_review(self.finished_runs_since_last_review() + 1)
+        if ok:
+            self.set_finished_runs_since_last_review(self.finished_runs_since_last_review() + 1)
+        return ok
 
     # -- scheduler meta (alloy-4ef.19) --------------------------------------
 
@@ -907,6 +956,22 @@ def _ensure_columns(conn: sqlite3.Connection, migrations: dict[str, dict[str, st
         for column, declaration in columns.items():
             if column not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+
+def _guarded_update(
+    conn: sqlite3.Connection, run_id: str, fields: dict[str, Any], expect: dict[str, Any] | None
+) -> bool:
+    """`UPDATE runs` for `run_id`, only where every `expect` column still `IS`
+    its value. False when that guard matched nothing."""
+    if not fields:
+        fields["updated_at"] = utcnow().isoformat()
+    assignments = ", ".join(f"{key} = ?" for key in fields)
+    guard = "".join(f" AND {key} IS ?" for key in (expect or {}))
+    cursor = conn.execute(
+        f"UPDATE runs SET {assignments} WHERE run_id = ?{guard}",
+        (*fields.values(), run_id, *(expect or {}).values()),
+    )
+    return not expect or cursor.rowcount > 0
 
 
 def _pid_alive(pid: int | None) -> bool:

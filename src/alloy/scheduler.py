@@ -44,7 +44,7 @@ from alloy.models import (
 from alloy.outbox import deliver_pending
 from alloy.paths import AlloyPaths
 from alloy.procs import read_pid
-from alloy.store import RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN, _pid_alive
+from alloy.store import RUN_CLAIMING, RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN, _pid_alive
 
 DEFAULT_POLL_SECONDS = 15.0
 DEFAULT_STALL_MINUTES = 30.0
@@ -88,6 +88,7 @@ class Scheduler:
     _unknown_default_recipe: str | None = field(default=None, init=False)
     _epic_block_logged: set[str] = field(default_factory=set, init=False)
     _stalled: set[str] = field(default_factory=set, init=False)
+    _adopt_refused: set[str] = field(default_factory=set, init=False)
     _current_bead: str | None = field(default=None, init=False)
     _cancel_bead: str | None = field(default=None, init=False)
     _hold: tuple[str, str] | None = field(default=None, init=False)
@@ -207,26 +208,37 @@ class Scheduler:
         self._resolve_stuck_claims()
         recovered: list[str] = []
         for record in self.engine.store.orphaned_runs():
-            bead_id = record["bead_id"]
-            log.info(
-                "recovering %s (run %s left by a dead process)",
-                bead_id,
-                record["run_id"],
-            )
-            try:
-                await self._run_current(bead_id)
-                recovered.append(bead_id)
-            except asyncio.CancelledError:
-                if self._cancel_requested:
-                    return recovered
-                raise
-            except RunCancelled:
-                continue
-            except EngineError as exc:
-                log.warning("could not recover %s: %s", bead_id, exc)
-            except Exception:
-                log.exception("recovery of %s crashed", bead_id)
+            adopted = await self._adopt(record)
+            if adopted is None:
+                return recovered
+            if adopted:
+                recovered.append(record["bead_id"])
         return recovered
+
+    async def _adopt(self, record: dict) -> bool | None:
+        """Continue one orphaned run. True if it ran, False if it could not
+        be (refused, crashed, cancelled), None if the operator stopped the
+        scheduler meanwhile."""
+        bead_id = record["bead_id"]
+        log.info(
+            "recovering %s (run %s left by a dead process)",
+            bead_id,
+            record["run_id"],
+        )
+        try:
+            await self._run_current(bead_id)
+            return True
+        except asyncio.CancelledError:
+            if self._cancel_requested:
+                return None
+            raise
+        except RunCancelled:
+            return False
+        except EngineError as exc:
+            log.warning("could not recover %s: %s", bead_id, exc)
+        except Exception:
+            log.exception("recovery of %s crashed", bead_id)
+        return False
 
     async def tick(self) -> bool:
         """Claim and run at most one ready task. True if work was started."""
@@ -234,6 +246,22 @@ class Scheduler:
         self._resolve_stuck_claims()
         if len(self._running()) >= self.concurrency:
             return False
+        # A run whose process died mid-session (or a stuck claim the sweep
+        # above just promoted) is adopted here, not only at startup: nothing
+        # else ever continues it, and until it ends it holds its bead
+        # `implementing` and its top-level unit's dispatch hold.
+        # One that could not be adopted is not retried every poll this
+        # session (and never blocks picking other work); `alloy run`/`alloy
+        # cancel` on it, or a restart's `recover()`, still can.
+        for record in self.engine.store.orphaned_runs():
+            if record["run_id"] in self._adopt_refused or record.get("repo") not in (None, str(self.engine.repo)):
+                continue
+            adopted = await self._adopt(record)
+            if adopted is None:
+                return False
+            if adopted:
+                return True
+            self._adopt_refused.add(record["run_id"])
         due = self.due_resume() or self.due_human_resume()
         if due is not None:
             return await self._resume_due(due)
@@ -668,7 +696,14 @@ class Scheduler:
         return False
 
     def _running(self) -> list[dict]:
-        return [run for run in self.engine.store.active_runs() if run["status"] == RUN_RUNNING]
+        """Runs actually occupying a slot: a live process behind a `running`
+        or `claiming` row. A dead one's row is an orphan for `tick` to adopt,
+        not a slot -- counting it would wedge dispatch at concurrency 1."""
+        return [
+            run
+            for run in self.engine.store.active_runs()
+            if run["status"] in (RUN_RUNNING, RUN_CLAIMING) and _pid_alive(run.get("pid"))
+        ]
 
     # -- process control --------------------------------------------------
 

@@ -469,3 +469,165 @@ async def test_a_transient_bd_read_failure_never_discards_the_stuck_row(
         engine._resolve_stuck_claiming(engine.store.get_run("r1"))
 
     assert engine.store.get_run("r1")["status"] == "claiming"  # left alone, not discarded
+
+
+# -- round 3: ownership fencing (local run-row CAS + bd run-id fence) --------
+
+
+def _stuck_claim(engine: Engine, bead_id: str, run_id: str, *, pid: int) -> None:
+    engine.store.create_claiming_run(
+        run_id=run_id,
+        bead_id=bead_id,
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=engine.repo,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    engine.store.update_run(run_id, pid=pid)
+
+
+def _live_foreign_process() -> subprocess.Popen:
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+
+
+async def test_recovery_promotion_never_revives_a_concurrently_cancelled_claim(
+    beads_project, alloy_home, fake_harnesses, monkeypatch
+):
+    """`_resolve_stuck_claiming` reads bd, then promotes. A cancel booking
+    the same row cancelled in between must win -- the promotion goes through
+    the same claiming-only CAS as the claim-time one, not a plain update."""
+    from alloy.store import RUN_CANCELLED
+
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    engine = Engine.open(beads_project, alloy_home)
+    assert engine.beads.claim(bead_id, run_id="r1") is True
+    _stuck_claim(engine, bead_id, "r1", pid=dead_pid())
+
+    real_show = engine.beads.show
+
+    def show_then_cancel(bid):
+        bead = real_show(bid)
+        engine.store.finish_run("r1", status=RUN_CANCELLED, outcome="cancelled")  # the racing cancel
+        return bead
+
+    monkeypatch.setattr(engine.beads, "show", show_then_cancel)
+    engine._resolve_stuck_claiming(engine.store.get_run("r1"))
+
+    assert engine.store.get_run("r1")["status"] == RUN_CANCELLED
+
+
+async def test_every_dead_claimant_is_resolved_so_a_live_winner_still_refuses(
+    beads_project, alloy_home, fake_harnesses
+):
+    """A live winner plus two crashed losers: resolving only the newest loser
+    would expose the other one as `latest` -- dead, not `running` -- and let
+    a takeover of the `implementing` bead execute beside the winner."""
+    from alloy.engine import EngineError
+
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    engine = Engine.open(beads_project, alloy_home)
+    winner = _live_foreign_process()
+    try:
+        assert engine.beads.claim(bead_id, run_id="winner") is True
+        _stuck_claim(engine, bead_id, "winner", pid=winner.pid)
+        _stuck_claim(engine, bead_id, "loser-b", pid=dead_pid())
+        _stuck_claim(engine, bead_id, "loser-c", pid=dead_pid())
+
+        with pytest.raises(EngineError, match="already being claimed"):
+            await engine.run(bead_id)
+    finally:
+        winner.kill()
+        winner.wait(timeout=30)
+
+    assert engine.store.get_run("loser-b") is None
+    assert engine.store.get_run("loser-c") is None
+    assert engine.store.get_run("winner")["status"] == "claiming"
+    assert [r["run_id"] for r in engine.store.runs_for_bead(bead_id)] == ["winner"]
+    assert fake_harnesses.calls == []  # nothing executed beside the winner
+
+
+async def test_a_stale_runs_undelivered_done_never_closes_a_newer_runs_claim(beads_project, alloy_home, fake_harnesses):
+    """Real bd: run A's `implementing -> closed` is stuck in the outbox; a
+    human reopens the bead and run B claims it. Delivering A's row later must
+    leave B's claim alone -- `--if-status implementing` alone would match."""
+    from alloy.outbox import deliver_pending
+
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    engine = Engine.open(beads_project, alloy_home)
+    assert engine.beads.claim(bead_id, run_id="run-a") is True
+    _stuck_claim(engine, bead_id, "run-a", pid=dead_pid())
+    engine.store.promote_claiming_run("run-a")
+    engine.store.finish_run(
+        "run-a",
+        status="done",
+        outcome="done",
+        bead_id=bead_id,
+        outbox=[("status", {"status": bd.STATUS_DONE, "if_status": bd.STATUS_IMPLEMENTING})],
+    )  # committed locally, never delivered (bd was down)
+
+    engine.beads.set_status(bead_id, bd.STATUS_READY)  # a human reopens it
+    assert engine.beads.claim(bead_id, run_id="run-b") is True
+
+    deliver_pending(engine.store, engine.beads, bead_id=bead_id)
+
+    bead = engine.beads.show(bead_id)
+    assert bead.status == bd.STATUS_IMPLEMENTING
+    assert bead.metadata[bd.META_RUN_ID] == "run-b"
+    assert engine.store.pending_bd_updates(bead_id) == []
+
+
+async def test_a_cancel_during_a_bd_outage_never_reopens_a_humans_later_close(
+    beads_project, alloy_home, fake_harnesses, monkeypatch
+):
+    """The cancel's status read fails (bd down), so it cannot know bd's
+    status. Its revert must still never become an unguarded write: a human
+    closing the bead before delivery wins."""
+    from alloy.outbox import deliver_pending
+
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    engine = Engine.open(beads_project, alloy_home)
+    assert engine.beads.claim(bead_id, run_id="r1") is True
+    _stuck_claim(engine, bead_id, "r1", pid=dead_pid())
+    engine.store.promote_claiming_run("r1")
+
+    def bd_down(*a, **k):
+        raise bd.BeadsError("bd temporarily unreachable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(engine.beads, "show", bd_down)
+        assert engine.cancel(bead_id) is True
+    assert engine.store.get_run("r1")["status"] == "cancelled"
+    assert engine.store.pending_bd_updates(bead_id)  # the revert is still queued
+
+    engine.beads.close(bead_id, check=True)  # a human closes it meanwhile
+    deliver_pending(engine.store, engine.beads, bead_id=bead_id)
+
+    assert engine.beads.show(bead_id).status == bd.STATUS_DONE
+
+
+async def test_an_orphan_whose_bead_was_claimed_by_another_run_is_superseded_not_adopted(
+    beads_project, alloy_home, fake_harnesses
+):
+    """bd's `alloy_run_id` names a different run now: continuing the orphan
+    would execute beside that owner with all its own bd writes fenced off."""
+    from alloy.engine import EngineError
+
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    engine = Engine.open(beads_project, alloy_home)
+    assert engine.beads.claim(bead_id, run_id="elsewhere") is True
+    _stuck_claim(engine, bead_id, "orphan", pid=dead_pid())
+    engine.store.promote_claiming_run("orphan")
+
+    with pytest.raises(EngineError, match="belongs to run elsewhere"):
+        await engine.run(bead_id)
+
+    assert engine.store.get_run("orphan")["status"] == "cancelled"
+    assert engine.beads.show(bead_id).metadata[bd.META_RUN_ID] == "elsewhere"
+    assert fake_harnesses.calls == []

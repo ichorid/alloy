@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from alloy.beads import BeadsError
+from alloy.beads import META_RUN_ID, Bead, BeadsError
 from alloy.outbox import deliver_pending
 from alloy.store import Store
 
@@ -43,6 +43,11 @@ class FakeBeadsClient:
         if method in self._fail_next:
             self._fail_next.discard(method)
             raise BeadsError(f"simulated {method} failure")
+
+    def show(self, bead_id: str) -> Bead:
+        self.calls.append(("show", (bead_id,)))
+        self._maybe_fail("show")
+        return Bead(id=bead_id, status=self.statuses.get(bead_id, ""), metadata=dict(self.metadata.get(bead_id, {})))
 
     def set_status(self, bead_id: str, status: str, *, if_status: str | None = None) -> bool:
         self.calls.append(("set_status", (bead_id, status, if_status)))
@@ -236,3 +241,141 @@ def test_a_failed_row_stalls_later_rows_for_the_same_bead_only(store: Store, bea
     second = deliver_pending(store, beads)
     assert [r.ok for r in second] == [True, True]
     assert beads.statuses["b-1"] == "closed"
+
+
+# -- run-id fencing: a stale run's writes never touch a newer run's bead -----
+
+
+def _enqueue_for_run(store: Store, run_id: str, bead_id: str, outbox: list) -> None:
+    """What the engine does: a run-row write carrying its outbox rows, so each
+    row records the run_id that enqueued it."""
+    store.create_run(
+        run_id=run_id,
+        bead_id=bead_id,
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=Path("/repo"),
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    store.update_run(run_id, bead_id=bead_id, outbox=outbox, stage="settling")
+
+
+def test_a_stale_runs_terminal_write_is_fenced_off_after_a_newer_claim(store: Store, beads: FakeBeadsClient):
+    """Run A's `implementing -> closed` sat undelivered through an outage;
+    meanwhile a human reopened the bead and run B claimed it (bd back to
+    `implementing`, stamped B). A status-only CAS would still match and close
+    B's work -- the run-id fence must drop A's row instead."""
+    _enqueue_for_run(
+        store,
+        "run-a",
+        "b-1",
+        [
+            ("status", {"status": "closed", "if_status": "implementing"}),
+            ("metadata", {"values": {"alloy_stage": "finished"}}),
+            ("note", {"text": "alloy: run-a succeeded"}),
+        ],
+    )
+    beads.statuses["b-1"] = "implementing"
+    beads.metadata["b-1"] = {META_RUN_ID: "run-b", "alloy_stage": "implement"}
+
+    results = deliver_pending(store, beads)
+
+    assert beads.statuses["b-1"] == "implementing"  # B's claim untouched
+    assert beads.metadata["b-1"] == {META_RUN_ID: "run-b", "alloy_stage": "implement"}
+    assert [(r.kind, r.fenced) for r in results] == [("status", True), ("metadata", True), ("note", False)]
+    assert beads.notes == [("b-1", "alloy: run-a succeeded")]  # history about A itself still lands
+    assert store.pending_bd_updates() == []  # consumed, not retried forever
+
+
+def test_the_owning_runs_writes_deliver_normally(store: Store, beads: FakeBeadsClient):
+    _enqueue_for_run(store, "run-a", "b-1", [("status", {"status": "closed", "if_status": "implementing"})])
+    beads.statuses["b-1"] = "implementing"
+    beads.metadata["b-1"] = {META_RUN_ID: "run-a"}
+
+    results = deliver_pending(store, beads)
+
+    assert results[0].ok and not results[0].conflict
+    assert beads.statuses["b-1"] == "closed"
+
+
+def test_the_fence_reads_bd_once_per_bead_per_sweep(store: Store, beads: FakeBeadsClient):
+    _enqueue_for_run(
+        store,
+        "run-a",
+        "b-1",
+        [
+            ("metadata", {"values": {"alloy_stage": "x"}}),
+            ("status", {"status": "closed", "if_status": "implementing"}),
+            ("metadata", {"values": {"alloy_stage": "finished"}}),
+        ],
+    )
+    beads.statuses["b-1"] = "implementing"
+    beads.metadata["b-1"] = {META_RUN_ID: "run-a"}
+
+    deliver_pending(store, beads)
+
+    assert [c[0] for c in beads.calls].count("show") == 1
+    assert beads.statuses["b-1"] == "closed"
+
+
+def test_a_bead_no_claim_ever_stamped_is_not_fenced(store: Store, beads: FakeBeadsClient):
+    _enqueue_for_run(store, "run-a", "b-1", [("metadata", {"values": {META_RUN_ID: "run-a"}})])
+
+    deliver_pending(store, beads)
+
+    assert beads.metadata["b-1"] == {META_RUN_ID: "run-a"}
+
+
+def test_a_failed_fence_read_is_transient_and_stalls_the_bead(store: Store, beads: FakeBeadsClient):
+    _enqueue_for_run(store, "run-a", "b-1", [("status", {"status": "closed", "if_status": "implementing"})])
+    beads.statuses["b-1"] = "implementing"
+    beads.metadata["b-1"] = {META_RUN_ID: "run-a"}
+    beads.fail_next("show")
+
+    first = deliver_pending(store, beads)
+
+    assert not first[0].ok
+    assert beads.statuses["b-1"] == "implementing"
+    assert len(store.pending_bd_updates()) == 1
+    deliver_pending(store, beads)
+    assert beads.statuses["b-1"] == "closed"
+
+
+# -- if_status_in: guarded on whichever allowed state bd is in ---------------
+
+
+@pytest.mark.parametrize("current", ["implementing", "waiting-human"])
+def test_if_status_in_reverts_from_any_allowed_state(store: Store, beads: FakeBeadsClient, current: str):
+    beads.statuses["b-1"] = current
+    store.enqueue_bd_status("b-1", "open")
+    with store.connect() as conn:  # the shape `_cancel_bookkeeping` enqueues
+        conn.execute(
+            "UPDATE bd_outbox SET payload_json = ?",
+            ('{"status": "open", "if_status_in": ["implementing", "waiting-human"]}',),
+        )
+
+    results = deliver_pending(store, beads)
+
+    assert results[0].ok and not results[0].conflict
+    assert beads.statuses["b-1"] == "open"
+    assert ("set_status", ("b-1", "open", current)) in beads.calls  # CAS'd on what it read, never unguarded
+
+
+def test_if_status_in_never_reopens_a_bead_a_human_closed(store: Store, beads: FakeBeadsClient):
+    """The cancel revert enqueued while bd was unreachable (status unknown at
+    cancel time) must still lose to a human's close, not overwrite it."""
+    beads.statuses["b-1"] = "closed"
+    store.enqueue_bd_status("b-1", "open")
+    with store.connect() as conn:
+        conn.execute(
+            "UPDATE bd_outbox SET payload_json = ?",
+            ('{"status": "open", "if_status_in": ["implementing", "waiting-human"]}',),
+        )
+
+    results = deliver_pending(store, beads)
+
+    assert results[0].ok and results[0].conflict
+    assert beads.statuses["b-1"] == "closed"
+    assert not [c for c in beads.calls if c[0] == "set_status"]

@@ -1084,3 +1084,45 @@ def test_a_unit_with_unfinished_work_can_still_dispatch_itself(scheduler, beads_
     _park_run(scheduler, beads_project, only, status=RUN_FAILED)
 
     assert scheduler.next_task() is not None
+
+
+async def test_tick_adopts_a_claim_that_went_stuck_mid_session(scheduler, beads_project, fake_harnesses):
+    """A claim whose process died mid-session (bd's claim landed) is promoted
+    by tick's stuck-claim sweep -- and must then be adopted, not left as a
+    dead `running` row counted against concurrency=1 forever."""
+    engine = scheduler.engine
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "task", alloy_recipe="tdd-loop")
+    assert engine.beads.claim(bead_id, run_id="stuck") is True
+    engine.store.create_claiming_run(
+        run_id="stuck",
+        bead_id=bead_id,
+        thread_id="stuck",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    engine.store.update_run("stuck", pid=dead_pid())
+
+    assert await scheduler.tick() is True
+
+    assert engine.store.get_run("stuck")["status"] == "done"
+    assert engine.beads.show(bead_id).status == bd.STATUS_DONE
+
+
+def test_a_dead_running_row_does_not_occupy_a_concurrency_slot(scheduler, beads_project):
+    scheduler.engine.store.create_run(
+        run_id="dead",
+        bead_id="other",
+        thread_id="dead",
+        recipe="tdd-loop",
+        repo=beads_project,
+        worktree=None,
+        branch=None,
+        log_dir=None,
+    )
+    scheduler.engine.store.update_run("dead", pid=dead_pid())
+
+    assert scheduler._running() == []

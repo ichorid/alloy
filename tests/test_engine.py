@@ -399,3 +399,37 @@ async def test_resume_reconciles_inflight_calls_before_reassigning_pid(
     assert order.index("reconcile") < order.index("pid_reassign")
 
 
+async def test_a_fresh_run_enqueues_no_stale_status_write_from_its_pre_claim_read(
+    engine, beads_project, fake_harnesses
+):
+    """`run()` read the bead (`open`) before claiming it. Dispatch must use
+    what bd says *after* the claim, or it enqueues `implementing if open` --
+    a write that would re-claim the bead if a human reopened it meanwhile."""
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+
+    result = await engine.run(bead_id)
+
+    with engine.store.connect() as conn:
+        rows = conn.execute(
+            "SELECT payload_json FROM bd_outbox WHERE run_id = ? AND kind = 'status'", (result.run_id,)
+        ).fetchall()
+    targets = [json.loads(row["payload_json"])["status"] for row in rows]
+    assert bd.STATUS_IMPLEMENTING not in targets
+    assert targets == [bd.STATUS_DONE]
+
+
+async def test_taking_over_an_implementing_bead_stamps_the_new_run_as_owner(engine, beads_project, fake_harnesses):
+    """No live row, bd already `implementing` (stamped by some earlier run):
+    the takeover is claimed CAS-on-`implementing` too, so bd names the new
+    run -- which is what fences off the old owner's stale outbox rows."""
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    assert engine.beads.claim(bead_id, run_id="long-gone") is True
+
+    result = await engine.run(bead_id)
+
+    assert result.outcome == "done"
+    bead = engine.beads.show(bead_id)
+    assert bead.metadata[bd.META_RUN_ID] == result.run_id
+    assert bead.status == bd.STATUS_DONE

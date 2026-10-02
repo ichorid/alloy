@@ -38,6 +38,7 @@ from alloy.store import (
     RUN_FAILED,
     RUN_RUNNING,
     RUN_WAITING_HUMAN,
+    ActiveRunExists,
     Store,
 )
 from alloy.worktree import Worktree, WorktreeError, WorktreeManager
@@ -87,22 +88,18 @@ class Engine:
 
     async def run(self, bead_id: str, *, recipe_name: str | None = None) -> RunResult:
         """Start a fresh run, or continue one that was interrupted by a crash."""
+        # Land whatever this store already committed for the bead before
+        # deciding anything from bd's state: a run that failed locally while
+        # bd was unreachable must read as `failed` here, not as an
+        # `implementing` bead free for a takeover.
+        deliver_pending(self.store, self.beads, bead_id=bead_id)
+        # Every dead `claiming` row, not just the latest: with several
+        # crashed claimants, resolving only the newest can expose another
+        # unresolved one as "latest", which neither `_refuse_if_live` (its
+        # pid is dead) nor `_resumable_run` (it is not `running`) stops.
+        self._resolve_dead_claims(bead_id)
         bead = self.beads.show(bead_id)
-        latest = self.store.latest_run_for_bead(bead_id)
-        if latest is not None and latest["status"] == RUN_CLAIMING and not pid_alive(latest.get("pid")):
-            # A crash between creating the row and confirming the bd claim.
-            # There is always something to resolve here -- unlike claiming bd
-            # first, which could strand the bead `implementing` with no row
-            # anywhere for recovery to find.
-            self._resolve_stuck_claiming(latest)
-            bead = self.beads.show(bead_id)
-            # Re-fetch rather than trust the resolver's return value: if
-            # `latest` was a *losing* claimant's row, discarding it can expose
-            # an older, still-live *winner's* row as the new latest -- and
-            # that must still refuse dispatch below, not be silently skipped
-            # because the stale `latest` we were about to check was `None`.
-            latest = self.store.latest_run_for_bead(bead_id)
-        self._refuse_if_live(bead_id, latest)
+        self._refuse_if_any_live(bead_id)
         existing = self._resumable_run(bead_id)
         if existing is not None:
             log.info("%s: adopting orphaned run %s", bead_id, existing["run_id"])
@@ -116,6 +113,7 @@ class Engine:
                 run_id=existing["run_id"],
                 thread_id=existing["thread_id"],
                 resume_payload=None,
+                expect={"status": existing["status"], "pid": existing.get("pid")},
             )
 
         if bead.manual:
@@ -132,15 +130,42 @@ class Engine:
         if bead.status not in (bd.STATUS_READY, bd.STATUS_IMPLEMENTING):
             raise EngineError(f"{bead_id} is '{bead.status}'; only '{bd.STATUS_READY}' beads can start")
 
+        run_id, reverts_to, bead = self._claim(bead, name)
+        try:
+            return await self._execute(bead, name, run_id=run_id, thread_id=run_id, resume_payload=None, fresh=True)
+        except EngineError as exc:
+            # Failed before any real work started (worktree, config): hand the
+            # bead back so it is offered again instead of looking busy forever
+            # -- and always settle the row, or a long-lived scheduler's own
+            # pid would keep it "running" (and its concurrency slot taken).
+            outbox: list[tuple[str, dict[str, Any]]] = []
+            if reverts_to == bd.STATUS_READY:
+                outbox = [("status", {"status": bd.STATUS_READY, "if_status": bd.STATUS_IMPLEMENTING})]
+            if self.store.finish_run(
+                run_id,
+                status=RUN_CANCELLED,
+                outcome=Outcome.CANCELLED.value,
+                reason=str(exc),
+                bead_id=bead_id,
+                outbox=outbox,
+                expect=self._owned(),
+            ):
+                deliver_pending(self.store, self.beads, bead_id=bead_id)
+            raise
+
+    def _claim(self, bead: Bead, name: str) -> tuple[str, str, Bead]:
+        """Create this run's `claiming` row and claim the bead in bd: the new
+        run_id, the status to revert bd to on an early failure, and the bead
+        as bd says it is now."""
+        bead_id = bead.id
         run_id = uuid.uuid4().hex
-        claimed = False
-        if bead.status == bd.STATUS_READY:
-            # The row is created before bd is ever touched: a crash between
-            # this and the claim leaves a `claiming` row with nothing in bd
-            # yet (discarded below on a lost race, or by `recover()` on a
-            # crash); a crash between the claim and promoting to `running`
-            # leaves a row bd already agrees the bead is claimed for (also
-            # resolved by `recover()`). Either window always has a row.
+        # The row is created before bd is ever touched: a crash between this
+        # and the claim leaves a `claiming` row with nothing in bd yet; a
+        # crash between the claim and promoting to `running` leaves a row bd
+        # already agrees the bead is claimed for. Both are resolved by
+        # `_resolve_stuck_claiming`. `exclusive` makes this store the local
+        # arbiter: a second claimant here is refused before it can reach bd.
+        try:
             self.store.create_claiming_run(
                 run_id=run_id,
                 bead_id=bead_id,
@@ -150,48 +175,70 @@ class Engine:
                 worktree=None,
                 branch=None,
                 log_dir=None,
+                exclusive=True,
             )
-            if not self.beads.claim(bead_id, run_id=run_id):
-                self.store.discard_claiming_run(run_id)
-                raise EngineError(f"{bead_id} was claimed by someone else")
-            claimed = True
-            if not self.store.promote_claiming_run(run_id):
-                # Lost to a concurrent cancel of this very run_id between the
-                # claim landing in bd and this promotion: the row is already
-                # booked cancelled (and bd already reverted), so there is
-                # nothing left to execute.
-                raise EngineError(f"{bead_id}: run {run_id} was cancelled before it could start")
-        else:
-            # Already `implementing` with no row (a stuck-claiming retry, or
-            # pre-dating this mechanism): no new bd claim needed.
-            self.store.create_run(
-                run_id=run_id,
-                bead_id=bead_id,
-                thread_id=run_id,
-                recipe=name,
-                repo=self.repo,
-                worktree=None,
-                branch=None,
-                log_dir=None,
-            )
+        except ActiveRunExists as exc:
+            raise EngineError(f"{bead_id}: {exc}") from exc
+        # A bead already `implementing` with no live row (a takeover: its
+        # owner's row is terminal or gone) is claimed the same way, CAS'd on
+        # `implementing` -- that stamps *this* run as bd's `alloy_run_id`,
+        # which is what fences off any stale outbox row the old owner still
+        # has pending (see `alloy.outbox`).
         try:
-            return await self._execute(bead, name, run_id=run_id, thread_id=run_id, resume_payload=None, fresh=True)
-        except EngineError as exc:
-            # Failed before any real work started (worktree, config): hand the
-            # bead back so it is offered again instead of looking busy forever.
-            if claimed:
-                current = self.store.get_run(run_id)
-                if current is not None and current["status"] == RUN_RUNNING:
-                    self.store.finish_run(
-                        run_id,
-                        status=RUN_CANCELLED,
-                        outcome=Outcome.CANCELLED.value,
-                        reason=str(exc),
-                        bead_id=bead_id,
-                        outbox=[("status", {"status": bd.STATUS_READY, "if_status": bd.STATUS_IMPLEMENTING})],
-                    )
-                    deliver_pending(self.store, self.beads, bead_id=bead_id)
+            claimed = self.beads.claim(bead_id, expect=bead.status, run_id=run_id)
+        except bd.BeadsError:
+            # Unknown whether the claim landed (a timeout can still have
+            # applied it). Clearing the pid hands the row to the stuck-claim
+            # sweep, which asks bd -- otherwise a long-lived scheduler's own
+            # pid would keep this row "live", and the bead wedged, forever.
+            self.store.update_run(run_id, expect={"status": RUN_CLAIMING}, pid=None)
             raise
+        if not claimed:
+            self.store.discard_claiming_run(run_id)
+            raise EngineError(f"{bead_id} was claimed by someone else")
+        if not self.store.promote_claiming_run(run_id):
+            # Lost to a concurrent cancel of this very run_id between the
+            # claim landing in bd and this promotion: the row is already
+            # booked cancelled (and bd already reverted), so there is
+            # nothing left to execute.
+            raise EngineError(f"{bead_id}: run {run_id} was cancelled before it could start")
+        reverts_to = bead.status
+        # What bd says now: the snapshot above predates the claim. Without
+        # this, dispatch would enqueue a stale `implementing if <old status>`
+        # write that could re-claim a bead someone reopened meanwhile.
+        bead = bead.model_copy(
+            update={"status": bd.STATUS_IMPLEMENTING, "metadata": {**bead.metadata, bd.META_RUN_ID: run_id}}
+        )
+        return run_id, reverts_to, bead
+
+    def _refuse_if_superseded(self, bead: Bead, run_id: str, expect: dict[str, Any] | None) -> None:
+        """The synchronous half of the outbox's run-id fence, for a run being
+        resumed or adopted: if bd was claimed by another run since this one
+        last owned it, continuing would execute beside the new owner with
+        every bd write of ours silently fenced off. Book it superseded (no bd
+        write: bd is not ours to touch), or it would be offered for adoption
+        forever."""
+        owner = bead.metadata.get(bd.META_RUN_ID)
+        if owner and owner != run_id:
+            self.store.finish_run(
+                run_id,
+                status=RUN_CANCELLED,
+                outcome=Outcome.CANCELLED.value,
+                reason=f"superseded: bd now belongs to run {owner}",
+                expect=expect,
+            )
+            raise EngineError(f"{bead.id}: bd now belongs to run {owner}, not {run_id}; not continuing it")
+
+    def _owned(self) -> dict[str, Any]:
+        """The run-row CAS a process executing a run holds: still `running`,
+        still recorded as ours. A concurrent cancel or adopter that moved the
+        row first makes every later write of ours lose instead of clobber."""
+        return {"status": RUN_RUNNING, "pid": os.getpid()}
+
+    def _resolve_dead_claims(self, bead_id: str) -> None:
+        for record in self.store.runs_for_bead(bead_id):
+            if record["status"] == RUN_CLAIMING and not pid_alive(record.get("pid")):
+                self._resolve_stuck_claiming(record)
 
     def _resolve_stuck_claiming(self, record: dict[str, Any]) -> dict[str, Any] | None:
         """A `claiming` row survived a crash with its owning process gone.
@@ -221,12 +268,14 @@ class Engine:
         run_id = record["run_id"]
         bead = self.beads.show(bead_id)  # BeadsError propagates: unknown stays unresolved, not discarded
         if bead.status != bd.STATUS_IMPLEMENTING or bead.metadata.get(bd.META_RUN_ID) != run_id:
-            self.store.discard_claiming_run(run_id)
-            return None
+            self.store.discard_claiming_run(run_id)  # a no-op unless the row is still `claiming`
+            return self.store.get_run(run_id)
         worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
-        self.store.update_run(
+        # The same CAS as the claim-time promotion: a concurrent cancel (or
+        # another resolver) that already moved the row on wins, rather than
+        # being silently overwritten back to `running`.
+        self.store.promote_claiming_run(
             run_id,
-            status=RUN_RUNNING,
             worktree=str(self.repo),
             branch=worktrees.current_branch() or "HEAD",
             log_dir=str(self.paths.run_logs(run_id)),
@@ -250,11 +299,12 @@ class Engine:
             # Same resolution `run()` applies: without it, `resume` could be
             # pointed at a losing claimant's row (bd's status alone can't
             # tell winner from loser) and promote/continue it regardless.
-            self._resolve_stuck_claiming(record)
-            record = self.store.get_run(record["run_id"])
+            record = self._resolve_stuck_claiming(record)
             if record is None:
                 raise EngineError(f"{bead_id}: that claim never landed in bd; nothing to resume")
-        self._refuse_if_live(bead_id, record)
+            if record["status"] == RUN_CANCELLED:
+                raise EngineError(f"run for {bead_id} already finished ({record['status']})")
+        self._refuse_if_any_live(bead_id)
         bead = self.beads.show(bead_id)
         pending = has_pending_interrupt(self.paths.workflows_db, record["thread_id"])
         if record.get("retry_at"):
@@ -265,6 +315,7 @@ class Engine:
             run_id=record["run_id"],
             thread_id=record["thread_id"],
             resume_payload={"instructions": instructions} if pending else None,
+            expect={"status": record["status"], "pid": record.get("pid")},
         )
 
     def cancel(self, bead_id: str, *, grace_s: float = 5.0, scheduler_timeout_s: float = 60.0) -> bool:
@@ -277,19 +328,25 @@ class Engine:
         serving. A remediation child the scheduler is running is refused:
         cancel its parent bead.
         """
-        record = self.store.latest_run_for_bead(bead_id)
-        if record is None or record["status"] in (RUN_DONE, RUN_FAILED, RUN_CANCELLED):
-            return False
-        pid = record.get("pid")
-        if record["status"] in (RUN_RUNNING, RUN_CLAIMING) and pid_alive(pid) and pid != os.getpid():
-            scheduler_pid = read_pid(self.paths.scheduler_pid)
-            if scheduler_pid is not None and int(pid) == scheduler_pid:
-                return self._cancel_via_scheduler(bead_id, record, scheduler_pid, timeout_s=scheduler_timeout_s)
-            log.info("%s: stopping pid %s", bead_id, pid)
-            if not terminate_pid(int(pid), grace_s=grace_s):
-                raise EngineError(f"could not stop pid {pid} running {bead_id}")
-        self._cancel_bookkeeping(bead_id, record, grace_s=grace_s)
-        return True
+        for _ in range(3):
+            record = self.store.latest_run_for_bead(bead_id)
+            if record is None or record["status"] in (RUN_DONE, RUN_FAILED, RUN_CANCELLED):
+                return False
+            pid = record.get("pid")
+            if record["status"] in (RUN_RUNNING, RUN_CLAIMING) and pid_alive(pid) and pid != os.getpid():
+                scheduler_pid = read_pid(self.paths.scheduler_pid)
+                if scheduler_pid is not None and int(pid) == scheduler_pid:
+                    return self._cancel_via_scheduler(bead_id, record, scheduler_pid, timeout_s=scheduler_timeout_s)
+                log.info("%s: stopping pid %s", bead_id, pid)
+                if not terminate_pid(int(pid), grace_s=grace_s):
+                    raise EngineError(f"could not stop pid {pid} running {bead_id}")
+            if self._cancel_bookkeeping(bead_id, record, grace_s=grace_s):
+                return True
+            # The row moved between reading it and booking it (an adopter
+            # took a dead run over, or the run settled): look again -- a new
+            # live owner gets stopped, a terminal row means nothing to cancel.
+            log.info("%s: run %s changed under cancel; re-reading", bead_id, record["run_id"])
+        raise EngineError(f"{bead_id}: the run kept changing under cancel; try again")
 
     def _cancel_via_scheduler(
         self, bead_id: str, record: dict[str, Any], scheduler_pid: int, *, timeout_s: float
@@ -321,12 +378,12 @@ class Engine:
             f"within {timeout_s:.0f}s; see {self.paths.scheduler_log}, or `alloy stop --now`"
         )
 
-    def _cancel_bookkeeping(self, bead_id: str, record: dict[str, Any], *, grace_s: float) -> None:
+    def _cancel_bookkeeping(self, bead_id: str, record: dict[str, Any], *, grace_s: float) -> bool:
         """Book a stopped run cancelled: its orphaned harnesses, its still-active
         remediation children, and the bead (back to ready unless a human
         closed it meanwhile -- a cancel must never reopen finished work)."""
         for child in self.store.children_of(record["run_id"]):
-            if child["status"] in (RUN_RUNNING, RUN_WAITING_HUMAN):
+            if child["status"] in (RUN_RUNNING, RUN_WAITING_HUMAN, RUN_CLAIMING):
                 self._cancel_bookkeeping(child["bead_id"], child, grace_s=grace_s)
         # journal 9: a run that died without cleanup (SIGKILL, OOM) leaves its
         # harness process group running; the inflight row remembers its pid.
@@ -338,11 +395,14 @@ class Engine:
             self.store.discard_call(call["call_id"])
         if record.get("worktree"):
             WorktreeManager(repo=self.repo, root=self.paths.worktrees).stop_processes(Path(record["worktree"]))
-        # Which note/status to send depends on bd's current status -- read
-        # (never a write) *before* the atomic finish_run+outbox commit below,
-        # so a cancel never reopens work a human (or a prior run) already
-        # closed. The read and the write being two separate steps is fine;
-        # it's the local commit and its outbox rows that must never split.
+        # The note depends on bd's current status (a best-effort read; None
+        # when bd is unreachable). The status revert never does: it is
+        # decided at *delivery* time, CAS'd on whichever of the states this
+        # run itself could have left bd in -- so a human's close, or any
+        # other status, is never overwritten, even when this read failed
+        # (an unreadable status must not degrade to an unguarded write), and
+        # the outbox's run-id fence drops it outright if a newer run has
+        # claimed the bead by the time it is delivered.
         current_bd_status = self._bead_status(bead_id)
         if current_bd_status == bd.STATUS_DONE:
             outbox: list[tuple[str, dict[str, Any]]] = [
@@ -350,26 +410,30 @@ class Engine:
             ]
         else:
             outbox = [
-                # Guarded on the status just read, not unconditional: if a
-                # later write (e.g. this same run settling on its own, or a
-                # retried outbox delivery) already moved bd past this point,
-                # this stale cancellation-revert must lose the CAS, not
-                # silently overwrite whatever bd now correctly says.
-                ("status", {"status": bd.STATUS_READY, "if_status": current_bd_status}),
+                (
+                    "status",
+                    {"status": bd.STATUS_READY, "if_status_in": [bd.STATUS_IMPLEMENTING, bd.STATUS_WAITING_HUMAN]},
+                ),
                 (
                     "note",
                     {"text": f"alloy: run {record['run_id']} cancelled; worktree left at {record['worktree']}"},
                 ),
             ]
-        self.store.finish_run(
+        if not self.store.finish_run(
             record["run_id"],
             status=RUN_CANCELLED,
             outcome=Outcome.CANCELLED.value,
             reason="cancelled by operator",
             bead_id=bead_id,
             outbox=outbox,
-        )
+            # Only the row this cancel read and stopped: an adopter that
+            # took it over meanwhile (new pid) or a settle that finished it
+            # wins, and `cancel()` re-reads.
+            expect={"status": record["status"], "pid": record.get("pid")},
+        ):
+            return False
         deliver_pending(self.store, self.beads, bead_id=bead_id)
+        return True
 
     def _bead_status(self, bead_id: str) -> str | None:
         try:
@@ -430,6 +494,12 @@ class Engine:
                 f"{bead_id} is already being {'claimed' if record['status'] == RUN_CLAIMING else 'run'} "
                 f"by pid {record['pid']} (run {record['run_id']}); `alloy cancel {bead_id}` stops it"
             )
+
+    def _refuse_if_any_live(self, bead_id: str) -> None:
+        """`_refuse_if_live` over every row still owning the bead, not just
+        the latest: a live winner's row can sit behind newer dead ones."""
+        for record in self.store.runs_for_bead(bead_id):
+            self._refuse_if_live(bead_id, record)
 
     # -- graph plumbing ---------------------------------------------------
 
@@ -511,13 +581,19 @@ class Engine:
         worktree: Worktree | None = None,
         parent_run_id: str | None = None,
         fresh: bool = False,
+        expect: dict[str, Any] | None = None,
     ) -> RunResult:
         """`fresh=True` means `run_id` already names a `running` row `run()`
         created and populated with bd's claim before calling here (see
         `Engine.run`); this only fills in the worktree/branch/log_dir/
         base_commit a claim-time row cannot know yet. `fresh=False` (resuming
         an existing run, orphaned or paused) never touches those -- they were
-        already recorded by this same run's own earlier fresh pass."""
+        already recorded by this same run's own earlier fresh pass.
+
+        `expect` (required unless `fresh`) is the `(status, pid)` the caller
+        read and judged dead/paused: taking the row over is CAS'd on it, so
+        two adopters of the same orphan can never both execute it."""
+        assert fresh or expect is not None, "adopting/resuming a run needs the (status, pid) it was judged on"
         recipe = recipes.get(recipe_name)
         # One graph thread per run, not per bead: re-running a cancelled bead
         # must start from an empty graph, not inherit the abandoned one.
@@ -525,6 +601,7 @@ class Engine:
 
         async with open_checkpointer(self.paths.workflows_db) as checkpointer:
             recorded_base = None
+            prior = None
             if not fresh:
                 prior = self.store.get_run(run_id)
                 recorded_base = prior.get("base_commit") if prior else None
@@ -541,62 +618,16 @@ class Engine:
             except (ConfigError, KeyError, WorktreeError) as exc:
                 raise EngineError(str(exc)) from exc
 
-            dispatch_metadata = {
-                bd.META_RUN_ID: run_id,
-                bd.META_WORKTREE: str(ctx.worktree.path),
-                bd.META_BRANCH: ctx.worktree.branch,
-                bd.META_RECIPE: recipe_name,
-            }
-            dispatch_outbox: list[tuple[str, dict[str, Any]]] = [("metadata", {"values": dispatch_metadata})]
-            if bead.status != bd.STATUS_IMPLEMENTING:
-                dispatch_outbox.append(("status", {"status": bd.STATUS_IMPLEMENTING, "if_status": bead.status}))
-
-            if fresh:
-                # The row already exists (`run()` created it, running, before
-                # ever calling here) -- this only fills in what a claim-time
-                # row cannot know yet.
-                self.store.update_run(
-                    run_id,
-                    bead_id=bead.id,
-                    outbox=dispatch_outbox,
-                    worktree=str(ctx.worktree.path),
-                    branch=ctx.worktree.branch,
-                    log_dir=str(ctx.log_dir),
-                    parent_run_id=parent_run_id,
-                    base_commit=ctx.worktree.base_commit,
-                )
-                log.info(
-                    "%s: run %s started (%s) in %s",
-                    bead.id,
-                    run_id,
-                    recipe_name,
-                    ctx.worktree.path,
-                )
-            else:
-                self.store.reconcile_inflight()
-                self.store.mark_resumed(run_id)
-                repair: dict[str, Any] = {}
-                if prior is not None and not prior.get("worktree"):
-                    # Adopting a row whose fresh pass never got far enough to
-                    # fill these in (a crash between promoting to `running`
-                    # and that first update) -- backfill them now rather than
-                    # leaving them NULL forever; nothing else ever will.
-                    repair = dict(
-                        worktree=str(ctx.worktree.path),
-                        branch=ctx.worktree.branch,
-                        log_dir=str(ctx.log_dir),
-                        base_commit=ctx.worktree.base_commit,
-                    )
-                self.store.update_run(
-                    run_id,
-                    bead_id=bead.id,
-                    outbox=dispatch_outbox,
-                    status=RUN_RUNNING,
-                    pid=os.getpid(),
-                    **repair,
-                )
-                log.info("%s: run %s resumed (%s)", bead.id, run_id, recipe_name)
-
+            self._record_dispatch(
+                bead,
+                recipe_name,
+                ctx,
+                run_id=run_id,
+                prior=prior,
+                fresh=fresh,
+                expect=expect,
+                parent_run_id=parent_run_id,
+            )
             deliver_pending(self.store, self.beads, bead_id=bead.id)
 
             graph = recipe.build_graph(ctx)
@@ -621,7 +652,7 @@ class Engine:
                 # leaves the run marked running -- which is what makes it
                 # recoverable later. Only a genuine error fails the task here.
                 log.exception("%s: run %s crashed", bead.id, run_id)
-                self.store.finish_run(
+                if self.store.finish_run(
                     run_id,
                     status=RUN_FAILED,
                     outcome=Outcome.FAILED.value,
@@ -631,8 +662,11 @@ class Engine:
                         ("status", {"status": bd.STATUS_FAILED, "if_status": bd.STATUS_IMPLEMENTING}),
                         ("note", {"text": f"alloy: run {run_id} crashed: {exc}. Worktree kept at {ctx.worktree.path}"}),
                     ],
-                )
-                deliver_pending(self.store, self.beads, bead_id=bead.id)
+                    expect=self._owned(),
+                ):
+                    deliver_pending(self.store, self.beads, bead_id=bead.id)
+                else:
+                    self._log_lost_settle(bead.id, run_id, "failed")
                 raise
             except BaseException:
                 log.warning("%s: run %s interrupted; it stays resumable", bead.id, run_id)
@@ -641,6 +675,83 @@ class Engine:
             result = self._settle(ctx, bead, recipe_name, run_id, final)
             log.info("%s: run %s -> %s %s", bead.id, run_id, result.outcome, result.reason)
             return result
+
+    def _record_dispatch(
+        self,
+        bead: Bead,
+        recipe_name: str,
+        ctx: RunContext,
+        *,
+        run_id: str,
+        prior: dict[str, Any] | None,
+        fresh: bool,
+        expect: dict[str, Any] | None,
+        parent_run_id: str | None,
+    ) -> None:
+        """Take (or keep) the run row for this process and enqueue the
+        dispatch-time bd writes in the same commit -- CAS'd, so a cancel or a
+        rival adopter that moved the row first makes this raise instead."""
+        dispatch_metadata = {
+            bd.META_RUN_ID: run_id,
+            bd.META_WORKTREE: str(ctx.worktree.path),
+            bd.META_BRANCH: ctx.worktree.branch,
+            bd.META_RECIPE: recipe_name,
+        }
+        dispatch_outbox: list[tuple[str, dict[str, Any]]] = [("metadata", {"values": dispatch_metadata})]
+        if bead.status != bd.STATUS_IMPLEMENTING:
+            dispatch_outbox.append(("status", {"status": bd.STATUS_IMPLEMENTING, "if_status": bead.status}))
+
+        if fresh:
+            # The row already exists (`run()` created it, running, before
+            # ever calling here) -- this only fills in what a claim-time
+            # row cannot know yet.
+            taken = self.store.update_run(
+                run_id,
+                bead_id=bead.id,
+                outbox=dispatch_outbox,
+                worktree=str(ctx.worktree.path),
+                branch=ctx.worktree.branch,
+                log_dir=str(ctx.log_dir),
+                parent_run_id=parent_run_id,
+                base_commit=ctx.worktree.base_commit,
+                expect=self._owned(),
+            )
+            if not taken:
+                raise EngineError(f"{bead.id}: run {run_id} was cancelled before it could dispatch")
+            log.info(
+                "%s: run %s started (%s) in %s",
+                bead.id,
+                run_id,
+                recipe_name,
+                ctx.worktree.path,
+            )
+        else:
+            self._refuse_if_superseded(bead, run_id, expect)
+            self.store.reconcile_inflight()
+            repair: dict[str, Any] = {}
+            if prior is not None and not prior.get("worktree"):
+                # Adopting a row whose fresh pass never got far enough to
+                # fill these in (a crash between promoting to `running`
+                # and that first update) -- backfill them now rather than
+                # leaving them NULL forever; nothing else ever will.
+                repair = dict(
+                    worktree=str(ctx.worktree.path),
+                    branch=ctx.worktree.branch,
+                    log_dir=str(ctx.log_dir),
+                    base_commit=ctx.worktree.base_commit,
+                )
+            if not self.store.update_run(
+                run_id,
+                bead_id=bead.id,
+                outbox=dispatch_outbox,
+                status=RUN_RUNNING,
+                pid=os.getpid(),
+                expect=expect,
+                **repair,
+            ):
+                raise EngineError(f"{bead.id}: run {run_id} was taken over or cancelled before it could resume")
+            self.store.mark_resumed(run_id)
+            log.info("%s: run %s resumed (%s)", bead.id, run_id, recipe_name)
 
     def _settle(
         self,
@@ -655,9 +766,10 @@ class Engine:
             payload = _interrupt_payload(pending)
             retry_at = payload.get("retry_at") or None
             scheduled = f"; the scheduler resumes it after {retry_at}" if retry_at else ""
-            self.store.update_run(
+            if not self.store.update_run(
                 run_id,
                 bead_id=bead.id,
+                expect=self._owned(),
                 outbox=[
                     ("status", {"status": bd.STATUS_WAITING_HUMAN, "if_status": bd.STATUS_IMPLEMENTING}),
                     ("metadata", {"values": {bd.META_STAGE: "waiting-human"}}),
@@ -674,7 +786,8 @@ class Engine:
                 pid=None,
                 retry_at=retry_at,
                 event_reason=str(payload.get("reason", "")),
-            )
+            ):
+                raise self._lost_settle(bead.id, run_id, "waiting-human")
             self.store.mark_paused(run_id)
             deliver_pending(self.store, self.beads, bead_id=bead.id)
             return RunResult(
@@ -704,7 +817,7 @@ class Engine:
                 commit_sha = ctx.worktrees.commit_wip(ctx.worktree, f"{bead.id}: {bead.title}")
             except Exception as exc:
                 log.exception("%s: run %s verified done but commit_wip failed", bead.id, run_id)
-                self.store.finish_run(
+                settled = self.store.finish_run(
                     run_id,
                     status=RUN_FAILED,
                     outcome=Outcome.FAILED.value,
@@ -720,15 +833,20 @@ class Engine:
                             },
                         ),
                     ],
+                    expect=self._owned(),
                 )
-                deliver_pending(self.store, self.beads, bead_id=bead.id)
+                if settled:
+                    deliver_pending(self.store, self.beads, bead_id=bead.id)
+                else:
+                    self._log_lost_settle(bead.id, run_id, "failed")
                 raise
             # `committed_sha` (even the "none" sentinel, for a verification-
             # only task with nothing to commit) is what lets reconcile tell
             # "done and verified" from "done locally, commit unconfirmed" --
             # see `reconcile._status_after`.
-            self.store.finish_run(
+            settled = self.store.finish_run(
                 run_id,
+                expect=self._owned(),
                 status=RUN_DONE,
                 outcome=outcome,
                 reason=reason,
@@ -746,10 +864,10 @@ class Engine:
                     ),
                 ],
             )
-            deliver_pending(self.store, self.beads, bead_id=bead.id)
         else:
-            self.store.finish_run(
+            settled = self.store.finish_run(
                 run_id,
+                expect=self._owned(),
                 status=RUN_FAILED,
                 outcome=outcome,
                 reason=reason,
@@ -766,8 +884,28 @@ class Engine:
                     ),
                 ],
             )
-            deliver_pending(self.store, self.beads, bead_id=bead.id)
+        if not settled:
+            raise self._lost_settle(bead.id, run_id, outcome)
+        deliver_pending(self.store, self.beads, bead_id=bead.id)
         return RunResult(bead.id, run_id, outcome, reason=reason, worktree=str(ctx.worktree.path))
+
+    def _log_lost_settle(self, bead_id: str, run_id: str, outcome: str) -> None:
+        current = self.store.get_run(run_id) or {}
+        log.warning(
+            "%s: run %s finished %s, but its row was already moved to %s (pid %s) by someone else; "
+            "not recording it, and not telling bd",
+            bead_id,
+            run_id,
+            outcome,
+            current.get("status"),
+            current.get("pid"),
+        )
+
+    def _lost_settle(self, bead_id: str, run_id: str, outcome: str) -> EngineError:
+        self._log_lost_settle(bead_id, run_id, outcome)
+        return EngineError(
+            f"{bead_id}: run {run_id} finished {outcome} after it had already been cancelled or taken over"
+        )
 
     def _resumable_run(self, bead_id: str) -> dict[str, Any] | None:
         """A run left behind by a crash: marked running, but nobody is running it."""

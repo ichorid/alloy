@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from alloy.models import AgentResult, utcnow
-from alloy.store import Store
+from alloy.store import RUN_CANCELLED, RUN_CLAIMING, RUN_RUNNING, ActiveRunExists, Store
 
 
 @pytest.fixture
@@ -945,3 +945,121 @@ async def test_logs_json_includes_prefix_hash_for_agent_calls(
     payload = json.loads(result.stdout)
     assert payload["calls"]
     assert all(call.get("prefix_hash") for call in payload["calls"])
+
+
+# -- run-row CAS (`expect`) and the exclusive claim --------------------------
+
+
+def _claiming(store: Store, run_id: str, bead_id: str = "bead-x", *, exclusive: bool = False) -> None:
+    store.create_claiming_run(
+        run_id=run_id,
+        bead_id=bead_id,
+        thread_id=run_id,
+        recipe="tdd-loop",
+        repo=Path("/repo"),
+        worktree=None,
+        branch=None,
+        log_dir=None,
+        exclusive=exclusive,
+    )
+
+
+def test_update_run_with_a_stale_expectation_writes_nothing_not_even_its_outbox(store: Store):
+    _make_run(store, "r1", pid=dead_pid())
+    taken_over_by = dead_pid()
+    store.update_run("r1", pid=taken_over_by)  # someone else adopted it first
+
+    ok = store.update_run(
+        "r1",
+        bead_id="bead-r1",
+        outbox=[("status", {"status": "closed", "if_status": "implementing"})],
+        expect={"status": RUN_RUNNING, "pid": taken_over_by + 1},
+        status="done",
+    )
+
+    assert ok is False
+    assert store.get_run("r1")["status"] == RUN_RUNNING
+    assert store.pending_bd_updates() == []
+
+
+def test_update_run_expect_matches_null_with_is(store: Store):
+    _make_run(store, "r1")
+    store.update_run("r1", pid=None, status="waiting-human")
+
+    assert store.update_run("r1", expect={"status": "waiting-human", "pid": None}, status=RUN_RUNNING) is True
+    assert store.get_run("r1")["status"] == RUN_RUNNING
+
+
+def test_finish_run_that_loses_its_cas_is_not_counted_as_finished(store: Store):
+    _make_run(store, "r1")
+    store.update_run("r1", status=RUN_CANCELLED)
+    before = store.finished_runs_since_last_review()
+
+    ok = store.finish_run("r1", status="done", outcome="done", expect={"status": RUN_RUNNING})
+
+    assert ok is False
+    assert store.get_run("r1")["status"] == RUN_CANCELLED
+    assert store.finished_runs_since_last_review() == before
+
+
+def test_promote_claiming_run_backfills_only_while_still_claiming(store: Store):
+    _claiming(store, "r1")
+    assert store.promote_claiming_run("r1", worktree="/wt") is True
+    assert store.get_run("r1")["worktree"] == "/wt"
+
+    _claiming(store, "r2", bead_id="bead-y")
+    store.update_run("r2", status=RUN_CANCELLED)  # a cancel got there first
+    assert store.promote_claiming_run("r2", worktree="/wt") is False
+    assert store.get_run("r2")["status"] == RUN_CANCELLED
+    assert store.get_run("r2")["worktree"] is None
+
+
+@contextmanager
+def _live_foreign_pid():
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        yield process.pid
+    finally:
+        process.kill()
+        process.wait(timeout=30)
+
+
+def test_an_exclusive_claim_is_refused_while_a_live_claimant_owns_the_bead(store: Store):
+    _claiming(store, "first")
+    with _live_foreign_pid() as pid:
+        store.update_run("first", pid=pid)
+        with pytest.raises(ActiveRunExists) as caught:
+            _claiming(store, "second", exclusive=True)
+    assert caught.value.record["run_id"] == "first"
+    assert store.get_run("second") is None
+
+
+def test_an_exclusive_claim_is_refused_while_a_dead_claim_is_unresolved(store: Store):
+    """A dead `claiming` row's claim may have landed in bd: it must be
+    resolved (promoted or discarded) before anyone else may claim."""
+    _claiming(store, "first")
+    store.update_run("first", pid=dead_pid())
+    with pytest.raises(ActiveRunExists):
+        _claiming(store, "second", exclusive=True)
+
+
+def test_an_exclusive_claim_is_refused_while_a_live_run_owns_the_bead(store: Store):
+    _claiming(store, "first")
+    store.promote_claiming_run("first")
+    with _live_foreign_pid() as pid:
+        store.update_run("first", pid=pid)
+        with pytest.raises(ActiveRunExists):
+            _claiming(store, "second", exclusive=True)
+
+
+def test_an_exclusive_claim_is_allowed_past_terminal_and_dead_running_rows(store: Store):
+    _claiming(store, "old")
+    store.promote_claiming_run("old")
+    store.update_run("old", status=RUN_CANCELLED)
+    _claiming(store, "orphan")
+    store.promote_claiming_run("orphan")
+    store.update_run("orphan", pid=dead_pid())
+
+    _claiming(store, "new", exclusive=True)
+
+    assert store.get_run("new")["status"] == RUN_CLAIMING
