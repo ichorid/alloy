@@ -596,8 +596,10 @@ def test_format_detail_nerd_per_role_token_bars_scale_to_largest_role():
     log_dir = "/home/vader/.alloy/logs/run-1"
     text = format_detail(run, 100, log_dir, mode="nerd")
 
+    token_lines = text.split("tokens per role", 1)[1]
     role_lines = {
-        role: next(line for line in text.split("\n") if role in line) for role in ("implement", "critic", "context")
+        role: next(line for line in token_lines.split("\n") if role in line)
+        for role in ("implement", "critic", "context")
     }
     implement_bar = _token_bar_length(role_lines["implement"])
     critic_bar = _token_bar_length(role_lines["critic"])

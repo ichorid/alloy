@@ -175,21 +175,7 @@ def _call(
     }
 
 
-def _judge(
-    raw_decision="retry",
-    raw_confidence=0.61,
-    effective_decision="retry",
-    effective_reason="a specific fix remains",
-    matches=True,
-) -> dict:
-    return {
-        "raw": {"decision": raw_decision, "confidence": raw_confidence},
-        "effective": {"decision": effective_decision, "reason": effective_reason},
-        "matches_effective": matches,
-    }
-
-
-COLUMN_COUNT = 10  # bead, status, stage, i/max, c/max, tests, elapsed, tokens, judge, complexity
+COLUMN_COUNT = 9  # bead, status, stage, i/max, c/max, tests, elapsed, tokens, complexity
 
 
 # -- run_rows -----------------------------------------------------------------
@@ -236,54 +222,6 @@ def test_row_formats_iteration_and_consilium_progress_as_i_over_max():
 
     assert row[3] == "2/5"
     assert row[4] == "1/3"
-
-
-def test_row_with_null_judge_shows_a_dash_in_the_judge_column():
-    snapshot = _snapshot(runs=[_run(judge=None)])
-
-    row = run_rows(snapshot)[0]
-
-    assert row[8] == "-"
-
-
-def test_row_with_matching_judge_shows_only_the_single_decision():
-    snapshot = _snapshot(
-        runs=[
-            _run(
-                judge=_judge(
-                    raw_decision="done",
-                    effective_decision="done",
-                    matches=True,
-                )
-            )
-        ]
-    )
-
-    row = run_rows(snapshot)[0]
-
-    assert "done" in row[8]
-    assert "→" not in row[8]
-
-
-def test_row_with_differing_raw_and_effective_judge_shows_both_decisions():
-    snapshot = _snapshot(
-        runs=[
-            _run(
-                judge=_judge(
-                    raw_decision="done",
-                    effective_decision="retry",
-                    matches=False,
-                )
-            )
-        ]
-    )
-
-    row = run_rows(snapshot)[0]
-
-    assert "done" in row[8]
-    assert "retry" in row[8]
-    assert row[8] != "done"
-    assert row[8] != "retry"
 
 
 def test_row_carries_the_tests_summary_verbatim():
@@ -1150,7 +1088,7 @@ def test_column_tiers_label_wide_only_columns():
 def test_column_tiers_label_always_shown_columns():
     from alloy.monitor.render import column_tier
 
-    always = {"bead", "status", "iter", "tests", "elapsed", "tokens", "judge"}
+    always = {"bead", "status", "iter", "tests", "elapsed", "tokens"}
     for name in always:
         assert column_tier(name) == "always"
 
@@ -1320,32 +1258,32 @@ def test_run_rows_ascii_mode_keeps_tests_summary_verbatim():
 def test_run_rows_nerd_simple_complexity_shows_one_block_glyph():
     row = run_rows(_snapshot(runs=[_run(complexity="simple")]), mode="nerd")[0]
 
-    assert row[9] == "▂"
+    assert row[8] == "▂"
 
 
 def test_run_rows_nerd_medium_complexity_shows_two_block_glyph():
     row = run_rows(_snapshot(runs=[_run(complexity="medium")]), mode="nerd")[0]
 
-    assert row[9] == "▂▄"
+    assert row[8] == "▂▄"
 
 
 def test_run_rows_nerd_complex_complexity_shows_three_block_glyph():
     row = run_rows(_snapshot(runs=[_run(complexity="complex")]), mode="nerd")[0]
 
-    assert row[9] == "▂▄▆"
+    assert row[8] == "▂▄▆"
 
 
 def test_run_rows_nerd_none_complexity_shows_dash():
     row = run_rows(_snapshot(runs=[_run(complexity=None)]), mode="nerd")[0]
 
-    assert row[9] == "-"
+    assert row[8] == "-"
 
 
 def test_run_rows_ascii_mode_keeps_complexity_as_word():
     for level in ("simple", "medium", "complex"):
         row = run_rows(_snapshot(runs=[_run(complexity=level)]), mode="ascii")[0]
 
-        assert row[9] == level
+        assert row[8] == level
 
 
 # -- alloy-3g0.7: status pills -------------------------------------------------

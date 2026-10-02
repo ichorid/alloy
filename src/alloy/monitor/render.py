@@ -28,7 +28,6 @@ COLUMNS = (
     "tests",
     "elapsed",
     "tokens",
-    "judge",
     "complexity",
 )
 
@@ -427,7 +426,7 @@ def _queued_row(
             bead=bead_id,
             status="ready",
             tests=tests,
-            complexity=_complexity(bead.get("complexity"), mode),
+            complexity=_complexity(bead.get("complexity"), mode, recipe=bead.get("recipe")),
         ),
     )
 
@@ -670,8 +669,7 @@ def _row(run: dict[str, Any], mode: str | None = None) -> tuple[str, ...]:
         _tests(run, mode),
         _elapsed(run.get("elapsed_minutes")),
         _tokens(run.get("tokens") or {}),
-        _judge(run.get("judge")),
-        _complexity(run.get("complexity"), mode),
+        _complexity(run.get("complexity"), mode, recipe=run.get("recipe")),
     )
 
 
@@ -683,10 +681,18 @@ _COMPLEXITY_BARS = {
     "simple": "▂",
     "medium": "▂▄",
     "complex": "▂▄▆",
+    "fast": "▸",
 }
 
+# Recipes that never run an `estimate` stage, so `complexity` is always None
+# by design rather than not-yet-known -- showing "-" there reads as missing
+# data. Each maps to the sentinel label shown in its place.
+_NO_ESTIMATE_RECIPES = {"fast-track": "fast"}
 
-def _complexity(value: Any, mode: str | None = None) -> str:
+
+def _complexity(value: Any, mode: str | None = None, recipe: str | None = None) -> str:
+    if value is None and recipe in _NO_ESTIMATE_RECIPES:
+        value = _NO_ESTIMATE_RECIPES[recipe]
     if mode is None or mode == "ascii":
         return _text(value)
     if value is None:
@@ -931,11 +937,12 @@ def _format_detail_styled(
 def _detail_left_column(run: dict[str, Any], mode: str, usage_style: str = "remaining") -> list[str]:
     lines: list[str] = []
     for call in run.get("current_calls") or []:
+        role = _text(call.get("role"))
         requested = _runner(call.get("requested_runner"), call.get("requested_model"))
         effective = _runner(call.get("effective_runner"), call.get("effective_model"))
         seconds = call.get("elapsed_seconds")
         elapsed = "-" if seconds is None else f"{int(seconds)}s"
-        lines.append(f"{icon('running', mode)} verify  {requested} -> {effective} ({elapsed})")
+        lines.append(f"{icon('running', mode)} {role}  {requested} -> {effective} ({elapsed})")
     judge_line = _judge_detail(run.get("judge"))
     if judge_line is not None:
         lines.append(f"{icon('judge', mode)} {judge_line.replace('judge:', 'judge  ', 1)}")
@@ -949,11 +956,13 @@ def _detail_left_column(run: dict[str, Any], mode: str, usage_style: str = "rema
 def _detail_right_column(run: dict[str, Any], log_dir: str | None, mode: str) -> list[str]:
     lines: list[str] = []
     complexity = run.get("complexity")
-    if complexity is not None:
-        bar = _complexity(complexity, mode)
+    recipe = run.get("recipe")
+    label = complexity if complexity is not None else _NO_ESTIMATE_RECIPES.get(recipe)
+    if label is not None:
+        bar = _complexity(complexity, mode, recipe=recipe)
         estimated = run.get("complexity_estimated")
         suffix = " (est.)" if estimated else ""
-        lines.append(f"cx  {bar} {complexity}{suffix}")
+        lines.append(f"cx  {bar} {label}{suffix}")
     lines.append(f"branch {_text(run.get('branch'))}")
     parent = run.get("parent_id") or run.get("epic_id")
     if parent:

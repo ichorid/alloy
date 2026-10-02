@@ -261,7 +261,7 @@ async def test_E_press_twice_toggles_all_queue_and_epic_rows_expanded():
 async def test_refresh_keeps_horizontal_scroll_of_runs_table():
     snapshot = _epic_tree_snapshot()
     app = MonitorApp(snapshot_source=lambda: snapshot, interval=DISABLED_INTERVAL)
-    async with app.run_test(size=(60, 24)) as pilot:
+    async with app.run_test(size=(40, 24)) as pilot:
         await pilot.pause()
         table = _runs_table(app)
         assert table.max_scroll_x > 0  # the narrow window overflows horizontally

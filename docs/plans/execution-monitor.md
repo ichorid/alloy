@@ -370,11 +370,16 @@ Panels. Stats line: scheduler running/pid, ready count with "(capped at
 table columns: bead, recipe, status, stage, iter (`i/max`), cons (`c/max`),
 tests, elapsed, now (`role:runner[:model] 42s`; several in-flight calls
 joined with ` + `; `-` when none), tokens (`total_tokens`, or `in/out` when
-both known), judge (`raw→effective` when they differ, else the decision, or
-`-`). Detail pane for the selected run: every `current_calls` entry with
-requested vs effective runner/model and elapsed; `judge` raw vs effective
-with confidence, or "no parseable verdict" when raw is null; `tokens_by_role`
-as one line per role; worktree, branch and log dir paths.
+both known), complexity (the estimate, or a recipe's own sentinel label --
+e.g. `fast` for `fast-track`, which never runs an `estimate` stage -- or `-`
+when neither applies). The raw-vs-effective judge decision is not a table
+column (it is one of several per-run facts, no more central than the others
+once there are many rows) -- it lives in the detail pane only. Detail pane
+for the selected run: every `current_calls` entry labelled with its actual
+role (`implement`, `tests`, ...), requested vs effective runner/model and
+elapsed; `judge` raw vs effective with confidence, or "no parseable verdict"
+when raw is null; `tokens_by_role` as one line per role; worktree, branch and
+log dir paths.
 
 Testing with the pilot, all headless:
 
