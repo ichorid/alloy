@@ -55,7 +55,7 @@ class DeliveryResult:
     error: str | None = None
 
 
-_FENCED_KINDS = frozenset({"status", "metadata", "close"})
+_FENCED_KINDS = frozenset({"status", "metadata", "label", "close"})
 
 
 @dataclass
@@ -139,6 +139,8 @@ def _deliver_one(
             # for their many direct callers, but a silently swallowed failure
             # here would mark an undelivered row delivered forever.
             beads.note(bead_id, payload["text"], check=True)
+        elif kind == "label":
+            beads.add_label(bead_id, payload["label"], check=True)
         elif kind == "close":
             beads.close(bead_id, check=True)
             views.pop(bead_id, None)

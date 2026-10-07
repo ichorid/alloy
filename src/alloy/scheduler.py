@@ -108,10 +108,11 @@ class Scheduler:
         self._write_session()
         self._install_signal_handlers()
         log.info(
-            "scheduler up (pid %d, poll %.0fs, repo %s)",
+            "scheduler up (pid %d, poll %.0fs, repo %s, alloy %s)",
             os.getpid(),
             self.poll_seconds,
             self.engine.repo,
+            alloy_commit(),
         )
         watcher = None if self.once else asyncio.create_task(self._stall_watch())
         try:
@@ -807,6 +808,35 @@ def read_session(paths: AlloyPaths) -> dict | None:
     }:
         return None
     return data
+
+
+def alloy_commit(source: Path | None = None) -> str:
+    """The Alloy commit this process loaded, for the startup log line.
+
+    A scheduler keeps running the code it imported: a fix committed to Alloy
+    later does nothing until it restarts, and that once went unnoticed for an
+    hour. Resolved from Alloy's own source file, never the `--repo` target;
+    "-dirty" when Alloy's tree had uncommitted edits at startup. "unknown"
+    outside a git checkout -- including an install that merely sits inside
+    some other repository (a venv in the target project), which `ls-files`
+    rules out."""
+    source = (source or Path(__file__)).resolve()
+
+    def git(*args: str) -> subprocess.CompletedProcess[str] | None:
+        try:
+            return subprocess.run(
+                ["git", *args], cwd=str(source.parent), capture_output=True, text=True, check=False, timeout=5
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    tracked = git("ls-files", "--error-unmatch", source.name)
+    head = git("rev-parse", "--short", "HEAD")
+    if tracked is None or tracked.returncode != 0 or head is None or head.returncode != 0:
+        return "unknown"
+    dirty = git("status", "--porcelain", "--untracked-files=no", ".")
+    suffix = "-dirty" if dirty is not None and dirty.stdout.strip() else ""
+    return head.stdout.strip() + suffix
 
 
 _LIVE_RUN_PREFIX = "run is live"

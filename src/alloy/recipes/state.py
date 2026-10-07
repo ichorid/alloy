@@ -76,6 +76,10 @@ class TddState(TypedDict, total=False):
     outcome: str | None
     outcome_reason: str
     limit_hit: str | None
+    budget_landed: dict[str, Any] | None
+    """Set when guard finished a budget-stopped run as done because every
+    check was green on an unchanged tree (see `workflow_nodes.budget_landing`);
+    the engine then marks the bead `budget-landed` for a later audit."""
     human_note: str
     implement_unavailable: bool  # implement's whole fallback chain was unavailable
     resume_to: str | None  # stage that parked the run at the human gate

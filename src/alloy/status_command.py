@@ -48,6 +48,8 @@ def status_impl(bead_id, repo, root, json, limit):
         "root": str(engine.paths.root),
         "repo": str(engine.repo),
         "scheduler": {"running": scheduler_pid is not None, "pid": scheduler_pid},
+        # Runner circuit breaker: harnesses (or single models) skipped until `until`.
+        "runners_unavailable": engine.store.runners_unavailable(),
         "beads": rows,
     }
     if json:
@@ -58,6 +60,9 @@ def status_impl(bead_id, repo, root, json, limit):
         f"scheduler: [{'green' if scheduler_pid else 'yellow'}]"
         f"{'running (pid ' + str(scheduler_pid) + ')' if scheduler_pid else 'stopped'}[/]"
     )
+    for entry in payload["runners_unavailable"]:
+        label = f"{entry['harness']}:{entry['model']}" if entry["model"] else entry["harness"]
+        console.print(f"runner [yellow]{label}[/] unavailable until {entry['until']} -- {entry['reason']}")
     if not rows:
         console.print("alloy is not tracking any beads yet")
         return

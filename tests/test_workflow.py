@@ -15,6 +15,8 @@ from conftest import (
     judge_entry,
     synthesize_entry,
     verifier_run_entry,
+    verifier_run_many_entry,
+    verifier_stop_entry,
     write_tests_entry,
 )
 from support import load_config, make_harness
@@ -194,6 +196,38 @@ async def test_unrunnable_baseline_reruns_tests_with_command_not_found(project, 
     assert "definitely-not-a-program" in tests_calls[1]["prompt"]
 
 
+async def test_a_baseline_red_only_from_phantom_test_paths_goes_back_to_the_tests_role(
+    project, alloy_home, fake_harnesses, tmp_path
+):
+    """`--plain-name=slug keeps dashes` unquoted fails on files named `keeps`
+    and `dashes`: red, but it proves nothing and could never go green."""
+    output = tmp_path / "dart.out"
+    output.write_text(
+        '00:00 +0 -1: loading keeps [E]\n  Failed to load "keeps": Does not exist.\n00:00 +1 -1: Some tests failed.\n',
+        encoding="utf-8",
+    )
+    phantom = f"cat {output}; exit 1"
+    fake_harnesses.configure(
+        script(
+            tests=[
+                write_tests_entry(baseline_checks=[{"command": phantom, "purpose": "split plain-name"}]),
+                write_tests_entry(),
+            ]
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    tests_calls = fake_harnesses.calls_for("tests")
+    assert len(tests_calls) == 2
+    assert "baseline not runnable" in tests_calls[1]["prompt"]
+    assert "likely malformed command" in tests_calls[1]["prompt"]
+
+
 # -- retry ------------------------------------------------------------------
 
 
@@ -285,6 +319,58 @@ async def test_done_is_refused_while_tests_are_failing(project, alloy_home, fake
     assert "overridden by Alloy" in final["attempts"][0]["reason"] or len(fake_harnesses.calls_for("implement")) == 2
 
 
+async def test_a_failure_rerun_green_in_the_same_iteration_does_not_override_done(project, alloy_home, fake_harnesses):
+    """Only the latest run of a target is evidence: a stale failure the
+    verifier already re-ran green must not turn the judge's done into a retry."""
+    flaky = "test -e .rerun-marker || { touch .rerun-marker; exit 1; }"
+    fake_harnesses.configure(
+        verification_script(
+            verifier=[
+                verifier_run_many_entry((flaky, "targeted", "first run"), (flaky, "targeted", "re-run")),
+                verifier_stop_entry("re-run is green"),
+            ],
+        )
+    )
+    harness = make_harness(project, alloy_home)
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    first = [c for c in final["checks"] if c["iteration"] == 1 and c["command"] == flaky]
+    assert [c["exit_code"] for c in first[:2]] == [1, 0]
+    assert final["outcome"] == "done"
+    assert final["iteration"] == 1
+    assert not any("overridden by Alloy" in row["reason"] for row in final["attempts"])
+
+
+def _check(command: str, exit_code: int, **fields) -> dict:
+    return {"command": command, "exit_code": exit_code, "iteration": 1, **fields}
+
+
+def test_latest_runnable_result_per_target_decides_green():
+    from alloy.recipes.shared_verification import _is_red, _latest_per_target
+
+    def red(checks):
+        return [c["command"] for c in _latest_per_target(checks) if _is_red(c)]
+
+    # Re-run green: the stale failure no longer counts.
+    assert red([_check("pytest -q a", 1), _check("pytest -q a", 0)]) == []
+    # Green then red: the latest failure counts.
+    assert red([_check("pytest -q a", 0), _check("pytest -q a", 1)]) == ["pytest -q a"]
+    # A different target never clears another target's failure.
+    assert red([_check("pytest -q a", 1), _check("pytest -q b", 0)]) == ["pytest -q a"]
+    # A re-run that timed out or could not start proves nothing.
+    assert red([_check("pytest -q a", 1), _check("pytest -q a", -1, timed_out=True)]) == ["pytest -q a"]
+    assert red([_check("pytest -q a", 1), _check("pytest -q a", 127)]) == ["pytest -q a"]
+    # Quoting is not a different target: the corrected command supersedes.
+    split = "flutter test t_test.dart --plain-name=slug keeps dashes"
+    quoted = "flutter test t_test.dart --plain-name='slug keeps dashes'"
+    assert red([_check(split, 1), _check(quoted, 0)]) == []
+    # Required on any run stays required: an optional re-run cannot launder it.
+    assert red([_check("pytest -q a", 0), _check("pytest -q a", 1, required=False)]) == ["pytest -q a"]
+
+
 async def test_unparseable_judge_output_becomes_a_retry_not_a_crash(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
         script(
@@ -339,7 +425,8 @@ async def test_unavailable_judge_parks_at_the_human_gate_instead_of_retrying(pro
         calls = harness.store.agent_calls(harness.run_id)
         failed = [c for c in calls if not c["ok"]]
         assert failed
-        assert harness.store.call_count(harness.run_id) == len(calls) - len(failed)
+        spent = harness.store.call_count(harness.run_id) + harness.store.call_count(harness.run_id, cheap=True)
+        assert spent == len(calls) - len(failed)
     finally:
         harness.close()
 

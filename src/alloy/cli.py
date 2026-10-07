@@ -388,6 +388,36 @@ def assign_recipe(
 
 
 @app.command()
+def reroute(
+    bead_id: str = typer.Argument(...),
+    recipe: str = typer.Argument("fast-track", help="Recipe to run the bead on"),
+    repo: Optional[Path] = RepoOption,
+    root: Optional[Path] = RootOption,
+    json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Switch one bead to another recipe now: pin it, cancel its run (parked
+    or live; the checkout's edits are kept) and leave it ready, so the
+    scheduler redispatches it on the new recipe. For a tdd-loop bead parked on
+    "no baseline command given" that has nothing new to prove red."""
+    from alloy.reconcile import reroute as reroute_bead
+
+    _setup_logging(verbose=not json)
+    engine = _engine(repo, root)
+    try:
+        cancelled = reroute_bead(engine, bead_id, recipe)
+        status = engine.beads.show(bead_id).status
+    except (EngineError, bd.BeadsError) as exc:
+        _fail(str(exc))
+        return
+    if json:
+        _emit({"bead": bead_id, "recipe": recipe, "cancelled": cancelled, "status": status}, True)
+        return
+    console.print(f"{bead_id} -> {recipe}" + ("; its run was cancelled" if cancelled else ""))
+    if status != bd.STATUS_READY:
+        console.print(f"[yellow]{bead_id} is '{status}'[/yellow]; the scheduler only dispatches ready beads")
+
+
+@app.command()
 def start(
     repo: Optional[Path] = RepoOption,
     root: Optional[Path] = RootOption,

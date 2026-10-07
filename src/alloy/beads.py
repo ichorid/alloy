@@ -63,6 +63,9 @@ META_MANUAL = "alloy_manual"
 Alloy never dispatches, runs or lands it, whatever `alloy_recipe` says."""
 META_LAND_ATTEMPTS = "alloy_land_attempts"
 """How many land runs in a row have failed; reset when the bead lands."""
+META_BUDGET_LANDED = "alloy_budget_landed"
+"""Flag: the run hit a budget limit but was landed as done because every
+check was green on an unchanged tree; audit with `bd list --label budget-landed`."""
 
 TRUTHY_METADATA = frozenset({"1", "true", "yes", "on"})
 
@@ -81,6 +84,8 @@ def metadata_flag(metadata: dict[str, Any], key: str) -> bool:
 # `bd human list` surfaces needs-human bugs without any Alloy-specific query.
 LABEL_BUG = "alloy-bug"
 LABEL_HUMAN = "human"
+# A bead Alloy finished through a budget-stop auto-land (see META_BUDGET_LANDED).
+LABEL_BUDGET_LANDED = "budget-landed"
 # Labels that mark a bead as human-operated, like META_MANUAL.
 MANUAL_LABELS = frozenset({"manual", "merge-gate"})
 
@@ -537,6 +542,10 @@ class BeadsClient:
         """
         self._run(["note", bead_id, text], check=check)
 
+    def add_label(self, bead_id: str, label: str, *, check: bool = False) -> None:
+        """Add one label; see `note`'s `check` docstring."""
+        self._run(["label", "add", bead_id, label], check=check)
+
     def close(self, bead_id: str, *, check: bool = False) -> None:
         """See `note`'s `check` docstring -- same reasoning applies here."""
         self._run(["close", bead_id], check=check)
@@ -556,9 +565,10 @@ class BeadsClient:
         """File a bug bead discovered while running `discovered_from`.
 
         The new bead is linked `discovered-from` the parent (which does not
-        block it). Callers pass the parent's recipe/test-command metadata plus
-        META_DISCOVERED_IN_RUN; `claim=True` moves it straight to implementing
-        so a polling scheduler cannot grab it before the parent's child run.
+        block it). Callers pass META_DISCOVERED_IN_RUN and no recipe, so the
+        bug takes the scheduler's default; `claim=True` moves it straight to
+        implementing so a polling scheduler cannot grab it before the parent's
+        child run.
         """
         if str(priority).strip().upper() in ("0", "P0"):
             raise ValueError(

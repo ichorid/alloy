@@ -27,6 +27,9 @@ EVENT_STALLED = "stalled"
 EVENT_DONE = "done"
 EVENT_CANCELLED = "cancelled"
 EVENT_RESUMED = "resumed"
+EVENT_BUDGET_LANDED = "budget-landed"
+"""A budget-stopped run landed as done on all-green checks (informational;
+the bead carries the `budget-landed` label for a later audit)."""
 
 # Events that mean "somebody has to look"; the rest are informational.
 ATTENTION_EVENTS = frozenset({EVENT_NEEDS_HUMAN, EVENT_FAILED, EVENT_STALLED})

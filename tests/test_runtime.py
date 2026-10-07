@@ -367,3 +367,22 @@ async def test_call_drops_resume_session_when_falling_back_to_another_runner(
 
     assert primary.resume_sessions == ["sess-1"]
     assert fallback.resume_sessions == [None]
+
+
+async def test_primary_plus_fallback_chain_counts_as_one_agent_call(ctx_factory):
+    primary = RecordingRunner("codex", ok=False)
+    fallback = RecordingRunner("claude-write")
+    ctx = ctx_factory(_MappedRegistry({"codex": primary, "claude-write": fallback}))
+    spec = RoleSpec.parse(
+        {
+            "runner": "codex",
+            "fallback": {"runner": "claude-write", "model": "fable"},
+        }
+    )
+
+    await ctx.call("implement", spec, "prompt")
+
+    # Both attempts stay in the ledger, but the run spends one budget unit.
+    assert len(ctx.store.agent_calls(ctx.run_id)) == 2
+    assert ctx.store.call_count(ctx.run_id) == 1
+    assert ctx.store.get_run(ctx.run_id)["agent_calls"] == 1

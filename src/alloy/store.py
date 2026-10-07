@@ -13,7 +13,7 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -28,6 +28,16 @@ from alloy.events import (
 from alloy.limits import harness_for_runner
 from alloy.models import UNAVAILABLE_KEY, AgentCallRecord, AgentResult, utcnow
 from alloy.usage import normalize
+
+CHEAP_KEY = "cheap"
+"""Set in `usage` on a call of one of `limits.cheap_roles` (verifier,
+acceptance, judge, ...): it spends `max_cheap_agent_calls`, never
+`max_agent_calls`."""
+
+CHAIN_FREE_KEY = "chain_free"
+"""Set in `usage` on a fallback attempt after the call chain (primary plus
+fallbacks) already spent one unit of the run's agent-call budget. The row stays
+in the ledger but is not counted again."""
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -105,6 +115,29 @@ CREATE TABLE IF NOT EXISTS bd_outbox (
     last_error   TEXT
 );
 CREATE INDEX IF NOT EXISTS bd_outbox_pending_idx ON bd_outbox(bead_id, id) WHERE delivered_at IS NULL;
+
+-- Runner circuit breaker: a harness (or one model of it, model <> '') that
+-- reported a usage/spend/rate limit stays out of rotation until `until`.
+CREATE TABLE IF NOT EXISTS runner_breaker (
+    harness      TEXT NOT NULL,
+    model        TEXT NOT NULL DEFAULT '',
+    until        TEXT NOT NULL,
+    reason       TEXT NOT NULL DEFAULT '',
+    parsed       INTEGER NOT NULL DEFAULT 0,
+    marked_at    TEXT NOT NULL,
+    PRIMARY KEY (harness, model)
+);
+
+-- Passing checks this run already ran, keyed by the exact command and the
+-- worktree fingerprint they ran against (see RunContext.run_check).
+CREATE TABLE IF NOT EXISTS check_cache (
+    run_id       TEXT NOT NULL,
+    command      TEXT NOT NULL,
+    fingerprint  TEXT NOT NULL,
+    result_json  TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    PRIMARY KEY (run_id, command, fingerprint)
+);
 """
 
 # scheduler_meta keys (alloy-4ef.19)
@@ -158,6 +191,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "retry_at": "TEXT",  # when a parked run may resume on its own (alloy-5wb.4)
         "base_commit": "TEXT",  # where this run's diff starts (alloy-vrh.4)
         "committed_sha": "TEXT",  # set only once commit_wip has actually run; "none" means nothing to commit
+        "cheap_agent_calls": "INTEGER NOT NULL DEFAULT 0",  # counted calls of limits.cheap_roles
     },
     "agent_calls": {
         "structured_json": "TEXT",  # the raw structured output, e.g. the judge's verdict
@@ -558,6 +592,92 @@ class Store:
     def set_last_memory_review_day(self, day: str) -> None:
         self._meta_set(META_LAST_MEMORY_REVIEW_DAY, day)
 
+    # -- runner circuit breaker ---------------------------------------------
+
+    def mark_runner_unavailable(
+        self,
+        harness: str,
+        until: datetime,
+        *,
+        model: str | None = None,
+        reason: str = "",
+        parsed: bool = False,
+    ) -> None:
+        """Keep `harness` (or only its `model`) out of rotation until `until`.
+        A later mark replaces an earlier one for the same key."""
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO runner_breaker (harness, model, until, reason, parsed, marked_at)"
+                " VALUES (?,?,?,?,?,?) ON CONFLICT(harness, model) DO UPDATE SET"
+                " until = excluded.until, reason = excluded.reason, parsed = excluded.parsed,"
+                " marked_at = excluded.marked_at",
+                (harness, model or "", _iso(until), reason, int(parsed), utcnow().isoformat()),
+            )
+
+    def runner_unavailable_until(self, harness: str, model: str | None = None) -> datetime | None:
+        """The latest active breaker window covering `harness` (whole-harness
+        entries, or the entry for `model`), or None when it may be used."""
+        now = utcnow()
+        latest: datetime | None = None
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT until FROM runner_breaker WHERE harness = ? AND model IN ('', ?)",
+                (harness, model or ""),
+            ).fetchall()
+        for row in rows:
+            until = _parse_aware(row["until"])
+            if until is not None and until > now and (latest is None or until > latest):
+                latest = until
+        return latest
+
+    def clear_runner_unavailable(self, harness: str, model: str | None = None) -> None:
+        """A call on `harness` (`model`) worked: drop the entries that cover it."""
+        with self.connect() as conn:
+            conn.execute(
+                "DELETE FROM runner_breaker WHERE harness = ? AND model IN ('', ?)",
+                (harness, model or ""),
+            )
+
+    def runners_unavailable(self) -> list[dict[str, Any]]:
+        """Active breaker entries, soonest reset first (`alloy status --json`)."""
+        now = utcnow()
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM runner_breaker ORDER BY until, harness, model").fetchall()
+        active = []
+        for row in rows:
+            until = _parse_aware(row["until"])
+            if until is not None and until > now:
+                active.append(
+                    {
+                        "harness": row["harness"],
+                        "model": row["model"] or None,
+                        "until": until.isoformat(),
+                        "reason": row["reason"],
+                        "reset_parsed": bool(row["parsed"]),
+                    }
+                )
+        return active
+
+    # -- check cache --------------------------------------------------------
+
+    def cached_check(self, run_id: str, command: str, fingerprint: str) -> dict[str, Any] | None:
+        """A passing CheckResult (as a dict) this run recorded for `command`
+        against the same worktree fingerprint, or None."""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT result_json FROM check_cache WHERE run_id = ? AND command = ? AND fingerprint = ?",
+                (run_id, command, fingerprint),
+            ).fetchone()
+        return json.loads(row["result_json"]) if row else None
+
+    def cache_check(self, run_id: str, command: str, fingerprint: str, result: dict[str, Any]) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO check_cache (run_id, command, fingerprint, result_json, created_at)"
+                " VALUES (?,?,?,?,?)",
+                (run_id, command, fingerprint, json.dumps(result), utcnow().isoformat()),
+            )
+
     def mark_paused(self, run_id: str) -> None:
         """The run is waiting for a human; the clock stops here (see `elapsed`)."""
         self.update_run(run_id, paused_at=utcnow().isoformat())
@@ -799,9 +919,11 @@ class Store:
                     json.dumps(result.structured) if result.structured is not None else None,
                 ),
             )
-            if not (result.usage or {}).get(UNAVAILABLE_KEY):
+            usage = result.usage or {}
+            if not usage.get(UNAVAILABLE_KEY) and not usage.get(CHAIN_FREE_KEY):
+                column = "cheap_agent_calls" if usage.get(CHEAP_KEY) else "agent_calls"
                 conn.execute(
-                    "UPDATE runs SET agent_calls = agent_calls + 1 WHERE run_id = ?",
+                    f"UPDATE runs SET {column} = {column} + 1 WHERE run_id = ?",
                     (run_id,),
                 )
 
@@ -810,14 +932,22 @@ class Store:
             rows = conn.execute("SELECT * FROM agent_calls WHERE run_id = ? ORDER BY id", (run_id,)).fetchall()
         return [dict(row) for row in rows]
 
-    def call_count(self, run_id: str, *, include_children: bool = False) -> int:
+    def call_count(self, run_id: str, *, include_children: bool = False, cheap: bool = False) -> int:
         """Agent calls made by the run; with `include_children`, also those of
         its remediation children. Limit enforcement uses the per-run count:
         each run is judged on its own calls only. Calls whose harness was
-        unavailable (spend/rate limit, missing binary) do not count."""
+        unavailable (spend/rate limit, missing binary) do not count, and a
+        call chain (primary plus fallbacks) counts once: fallback attempts
+        after the first counted attempt are `chain_free`.
+
+        The main budget and the cheap-role budget are disjoint: by default
+        only calls *not* flagged `cheap` count; `cheap=True` counts only
+        those that are."""
         query = (
             "SELECT COUNT(*) AS n FROM agent_calls WHERE"
             " COALESCE(json_extract(usage_json, '$.unavailable'), 0) = 0"
+            " AND COALESCE(json_extract(usage_json, '$.chain_free'), 0) = 0"
+            f" AND COALESCE(json_extract(usage_json, '$.cheap'), 0) {'!=' if cheap else '='} 0"
             " AND (run_id = ?"
         )
         params: tuple[Any, ...] = (run_id,)
@@ -944,6 +1074,17 @@ def _sum_usage(records: Iterable[dict]) -> dict:
         if record["cost_usd"] is not None:
             totals["cost_usd"] = (totals["cost_usd"] or 0.0) + record["cost_usd"]
     return totals
+
+
+def _parse_aware(value: str | None) -> datetime | None:
+    """An ISO timestamp as an aware datetime (naive means UTC), or None."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
 def _iso(value: datetime | str) -> str:

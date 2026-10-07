@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import replace
 from typing import Any, Awaitable, Callable, NamedTuple
 
@@ -233,6 +234,12 @@ def _make_implementer(ctx, implementer_fallback):
         return ctx.role_spec("implement", state).runner
 
     return _implementer
+
+
+VERIFY_MORE_BREACH_PREFIX = "acceptance asked for more verification but "
+"""Reason prefix of the decision acceptance_gate hands guard when it wanted
+more evidence but a run budget was spent -- the one "nothing is wrong, it
+just wants more checks" stop that a budget-stop auto-land may finish."""
 
 
 def _make_verifier_nodes(ctx):
@@ -540,7 +547,7 @@ def _make_acceptance_nodes(ctx, _implementer):
                     "acceptance_route": "guard",
                     "decision": JudgeDecision(
                         decision="retry",
-                        reason=f"acceptance asked for more verification but {breach}",
+                        reason=f"{VERIFY_MORE_BREACH_PREFIX}{breach}",
                     ).model_dump(),
                 }
             if state.get("verify_more_at_checks") == n_checks:
@@ -713,6 +720,37 @@ def _is_red(check: dict[str, Any]) -> bool:
     """A runnable, required check that did not pass."""
     result = CheckResult.model_validate(check)
     return result.required and result.runnable and not result.ok
+
+
+def _check_target(command: str) -> str:
+    """What a check runs, ignoring how it was quoted: `--plain-name=a b` and
+    `--plain-name="a b"` are the same intent, the second its corrected form."""
+    try:
+        return " ".join(shlex.split(command))
+    except ValueError:
+        return " ".join(command.split())
+
+
+def _latest_per_target(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The checks that decide whether an iteration is green: per target, only
+    the latest *runnable* result.
+
+    A verifier that re-runs a failed command (after fixing its quoting, or
+    after the implementer's fix landed mid-iteration) and sees it pass has
+    replaced the stale failure; counting both twice parked finished beads as
+    needs-human. A later run that timed out or could not start proves nothing,
+    so it never clears an earlier failure, and a target that was required on
+    any run stays required."""
+    latest: dict[str, dict[str, Any]] = {}
+    required: set[str] = set()
+    for check in checks:
+        result = CheckResult.model_validate(check)
+        target = _check_target(result.command)
+        if result.required:
+            required.add(target)
+        if result.runnable or target not in latest:
+            latest[target] = check
+    return [{**check, "required": True} if target in required else check for target, check in latest.items()]
 
 
 def _retry_at_iso(result) -> str | None:

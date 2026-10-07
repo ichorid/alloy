@@ -25,6 +25,7 @@ from alloy import recipes
 from alloy.beads import Bead, BeadsClient
 from alloy.checkpoints import has_pending_interrupt, open_checkpointer, read_checkpoint
 from alloy.config import ConfigError, RecipeConfig, load_recipe
+from alloy.events import EVENT_BUDGET_LANDED
 from alloy.models import Outcome
 from alloy.outbox import deliver_pending
 from alloy.paths import AlloyPaths
@@ -844,6 +845,7 @@ class Engine:
             # only task with nothing to commit) is what lets reconcile tell
             # "done and verified" from "done locally, commit unconfirmed" --
             # see `reconcile._status_after`.
+            landed = final.get("budget_landed") or None
             settled = self.store.finish_run(
                 run_id,
                 expect=self._owned(),
@@ -862,8 +864,25 @@ class Engine:
                             f"on branch {ctx.worktree.branch}. {reason}"
                         },
                     ),
+                    *(_budget_landed_outbox(landed) if landed else []),
                 ],
             )
+            if settled and landed:
+                log.warning(
+                    "%s: run %s budget-landed (%s); marked %s for audit",
+                    bead.id,
+                    run_id,
+                    landed.get("limit"),
+                    bd.LABEL_BUDGET_LANDED,
+                )
+                self.store.events.emit(
+                    EVENT_BUDGET_LANDED,
+                    bead=bead.id,
+                    run=run_id,
+                    reason=str(landed.get("limit", "")),
+                    regression=landed.get("regression"),
+                    green_checks=landed.get("green_checks"),
+                )
         else:
             settled = self.store.finish_run(
                 run_id,
@@ -929,6 +948,25 @@ class Engine:
         if record is None:
             return None
         return read_checkpoint(self.paths.workflows_db, record["thread_id"])
+
+
+def _budget_landed_outbox(landed: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """bd side effects that make a budget-landed bead findable for an audit
+    (`bd list --label budget-landed`)."""
+    green = ", ".join(f"`{command}`" for command in landed.get("green_checks") or []) or "(none recorded)"
+    return [
+        ("metadata", {"values": {bd.META_BUDGET_LANDED: "true"}}),
+        ("label", {"label": bd.LABEL_BUDGET_LANDED}),
+        (
+            "note",
+            {
+                "text": f"alloy: budget-landed -- the run hit {landed.get('limit')} while the acceptance gate "
+                f"only wanted more verification; it was landed as done because every check was green on an "
+                f"unchanged tree. Regression check: `{landed.get('regression')}`. Green checks: {green}. "
+                "Audit with `bd list --label budget-landed`."
+            },
+        ),
+    ]
 
 
 def _interrupt_payload(pending: Any) -> dict[str, Any]:

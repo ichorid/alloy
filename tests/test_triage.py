@@ -149,6 +149,9 @@ async def test_non_blocking_bug_is_filed_and_run_completes(project, alloy_home, 
     assert filed["labels"] == [bd.LABEL_BUG]
     assert filed["claim"] is False
     assert filed["discovered_from"] == "parent-1"
+    # Not the parent's tdd-loop: a pinned recipe would outrank the scheduler's
+    # default, and a one-line bug has nothing to prove red.
+    assert filed["metadata"] == {bd.META_DISCOVERED_IN_RUN: harness.run_id}
     assert beads.add_dependency_calls == []
 
     roles = _agent_roles(fake_harnesses)

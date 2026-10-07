@@ -192,6 +192,68 @@ async def test_serve_writes_and_removes_its_pidfile(scheduler):
     assert read_pid(scheduler.pidfile) is None
 
 
+async def test_serve_logs_the_alloy_commit_it_loaded_not_the_target_repos(scheduler, caplog):
+    """A committed fix does nothing to a scheduler already running: the
+    startup line must say which Alloy code this process is."""
+    import alloy.scheduler as scheduler_module
+
+    alloy_head = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=Path(scheduler_module.__file__).parent,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    with caplog.at_level(logging.INFO, logger="alloy.scheduler"):
+        await scheduler.serve()
+
+    up = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("scheduler up"))
+    assert f"alloy {alloy_head}" in up
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+def test_alloy_commit_reads_the_checkout_holding_the_source_and_marks_edits(tmp_path):
+    from alloy.scheduler import alloy_commit
+
+    _git(tmp_path, "init", "-q")
+    source = tmp_path / "scheduler.py"
+    source.write_text("x = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "scheduler.py")
+    _git(tmp_path, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "init")
+    head = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], cwd=tmp_path, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    assert alloy_commit(source) == head
+    source.write_text("x = 2\n", encoding="utf-8")
+    assert alloy_commit(source) == f"{head}-dirty"
+
+
+def test_alloy_commit_is_unknown_outside_git_or_when_untracked_in_another_repo(tmp_path):
+    """An installed package inside the target project's venv must not report
+    the target project's commit as Alloy's."""
+    from alloy.scheduler import alloy_commit
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / "scheduler.py").write_text("", encoding="utf-8")
+    assert alloy_commit(plain / "scheduler.py") == "unknown"
+
+    host = tmp_path / "host"
+    host.mkdir()
+    _git(host, "init", "-q")
+    (host / "README").write_text("host\n", encoding="utf-8")
+    _git(host, "add", "README")
+    _git(host, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "init")
+    site = host / ".venv" / "alloy"
+    site.mkdir(parents=True)
+    (site / "scheduler.py").write_text("", encoding="utf-8")
+    assert alloy_commit(site / "scheduler.py") == "unknown"
+
+
 async def test_a_second_scheduler_refuses_to_start(scheduler):
     import subprocess
     import sys

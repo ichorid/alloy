@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from alloy import beads as bd
-from alloy.engine import Engine
+from alloy.engine import Engine, EngineError
 from alloy.models import Outcome
 from alloy.procs import pid_alive, read_pid
 from alloy.store import RUN_CANCELLED, RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN
@@ -272,3 +272,21 @@ def recipe_candidates(engine: Engine, recipe: str, *, from_recipe: str | None = 
             continue
         found.append(bead)
     return sorted(found, key=lambda b: (b.priority, b.id))
+
+
+def reroute(engine: Engine, bead_id: str, recipe: str) -> bool:
+    """Move one bead to `recipe` now, whatever it is doing: pin the recipe,
+    then cancel its active run (parked or live) so the bead goes back to ready
+    and the scheduler redispatches it from a clean graph, in place, keeping
+    the checkout's edits. What an operator did by hand for every tdd-loop bead
+    parked on "no baseline command given" (tentura-brd4.18). True when a run
+    was cancelled.
+
+    The recipe is pinned before the cancel: the cancel makes the bead ready,
+    and a scheduler polling in between must already see the new recipe."""
+    engine.validate_recipe(recipe)
+    bead = engine.beads.show(bead_id)
+    if bead.issue_type == "epic" or bead.manual:
+        raise EngineError(f"{bead_id} is an epic or human-operated; Alloy does not run it")
+    engine.beads.set_metadata(bead_id, {bd.META_RECIPE: recipe})
+    return engine.cancel(bead_id)

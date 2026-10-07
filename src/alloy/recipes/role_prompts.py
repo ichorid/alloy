@@ -58,6 +58,13 @@ CONTEXT_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Agents kept writing `--plain-name=multi word name` unquoted; the split words
+# came back as failed test files, indistinguishable from a real red check.
+QUOTE_ARGUMENTS = """Quote every argument that contains spaces (`--plain-name='slug keeps dashes'`): unquoted, the
+shell splits it and the test runner tries to load each extra word as a test file."""
+QUOTE_ARGUMENTS_BULLET = "- " + QUOTE_ARGUMENTS.replace("\n", "\n  ")
+
+
 BUG_PROTOCOL = """If you discover a defect in existing code outside this task's scope (not the failing tests \
 you were asked to make pass, and not your own change), do not fix it or silently work around it.
 If the defect blocks your task, stop and report it.
@@ -159,6 +166,7 @@ shell commands, each with its purpose, that Alloy will run to demonstrate the re
 behaviour is not implemented yet. Every command must target only the tests you wrote
 (e.g. one test file or node id), never the whole suite, and must be red right now.
 Alloy runs them itself and decides from the exit codes.
+{QUOTE_ARGUMENTS}
 
 {BUG_PROTOCOL}"""
 
@@ -321,6 +329,7 @@ separate tests-writer, verifier, acceptance or judge role here -- you do all of 
   are stuck and a human should look.
 
 Rules:
+{QUOTE_ARGUMENTS_BULLET}
 - Do not claim `done` without Alloy having run at least one real check this iteration that
   supports it. A `done` with no checks proposed is rejected and forced back into verification.
 - Do not disable, skip, or loosen checks to get green.
@@ -607,7 +616,7 @@ def acceptance_prompt(
     return assemble(ACCEPTANCE_STATIC, "", "", task, volatile).text
 
 
-VERIFIER_STATIC = """You are choosing the next verification check for a coding task. You are read-only:
+VERIFIER_STATIC = f"""You are choosing the next verification check for a coding task. You are read-only:
 you cannot edit code and you never run anything yourself. Do not modify any file. Alloy runs
 the command(s) you name, in the worktree root, exactly as written, and shows you the result.
 
@@ -624,9 +633,13 @@ Answer with the structured output. Either:
   Leave out out-of-scope work and concerns no command can settle.
 
 Prefer the most targeted check that would move the evidence: the tests written for
-this task first, then what the diff could have broken, then the wider suite, lint or
-build. Do not repeat a check whose result cannot have changed. Never claim to have
-run anything yourself."""
+this task first, then what the diff could have broken, then lint or build. Use kind
+`targeted` for these. Run the full suite (kind `regression`) only once the targeted
+checks are green, and again only if the code changed after it passed: Alloy reuses a
+passing result for the exact same command on an unchanged tree (marked cached), so
+re-running it proves nothing new. Do not repeat a check whose result cannot have
+changed. Never claim to have run anything yourself.
+{QUOTE_ARGUMENTS}"""
 
 VERIFIER_RESUMED = (
     "This continues your session: the task brief, acceptance criteria and repository "

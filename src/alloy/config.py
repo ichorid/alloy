@@ -119,6 +119,21 @@ class ComplexitySpec:
         return cls(routing=routing, escalate_after_retries=retries, tiers=tiers)
 
 
+DEFAULT_CHEAP_ROLES: tuple[str, ...] = ("verifier", "acceptance", "harvest", "triage", "estimate", "judge")
+"""Roles whose calls spend `limits.max_cheap_agent_calls` instead of
+`limits.max_agent_calls`: short, bounded calls that a long verify loop makes
+many of, and that should not starve the implementer of budget."""
+
+
+def _tier_map(raw: dict[str, Any], key: str) -> dict[str, int]:
+    by_tier: dict[str, int] = {}
+    for level, value in (raw.get(key) or {}).items():
+        if level not in COMPLEXITY_LEVELS:
+            raise ConfigError(f"unknown {key} tier: {level!r}")
+        by_tier[level] = int(value)
+    return by_tier
+
+
 @dataclass(frozen=True)
 class Limits:
     """Hard stops Alloy enforces itself. An agent can never opt out of these."""
@@ -128,23 +143,33 @@ class Limits:
     max_wall_time_minutes: float = 90.0
     max_agent_calls: int = 20
     max_agent_calls_by_tier: dict[str, int] = field(default_factory=dict)
+    max_cheap_agent_calls: int = 40
+    """Ceiling on calls of `cheap_roles`; they never count toward
+    `max_agent_calls`, and the rest never count toward this one."""
+    max_cheap_agent_calls_by_tier: dict[str, int] = field(default_factory=dict)
+    cheap_roles: tuple[str, ...] = DEFAULT_CHEAP_ROLES
 
     @classmethod
     def parse(cls, raw: dict[str, Any] | None) -> "Limits":
         raw = raw or {}
         defaults = cls()
-        by_tier: dict[str, int] = {}
-        for level, value in (raw.get("max_agent_calls_by_tier") or {}).items():
-            if level not in COMPLEXITY_LEVELS:
-                raise ConfigError(f"unknown max_agent_calls_by_tier tier: {level!r}")
-            by_tier[level] = int(value)
+        cheap_roles = raw.get("cheap_roles", defaults.cheap_roles)
+        if isinstance(cheap_roles, str) or not all(isinstance(role, str) for role in cheap_roles or ()):
+            raise ConfigError(f"limits.cheap_roles must be a list of role names: {cheap_roles!r}")
         return cls(
             max_iterations=int(raw.get("max_iterations", defaults.max_iterations)),
             max_consiliums=int(raw.get("max_consiliums", defaults.max_consiliums)),
             max_wall_time_minutes=float(raw.get("max_wall_time_minutes", defaults.max_wall_time_minutes)),
             max_agent_calls=int(raw.get("max_agent_calls", defaults.max_agent_calls)),
-            max_agent_calls_by_tier=by_tier,
+            max_agent_calls_by_tier=_tier_map(raw, "max_agent_calls_by_tier"),
+            max_cheap_agent_calls=int(raw.get("max_cheap_agent_calls", defaults.max_cheap_agent_calls)),
+            max_cheap_agent_calls_by_tier=_tier_map(raw, "max_cheap_agent_calls_by_tier"),
+            cheap_roles=tuple(cheap_roles or ()),
         )
+
+    def is_cheap_role(self, role: str) -> bool:
+        """`critic:codex`-style names match on the part before the colon."""
+        return role in self.cheap_roles or role.split(":", 1)[0] in self.cheap_roles
 
 
 DEFAULT_TIER_AGENT_CALL_MULTIPLIER = 1.5
@@ -173,6 +198,19 @@ def resolve_max_agent_calls(config: "RecipeConfig", complexity: str | None, cali
     if mean > 0:
         ceiling = max(ceiling, math.ceil(mean * DEFAULT_TIER_AGENT_CALL_MULTIPLIER))
     return ceiling
+
+
+def resolve_max_cheap_agent_calls(config: "RecipeConfig", complexity: str | None) -> int:
+    """Cheap-role call ceiling for a run of the given complexity tier: the flat
+    ``limits.max_cheap_agent_calls``, raised (never lowered) by the tier's
+    ``limits.max_cheap_agent_calls_by_tier`` value."""
+    limits = config.limits
+    if complexity not in COMPLEXITY_LEVELS:
+        return limits.max_cheap_agent_calls
+    return max(
+        limits.max_cheap_agent_calls,
+        limits.max_cheap_agent_calls_by_tier.get(complexity, limits.max_cheap_agent_calls),
+    )
 
 
 @dataclass(frozen=True)

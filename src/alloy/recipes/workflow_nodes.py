@@ -7,7 +7,7 @@ from typing import Any
 
 from langgraph.types import Send, interrupt
 
-from alloy.beads import LABEL_BUG, LABEL_HUMAN, META_DISCOVERED_IN_RUN, META_RECIPE
+from alloy.beads import LABEL_BUG, LABEL_HUMAN, META_DISCOVERED_IN_RUN
 from alloy.config import RoleSpec
 from alloy.models import (
     CALIBRATION_KEY,
@@ -59,6 +59,7 @@ from alloy.recipes.role_prompts import (
     tests_review_prompt,
 )
 from alloy.recipes.shared_verification import (
+    VERIFY_MORE_BREACH_PREFIX,
     _check_hints,
     _checks_headline,
     _checks_of,
@@ -66,6 +67,7 @@ from alloy.recipes.shared_verification import (
     _implementer_changed_tests,
     _is_red,
     _last_check_summary,
+    _latest_per_target,
     _retry_at_iso,
     _unavailable_decision,
     call_in_session,
@@ -73,7 +75,11 @@ from alloy.recipes.shared_verification import (
     resumable_session,
 )
 from alloy.recipes.state import CriticInput, TddState
-from alloy.worktree import is_test_path
+from alloy.worktree import is_test_path, tree_fingerprint
+
+BUDGET_LIMITS: tuple[str, ...] = ("max_agent_calls", "max_cheap_agent_calls", "max_iterations", "max_wall_time")
+"""Breaches a budget-stop auto-land may follow. Other stops (consiliums,
+total checks) say something about the work, not just the clock."""
 
 
 def _make_node__capture_bugs(ctx):
@@ -300,7 +306,10 @@ def _make_node_prove_red(ctx):
             problems.append("no baseline command given")
             unrunnable = True
         for result in results:
-            if not result.runnable:
+            if not result.runnable or result.phantom_paths:
+                # A baseline red only because its command names files that do
+                # not exist would hand the implementer a target that can never
+                # go green.
                 problems.append(f"`{result.command}`: {result.headline()}")
                 unrunnable = True
             elif result.ok:
@@ -315,13 +324,30 @@ def _make_node_prove_red(ctx):
         headline = "baseline not runnable" if unrunnable else "baseline unexpectedly green"
         detail = f"{headline}: " + "; ".join(problems)
         if repairs > ctx.recipe.verification.max_baseline_repairs:
+            question = (
+                "The tests role could not produce a red, runnable baseline. Tell it what to fix; "
+                "the tests stage runs again."
+            )
+            if not checks:
+                # Not rerouted automatically: a malformed tests-role answer
+                # also arrives as an empty baseline_checks, and it is
+                # indistinguishable here from a deliberate "nothing to prove
+                # red" (tentura-brd4.18 and two more, one overnight session).
+                hint = f"`alloy reroute {ctx.bead.id} fast-track` if nothing new needs proving red"
+                detail = f"{detail} -- {hint}"
+                question = (
+                    "The tests role named no baseline command. If this bead has no new behaviour "
+                    "to prove red (an audit, a characterization, an already-fixed or one-line "
+                    f"fix), run `alloy reroute {ctx.bead.id} fast-track`: it cancels this run and "
+                    "the scheduler redispatches the bead on fast-track, which needs no baseline. "
+                    "Otherwise tell the tests role what to prove red; the tests stage runs again."
+                )
             update.update(
                 resume_to="tests",
                 decision=JudgeDecision(
                     decision="human",
                     reason=detail,
-                    next_instructions="The tests role could not produce a red, runnable "
-                    "baseline. Tell it what to fix; the tests stage runs again.",
+                    next_instructions=question,
                 ).model_dump(),
             )
             return update
@@ -522,8 +548,12 @@ def _make_node__file_bug(ctx):
             return "(unfiled)"
         severity = verdict.severity
         labels = [LABEL_BUG] + ([LABEL_HUMAN] if severity == "needs-human" else [])
-        metadata = {key: ctx.bead.metadata[key] for key in (META_RECIPE,) if ctx.bead.metadata.get(key)}
-        metadata[META_DISCOVERED_IN_RUN] = ctx.run_id
+        # No alloy_recipe copied from the parent: a pinned recipe outranks the
+        # scheduler's --recipe and alloy:default:recipe, and dispatch stamps
+        # one on every parent, so a one-line bug found by a tdd-loop run was
+        # forced through tdd-loop and parked on "no baseline command given".
+        # Unassigned, it takes the session default (fast-track by fallback).
+        metadata = {META_DISCOVERED_IN_RUN: ctx.run_id}
         bug_id = ctx.beads.create_bug(
             title=report.title,
             description=bug_description(report, verdict, ctx.bead.id, ctx.run_id),
@@ -577,6 +607,96 @@ def _guard_decision(proposed, tests_green, ctx):
     return decision
 
 
+def budget_landing(ctx, state: TddState, breach: str, decision: JudgeDecision) -> dict[str, Any] | None:
+    """Whether a budget-stopped run may finish as done anyway, and the audit
+    record for it; None keeps today's needs-human park.
+
+    Deliberately conservative -- every condition must hold:
+    - the stop is a pure budget limit (`BUDGET_LIMITS`);
+    - the last word was the acceptance gate asking for *more* verification
+      (`VERIFY_MORE_BREACH_PREFIX`), not a failing check, a repair or a
+      judge's verdict (whose free text may name a defect);
+    - the latest `regression` check (the broad one) passed with exit 0;
+    - no check of the final iteration failed;
+    - the worktree is non-empty and unchanged since that regression ran.
+    """
+    if not breach.startswith(BUDGET_LIMITS):
+        return None
+    acceptance = state.get("acceptance") or {}
+    if decision.decision != "retry" or not decision.reason.startswith(VERIFY_MORE_BREACH_PREFIX):
+        return None
+    if acceptance.get("decision") != "verify_more":
+        return None
+    checks = [CheckResult.model_validate(item) for item in state.get("checks") or []]
+    regressions = [check for check in checks if check.kind == "regression"]
+    if not regressions:
+        return None
+    regression = regressions[-1]
+    if not (regression.ok and regression.exit_code == 0 and regression.fingerprint):
+        return None
+    final = [CheckResult.model_validate(item) for item in _checks_of(state, state.get("iteration", 0))]
+    if any(not check.ok for check in final):
+        return None
+    if not ctx.worktrees.has_changes(ctx.worktree):
+        return None
+    if tree_fingerprint(ctx.worktree.path) != regression.fingerprint:
+        return None
+    green = list(dict.fromkeys(check.command for check in [*final, regression]))
+    return {
+        "limit": breach,
+        "regression": regression.command,
+        "green_checks": green,
+        "acceptance_reason": acceptance.get("reason", ""),
+    }
+
+
+def _budget_landed_update(ctx, state: TddState, breach: str, decision: JudgeDecision) -> dict[str, Any] | None:
+    """guard's update for a budget stop that `budget_landing` lets finish as done."""
+    landing = budget_landing(ctx, state, breach, decision)
+    if landing is None:
+        return None
+    log.warning(
+        "%s: budget-landed -- %s, but the regression check `%s` and every final check are green "
+        "on an unchanged tree; finishing as done and marking the bead budget-landed",
+        ctx.bead.id,
+        breach,
+        landing["regression"],
+    )
+    return {
+        "stage": "guard",
+        "limit_hit": breach,
+        "budget_landed": landing,
+        # The regression check already is the broad final pass.
+        "final_pass": True,
+        "decision": JudgeDecision(
+            decision="done",
+            reason=(
+                f"budget-landed: {breach}, but every check is green on an unchanged tree "
+                f"(regression `{landing['regression']}` passed). Last judge reason: {decision.reason}"
+            ),
+            confidence=decision.confidence,
+        ).model_dump(),
+    }
+
+
+def _breach_update(ctx, state: TddState, breach: str, decision: JudgeDecision) -> dict[str, Any]:
+    """guard's update once a limit is breached: a budget-landed finish when
+    `budget_landing` allows it, else the needs-human park."""
+    landed = _budget_landed_update(ctx, state, breach, decision)
+    if landed is not None:
+        return landed
+    return {
+        "stage": "guard",
+        "limit_hit": breach,
+        "decision": JudgeDecision(
+            decision="human",
+            reason=f"Alloy stopped the loop: {breach}. Last judge reason: {decision.reason}",
+            next_instructions=decision.next_instructions,
+            confidence=decision.confidence,
+        ).model_dump(),
+    }
+
+
 def _make_node_guard(ctx):
     def guard(state: TddState) -> dict[str, Any]:
         """The deterministic gate.
@@ -589,8 +709,11 @@ def _make_node_guard(ctx):
             state.get("decision") or {"decision": "retry", "reason": "no decision recorded"}
         )
         breach = ctx.check_limits(state)
-        # Green means: every required check of this iteration passed.
-        tests_green = not any(_is_red(check) for check in _checks_of(state, state.get("iteration", 0)))
+        # Green means: every required target checked this iteration passed on
+        # its latest run.
+        tests_green = not any(
+            _is_red(check) for check in _latest_per_target(_checks_of(state, state.get("iteration", 0)))
+        )
 
         decision = _guard_decision(proposed, tests_green, ctx)
 
@@ -615,17 +738,7 @@ def _make_node_guard(ctx):
             return {"stage": "guard", "decision": decision.model_dump(), **recorded}
 
         if breach:
-            return {
-                **recorded,
-                "stage": "guard",
-                "limit_hit": breach,
-                "decision": JudgeDecision(
-                    decision="human",
-                    reason=f"Alloy stopped the loop: {breach}. Last judge reason: {decision.reason}",
-                    next_instructions=decision.next_instructions,
-                    confidence=decision.confidence,
-                ).model_dump(),
-            }
+            return {**recorded, **_breach_update(ctx, state, breach, decision)}
 
         if decision.decision == "consilium" and state.get(
             "consiliums", 0

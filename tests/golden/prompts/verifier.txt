@@ -15,9 +15,14 @@ Answer with the structured output. Either:
   Leave out out-of-scope work and concerns no command can settle.
 
 Prefer the most targeted check that would move the evidence: the tests written for
-this task first, then what the diff could have broken, then the wider suite, lint or
-build. Do not repeat a check whose result cannot have changed. Never claim to have
-run anything yourself.
+this task first, then what the diff could have broken, then lint or build. Use kind
+`targeted` for these. Run the full suite (kind `regression`) only once the targeted
+checks are green, and again only if the code changed after it passed: Alloy reuses a
+passing result for the exact same command on an unchanged tree (marked cached), so
+re-running it proves nothing new. Do not repeat a check whose result cannot have
+changed. Never claim to have run anything yourself.
+Quote every argument that contains spaces (`--plain-name='slug keeps dashes'`): unquoted, the
+shell splits it and the test runner tries to load each extra word as a test file.
 
 ---
 

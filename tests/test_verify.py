@@ -158,3 +158,65 @@ def test_shell_expressions_are_left_to_the_shell(project):
 
     assert is_runnable("cd sub && make test")
     assert not is_runnable("definitely-not-installed")
+
+
+# ---------------------------------------------------------------------------
+# phantom test paths: an unquoted multi-word argument, not a real failure
+# ---------------------------------------------------------------------------
+
+# Captured from `dart test test/slug_test.dart --plain-name=slug keeps dashes`
+# (package:test, the runner under `flutter test` too).
+DART_ALL_PHANTOM = """00:00 +0: loading test/slug_test.dart
+00:00 +0 -1: loading keeps [E]
+  Failed to load "keeps": Does not exist.
+00:00 +0 -2: loading dashes [E]
+  Failed to load "dashes": Does not exist.
+00:00 +0 -2: test/slug_test.dart: slug keeps dashes
+00:00 +1 -2: Some tests failed.
+"""
+
+# `--plain-name=other keeps`: one phantom path *and* a real assertion failure.
+DART_PHANTOM_AND_REAL = """00:00 +0: loading test/slug_test.dart
+00:00 +0 -1: loading keeps [E]
+  Failed to load "keeps": Does not exist.
+00:00 +0 -1: test/slug_test.dart: other
+00:00 +0 -2: test/slug_test.dart: other [E]
+  Expected: <2>
+    Actual: <1>
+00:00 +0 -2: Some tests failed.
+"""
+
+
+def test_phantom_paths_only_when_every_failure_is_a_missing_test_path():
+    from alloy.verify import phantom_paths
+
+    assert phantom_paths(DART_ALL_PHANTOM) == ["keeps", "dashes"]
+    # A real failure alongside must never be relabelled as a malformed command.
+    assert phantom_paths(DART_PHANTOM_AND_REAL) == []
+    # Without the runner's failure count there is no proof nothing else failed.
+    assert phantom_paths('Failed to load "keeps": Does not exist.\n') == []
+    assert phantom_paths("00:01 +3 -1: Some tests failed.\n") == []
+
+
+async def test_a_phantom_only_failure_stays_red_but_says_the_command_is_malformed(project, tmp_path):
+    from alloy.recipes.shared_verification import _is_red
+
+    output = tmp_path / "dart.out"
+    output.write_text(DART_ALL_PHANTOM, encoding="utf-8")
+    result = await run_check(CheckRequest(command=f"cat {output}; exit 1", kind="targeted"), project, timeout_s=30.0)
+
+    assert result.phantom_paths == ["keeps", "dashes"]
+    assert result.runnable and not result.ok
+    assert _is_red(result.model_dump(mode="json"))  # no evidence anything passed
+    assert result.headline().startswith("likely malformed command")
+    assert '"keeps", "dashes"' in result.headline()
+    assert "--plain-name" in result.headline()
+
+
+async def test_a_real_failure_next_to_a_phantom_path_keeps_its_plain_headline(project, tmp_path):
+    output = tmp_path / "dart.out"
+    output.write_text(DART_PHANTOM_AND_REAL, encoding="utf-8")
+    result = await run_check(CheckRequest(command=f"cat {output}; exit 1", kind="targeted"), project, timeout_s=30.0)
+
+    assert result.phantom_paths == []
+    assert result.headline() == "exit 1"

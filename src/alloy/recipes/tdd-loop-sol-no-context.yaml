@@ -15,17 +15,20 @@ complexity:
   # A tier is a priority-ordered runner list: the first is primary, the rest fallbacks.
   # `effort` is per entry (claude --effort, codex model_reasoning_effort); cursor has
   # no effort knob and encodes it in the model id (kimi-k3-high).
+  # Tier entries carry the timeout of the tiered roles (tests, implement): codex
+  # gets 15 min -- the overnight 20-min codex timeouts never produced a result,
+  # so a stuck attempt now falls through to the next entry 5 min sooner.
   tiers:
     simple:
       - {runner: cursor, model: composer-2.5}
-      - {runner: codex, model: gpt-6-luna}
-      - {runner: codex, model: gpt-6.1-sol, effort: low}
+      - {runner: codex, model: gpt-6-luna, timeout_minutes: 15}
+      - {runner: codex, model: gpt-6.1-sol, effort: low, timeout_minutes: 15}
       - {runner: claude-write, model: sonnet, effort: low}
     medium:
-      - {runner: codex, model: gpt-6.1-sol, effort: high}
+      - {runner: codex, model: gpt-6.1-sol, effort: high, timeout_minutes: 15}
       - {runner: claude-write, model: sonnet, effort: high}
     complex:
-      - {runner: codex, model: gpt-6.1-sol, effort: max}
+      - {runner: codex, model: gpt-6.1-sol, effort: max, timeout_minutes: 15}
       - {runner: cursor, model: kimi-k3-high}
       - {runner: claude-write, model: sonnet}
 
@@ -110,7 +113,7 @@ roles:
   implement:
     tiered: true
     runner: astra                # aliases to codex; override under `runners:` to swap
-    timeout_minutes: 25
+    timeout_minutes: 15          # codex: 15 min, then the fallback (only used outside live routing)
     fallback:                    # when codex is missing, rate-limited or times out
       runner: claude-write
       model: sonnet
@@ -191,6 +194,12 @@ limits:
     simple: 20
     medium: 24
     complex: 64
+  # Calls of the cheap roles (verifier, acceptance, judge, harvest, triage,
+  # estimate) spend only this budget, never max_agent_calls -- and vice versa.
+  max_cheap_agent_calls: 80
+  max_cheap_agent_calls_by_tier:
+    complex: 120
+  cheap_roles: [verifier, acceptance, harvest, triage, estimate, judge]
 
 
 runners:

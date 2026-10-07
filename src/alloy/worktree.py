@@ -67,6 +67,60 @@ class WorktreeError(RuntimeError):
     pass
 
 
+FINGERPRINT_EXCLUDES: tuple[str, ...] = (".alloy/", ".beads/")
+"""Alloy's own state and the bead database change while a run works without
+changing the code under test; they never perturb `tree_fingerprint`."""
+
+_FINGERPRINT_MAX_HASHED_BYTES = 4 * 1024 * 1024
+
+
+def tree_fingerprint(path: Path) -> str:
+    """A hash of everything a check could see: HEAD, `git diff HEAD` (tracked
+    edits, including intent-to-add files) and every untracked, not-ignored
+    file's contents (size + mtime for very large files). Junk files, `.alloy/`
+    and `.beads/` are excluded. "" when `path` is not a git checkout -- an
+    unknown tree never matches anything.
+
+    Read-only: unlike `WorktreeManager.diff` it never touches the index."""
+    excludes = [*junk_pathspecs(), *junk_pathspecs(FINGERPRINT_EXCLUDES)]
+    try:
+        head = _git(["rev-parse", "HEAD"], path, check=False)
+        if head.returncode != 0:
+            return ""
+        digest = hashlib.sha256(head.stdout.strip().encode())
+        diff = subprocess.run(
+            ["git", "diff", "HEAD", "--binary", "--", ".", *excludes],
+            cwd=str(path),
+            capture_output=True,
+            timeout=120,
+        )
+        if diff.returncode != 0:
+            return ""
+        digest.update(diff.stdout)
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z", "--", ".", *excludes],
+            cwd=str(path),
+            capture_output=True,
+            timeout=120,
+        )
+        if untracked.returncode != 0:
+            return ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    for name in sorted(item for item in untracked.stdout.decode("utf-8", "surrogateescape").split("\0") if item):
+        digest.update(b"\0untracked\0" + name.encode("utf-8", "surrogateescape") + b"\0")
+        target = Path(path) / name
+        try:
+            stat = target.stat()
+            if stat.st_size > _FINGERPRINT_MAX_HASHED_BYTES:
+                digest.update(f"{stat.st_size}:{stat.st_mtime_ns}".encode())
+            else:
+                digest.update(target.read_bytes())
+        except OSError:
+            digest.update(b"<unreadable>")
+    return digest.hexdigest()
+
+
 @dataclass(frozen=True)
 class Worktree:
     bead_id: str

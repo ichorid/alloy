@@ -75,6 +75,12 @@ _PYTEST_SUMMARY = re.compile(
 )
 _JEST = re.compile(r"Tests:\s+(?:(\d+) failed,\s*)?(?:\d+ skipped,\s*)?(\d+) passed")
 _CARGO = re.compile(r"test result: \w+\. (\d+) passed; (\d+) failed")
+# package:test (`dart test`, `flutter test`) reports a named test path that
+# is not a file as a failed test: `Failed to load "keeps": Does not exist.`
+# An unquoted multi-word `--plain-name=slug keeps dashes` is shell-split into
+# exactly such paths, and exits 1 like a real assertion failure.
+_DART_MISSING = re.compile(r'Failed to load "(?P<path>[^"\n]+)": Does not exist')
+_DART_PROGRESS = re.compile(r"^\d+:\d{2} \+\d+(?: ~\d+)?(?: -(?P<failed>\d+))?:", re.MULTILINE)
 
 
 _ALLOY_SRC = "src/alloy/"
@@ -248,6 +254,7 @@ async def run_check(
     duration = time.monotonic() - started
     exit_code = -1 if timed_out else (process.returncode or 0)
     passed, failed = parse_counts(output)
+    phantoms = phantom_paths(output) if exit_code != 0 else []
 
     log_path: str | None = None
     if log_dir is not None:
@@ -269,6 +276,7 @@ async def run_check(
         log_path=log_path,
         passed=passed,
         failed=failed,
+        phantom_paths=phantoms,
     )
 
 
@@ -346,6 +354,19 @@ def command_env(worktree: Path) -> dict[str, str]:
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONPATH": os.pathsep.join(entries),
     }
+
+
+def phantom_paths(output: str) -> list[str]:
+    """The nonexistent test paths a package:test run failed on, when they are
+    *all* of its failures; [] when anything else failed too, or when the run's
+    failure count cannot be read -- a real failure must never be relabelled."""
+    paths = list(dict.fromkeys(m.group("path") for m in _DART_MISSING.finditer(output)))
+    if not paths:
+        return []
+    progress = list(_DART_PROGRESS.finditer(output))
+    if not progress or int(progress[-1].group("failed") or 0) != len(paths):
+        return []
+    return paths
 
 
 def parse_counts(output: str) -> tuple[int | None, int | None]:

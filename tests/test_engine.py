@@ -112,7 +112,10 @@ async def test_a_run_is_recorded_with_every_agent_call(engine, beads_project, fa
         assert call["duration_s"] >= 0
     record = engine.store.get_run(result.run_id)
     assert record["status"] == "done"
-    assert record["agent_calls"] == 11
+    # Cheap roles (estimate, verifier, acceptance, judge, harvest) spend their
+    # own budget; context, tests and implement spend max_agent_calls.
+    assert record["agent_calls"] == 3
+    assert record["cheap_agent_calls"] == 8
 
 
 async def test_failure_marks_the_bead_failed_and_keeps_the_worktree(engine, beads_project, fake_harnesses):
@@ -433,3 +436,48 @@ async def test_taking_over_an_implementing_bead_stamps_the_new_run_as_owner(engi
     bead = engine.beads.show(bead_id)
     assert bead.metadata[bd.META_RUN_ID] == result.run_id
     assert bead.status == bd.STATUS_DONE
+
+
+async def test_an_empty_baseline_parks_naming_reroute_and_reroute_hands_it_to_fast_track(
+    engine, beads_project, alloy_home, fake_harnesses
+):
+    """tentura-brd4.18 and two more: a tdd-loop bead with nothing to prove red
+    parks on "no baseline command given"; `alloy reroute` does what the
+    operator did by hand -- pin fast-track, cancel the run, leave it ready."""
+    fake_harnesses.configure(script(tests=[write_tests_entry(baseline_checks=[])]))
+    bead_id = bd_create(beads_project, "audit the slug rules", alloy_recipe="tdd-loop")
+
+    paused = await engine.run(bead_id)
+
+    assert paused.outcome == "waiting-human"
+    assert paused.interrupt["reason"].startswith("baseline not runnable: no baseline command given")
+    assert f"alloy reroute {bead_id} fast-track" in paused.interrupt["reason"]
+    assert f"alloy reroute {bead_id} fast-track" in paused.interrupt["question"]
+
+    cli = CliRunner().invoke(
+        app, ["reroute", bead_id, "--json", "--repo", str(beads_project), "--root", str(alloy_home)]
+    )
+
+    assert cli.exit_code == 0, cli.output
+    assert json.loads(cli.stdout) == {"bead": bead_id, "recipe": "fast-track", "cancelled": True, "status": "open"}
+    bead = engine.beads.show(bead_id)
+    assert bead.recipe == "fast-track"
+    assert bead.status == bd.STATUS_READY
+    assert engine.store.get_run(paused.run_id)["status"] == "cancelled"
+    assert [b.id for b in engine.beads.ready()] == [bead_id]
+
+
+def test_reroute_refuses_human_operated_beads_and_unknown_recipes(engine, beads_project):
+    from alloy.reconcile import reroute
+
+    gate = bd_create(beads_project, "merge gate", alloy_recipe="tdd-loop", alloy_manual="true")
+    with pytest.raises(EngineError, match="human-operated"):
+        reroute(engine, gate, "fast-track")
+    assert engine.beads.show(gate).recipe == "tdd-loop"
+
+    idle = bd_create(beads_project, "never ran", alloy_recipe="tdd-loop")
+    with pytest.raises(EngineError):
+        reroute(engine, idle, "no-such-recipe")
+    assert engine.beads.show(idle).recipe == "tdd-loop"
+    assert reroute(engine, idle, "fast-track") is False  # nothing to cancel; just pinned
+    assert engine.beads.show(idle).recipe == "fast-track"

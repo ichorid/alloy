@@ -75,7 +75,7 @@ A bead runs directly on the primary checkout and finishes `done` on its own once
 ## Doing work by hand
 - Beads run in place on the primary checkout, always. Don't edit the checkout while a bead runs; stop first (`alloy stop`, then wait).
 - Commit before letting Alloy start again: an in-place start refuses while tracked files are uncommitted.
-- Finishing a bead yourself: run the quality gates (tests, lint, build), commit, `git push`, `bd close <bead>`, then `alloy reconcile <bead> --apply` to clear stale run state.
+- Finishing a bead yourself: run the quality gates (tests, lint, build), commit (no push), `bd close <bead>`, then `alloy reconcile <bead> --apply` to clear stale run state.
 - Epics close once all their children are closed. Don't run epics.
 - Checklists and gates: label them `manual`, complete them yourself, then close them.
 
@@ -96,16 +96,22 @@ Observed over a ~10 h unattended session (13+ beads landed, ~half of all `needs-
 
 **Never run wrapped test suites while the scheduler has a running bead.** Test-cleanup wrappers sweep `/tmp` kernel dirs and orphan processes machine-wide, so a manual full-suite run during a bead produces mass "Failed to load" (looks like a regression, isn't) and can poison the bead's own checks. Before any heavy manual run: `alloy status --json` → if a bead is `running`, run only targeted tests, or `alloy stop` first. Manual verification right after a `needs-human` is safe only while the scheduler is idle, and it picks the next bead within seconds of you closing the held one.
 
-**Landing by hand, checklist:** read `git diff HEAD` (does it match the bead?) → targeted + suite + lints from the repo root → commit naming the bead (add `Closes #N` only if the bead's description demands it; partial work gets no trailer) → `git pull --rebase && git push` → `bd close <id> -m "<what you verified, why the run stopped>"` → `alloy reconcile <id> --apply` → `alloy reconcile` must say "everything is in step". Follow repo conventions that the agent may have applied unevenly (version trackers, next-free migration numbers, generated files).
+**Landing by hand, checklist:** read `git diff HEAD` (does it match the bead?) → targeted + suite + lints from the repo root → commit naming the bead (add `Closes #N` only if the bead's description demands it; partial work gets no trailer) → `git pull --rebase` (no push — see "Commits and pushes") → `bd close <id> -m "<what you verified, why the run stopped>"` → `alloy reconcile <id> --apply` → `alloy reconcile` must say "everything is in step". Follow repo conventions that the agent may have applied unevenly (version trackers, next-free migration numbers, generated files).
 
 **Leave `deferred` beads alone.** They are a human's parking lot; sweeps and "activate all" must not touch them.
 
 **Bulk recipe changes.** After `alloy assign-recipe`, `alloy status` may not show a recipe pinned only via bead metadata for every bead — verify with `bd show <id>`.
 
+**Budget-landed beads (audit).** A run that hits a budget limit (`max_agent_calls`, `max_cheap_agent_calls`, `max_iterations`, `max_wall_time`) is landed as done instead of parked when the acceptance gate only wanted more verification, the latest `regression` check passed, nothing in the final iteration failed, and the tree is unchanged since that regression. Such beads carry the label `budget-landed`, metadata `alloy_budget_landed=true` and a note naming the limit and the green checks; the feed shows a `budget-landed` event. In every grooming sweep run `bd list --label budget-landed`, read each bead's diff and note, and either confirm it (remove the label) or reopen it / file a follow-up bead if the extra verification the acceptance gate wanted turns out to matter. Anything not meeting all conditions still parks as `needs-human` — triage it as described above.
+
+**Runner circuit breaker.** When a harness reports a usage, spend or rate limit, Alloy keeps it out of rotation until the reset time in the message, or for 3 hours when none is given. Per-model limits (cursor) block only that model. Calls go straight to the role's fallback with no ledger row and no budget spent; if every runner in a chain is blocked, the last one is tried as a probe. Before blaming a bead for slow progress, check `alloy status --json` → `runners_unavailable` (harness, model, until, reason). The block lifts by itself when the window passes or a call succeeds; to lift it early (e.g. after buying credits) delete the row from `runner_breaker` in `<root>/alloy.db`.
+
+**Budgets.** `max_agent_calls` counts real work calls once per call chain (primary + fallbacks = one). Cheap roles (verifier, acceptance, harvest, triage, estimate, judge) have their own `max_cheap_agent_calls`. Identical checks that already passed on an unchanged tree are served from a per-run cache (log line says `cached`), so don't re-run them by hand to "be sure".
+
 ## Commits and pushes
 - Commit small and often, with messages naming the bead.
-- After each manual fix: `git pull --rebase && git push`. If the push fails, resolve it and retry; never force-push `main`.
-- Run the full suite before any push that touches shared code.
+- **Do not push per bead.** Every push to `origin/main` triggers the project's CI pipeline, and a push after each landed bead produced a stream of runs (and red ones when a CI-only gate was missed). Keep every commit local (`git pull --rebase` is fine) and make ONE push only when Alloy's queue is empty (every open bead closed or escalated, CI-only gates green), unless the user sets another cadence. If a CI-only gate is already red from earlier pushes, file a bead for it so Alloy fixes it in the queue instead of pushing a fix early. Never push as a side effect of finishing a bead.
+- Before any push, run the CI-only gates the loop doesn't (e.g. the repo's analyzer-baseline ratchet), and the full suite for shared code. If the push fails, resolve it and retry; never force-push `main`.
 
 ## Hard limits: escalate instead of acting
 - Destructive operations: force-push, history rewrite, deleting branches with unmerged work, dropping data.
@@ -116,6 +122,6 @@ Observed over a ~10 h unattended session (13+ beads landed, ~half of all `needs-
 ## Session end
 When no open beads remain besides those escalated to a human:
 1. Run the full quality gates.
-2. `git pull --rebase && git push`.
+2. `git pull --rebase`, run the CI-only gates, then push the accumulated commits once (unless the user said not to push).
 3. `alloy reconcile` shows nothing out of step.
 4. Report what landed (SHAs), what you fixed by hand and why, what you escalated, and any `check-hints` or setup hooks you added.

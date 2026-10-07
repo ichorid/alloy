@@ -355,6 +355,16 @@ class CheckResult(BaseModel):
     refused: str = ""
     """Why Alloy would not run the command at all (a bare `echo` verifies
     nothing); a refused check is not runnable and never counts as evidence."""
+    phantom_paths: list[str] = Field(default_factory=list)
+    """Every failure was a test path that does not exist (see
+    `verify.phantom_paths`): almost always a malformed command, not a
+    behaviour failure. Still red -- it proves nothing passed -- but labelled."""
+    cached: bool = False
+    """Not re-run: the same command already passed in this run against the
+    same worktree fingerprint (see `RunContext.run_check`)."""
+    fingerprint: str = ""
+    """`worktree.tree_fingerprint` of the tree right after this check ran;
+    "" when unknown."""
 
     @property
     def tail(self) -> str:  # legacy name for output_tail
@@ -377,9 +387,17 @@ class CheckResult(BaseModel):
             return "timed out"
         if self.exit_code == 127:
             return "command not found"
+        if self.phantom_paths and not self.ok:
+            shown = ", ".join(f'"{path}"' for path in self.phantom_paths[:3])
+            return (
+                f"likely malformed command: every failure is a test path that does not exist ({shown}); "
+                "quote multi-word arguments such as --plain-name"
+            )
         if self.passed is None and self.failed is None:
-            return f"exit {self.exit_code}"
-        return f"{self.passed or 0} passed, {self.failed or 0} failed"
+            text = f"exit {self.exit_code}"
+        else:
+            text = f"{self.passed or 0} passed, {self.failed or 0} failed"
+        return f"{text} (cached: same command already passed on this unchanged tree)" if self.cached else text
 
 
 VERIFIER_ACTIONS: tuple[str, ...] = ("run", "stop")

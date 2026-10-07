@@ -19,6 +19,8 @@ shell commands, each with its purpose, that Alloy will run to demonstrate the re
 behaviour is not implemented yet. Every command must target only the tests you wrote
 (e.g. one test file or node id), never the whole suite, and must be red right now.
 Alloy runs them itself and decides from the exit codes.
+Quote every argument that contains spaces (`--plain-name='slug keeps dashes'`): unquoted, the
+shell splits it and the test runner tries to load each extra word as a test file.
 
 If you discover a defect in existing code outside this task's scope (not the failing tests you were asked to make pass, and not your own change), do not fix it or silently work around it.
 If the defect blocks your task, stop and report it.
