@@ -44,6 +44,9 @@ from alloy.models import (
 from alloy.outbox import deliver_pending
 from alloy.paths import AlloyPaths
 from alloy.procs import read_pid
+from alloy.sandbox import ENV_MODE as ENV_SANDBOX_MODE
+from alloy.sandbox import host_info as sandbox_host_info
+from alloy.sandbox import write_status as write_sandbox_status
 from alloy.store import RUN_CLAIMING, RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN, _pid_alive
 
 DEFAULT_POLL_SECONDS = 15.0
@@ -114,6 +117,7 @@ class Scheduler:
             self.engine.repo,
             alloy_commit(),
         )
+        self._report_sandbox()
         watcher = None if self.once else asyncio.create_task(self._stall_watch())
         try:
             await self.recover()
@@ -772,6 +776,27 @@ class Scheduler:
         with contextlib.suppress(FileNotFoundError):
             if read_pid(self.pidfile) == os.getpid():
                 self.pidfile.unlink()
+
+    def _report_sandbox(self) -> None:
+        """One start line on the per-run sandbox (alloy.sandbox): whether
+        bwrap works here and what `tmp_size: auto` resolves to; also written
+        to <root>/sandbox.json for `alloy status --json`. Never fatal."""
+        try:
+            info = sandbox_host_info()
+            size = info["tmp_size"]
+            log.info(
+                "sandbox: bwrap %s (%s); private /tmp cap for tmp_size=auto: %s (%s)%s",
+                "available" if info["bwrap_available"] else "UNAVAILABLE -- runs fall back to a per-run TMPDIR",
+                info["probe"],
+                size["human"],
+                size["source"],
+                f"; {ENV_SANDBOX_MODE}={info['env_override']} overrides every recipe" if info["env_override"] else "",
+            )
+            if size.get("warning"):
+                log.warning("sandbox: %s", size["warning"])
+            write_sandbox_status(self.engine.paths.root, host={**info, "scheduler_pid": os.getpid()})
+        except Exception:
+            log.warning("sandbox: could not report the sandbox configuration", exc_info=True)
 
     def _write_session(self) -> None:
         path = self.engine.paths.scheduler_session

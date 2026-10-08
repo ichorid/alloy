@@ -18,6 +18,21 @@ from alloy.status_display import (
 )
 
 
+def _sandbox_status(engine) -> dict:
+    """Per-run sandbox (alloy.sandbox): what the scheduler resolved at start
+    (`host`, else resolved now) and the sandbox of every active run."""
+    from alloy.sandbox import host_info, read_status
+
+    data = read_status(engine.paths.root)
+    host = data.get("host")
+    if not host:
+        try:
+            host = host_info()
+        except Exception as exc:  # status must never fail on this
+            host = {"error": str(exc)}
+    return {"host": host, "runs": list((data.get("runs") or {}).values())}
+
+
 def status_impl(bead_id, repo, root, json, limit):
     """Show every bead Alloy tracks -- queued, running, or finished -- with its
     place in the schedule. Designed to be read by humans and by agents."""
@@ -50,6 +65,7 @@ def status_impl(bead_id, repo, root, json, limit):
         "scheduler": {"running": scheduler_pid is not None, "pid": scheduler_pid},
         # Runner circuit breaker: harnesses (or single models) skipped until `until`.
         "runners_unavailable": engine.store.runners_unavailable(),
+        "sandbox": _sandbox_status(engine),
         "beads": rows,
     }
     if json:

@@ -19,6 +19,7 @@ from typing import Any, Mapping
 
 from alloy.models import CheckRequest, CheckResult, VerifierAction, clip
 from alloy.procs import terminate_process_tree
+from alloy.sandbox import current as current_sandbox
 
 DEFAULT_TIMEOUT_S = 900.0
 
@@ -229,16 +230,30 @@ async def run_check(
             refused=refused,
         )
     started = time.monotonic()
-    process = await asyncio.create_subprocess_shell(
-        request.command,
-        executable=_CHECK_SHELL,
-        cwd=str(worktree),
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        env=command_env(worktree),
-        start_new_session=True,
-    )
+    sandbox = current_sandbox()
+    if sandbox is not None and sandbox.kind != "off":
+        # The run's sandbox: same shell, joined to the run's namespace.
+        argv, env = sandbox.wrap([_CHECK_SHELL or "/bin/sh", "-c", request.command], worktree, command_env(worktree))
+        process = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=str(worktree),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=env,
+            start_new_session=True,
+        )
+    else:
+        process = await asyncio.create_subprocess_shell(
+            request.command,
+            executable=_CHECK_SHELL,
+            cwd=str(worktree),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=command_env(worktree),
+            start_new_session=True,
+        )
     timed_out = False
     try:
         raw, _ = await asyncio.wait_for(process.communicate(), timeout=timeout_s)

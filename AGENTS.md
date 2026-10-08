@@ -103,6 +103,13 @@ human-operated: Alloy never dispatches, runs or lands them, whatever
 `alloy_recipe` says. When nothing dispatches, run `alloy reconcile` before
 suspecting the scheduler; it names the bead holding dispatch and why.
 
+Recipes with `sandbox: {mode: auto}` (shipped: `tdd-loop-sol-no-context`) run
+every agent and check of a run in one bubblewrap namespace with a private,
+capped tmpfs `/tmp` (`tmp_size: auto` = 50% of the alloy.slice memory limit)
+that vanishes with the run. `alloy status --json` shows it under `sandbox`;
+`ALLOY_SANDBOX=off` turns it off everywhere. A docker container cannot see
+files under the private /tmp: list such paths in `sandbox.share`.
+
 Ctrl-C or SIGTERM on `alloy run` stops the harness with it and leaves the run
 resumable (`alloy run <bead-id>` again picks it up). The detached scheduler
 logs to `<repo>/.alloy/scheduler.log`.

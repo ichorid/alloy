@@ -224,6 +224,45 @@ runners:
     text_field: result
 ```
 
+### Per-run sandbox: a private, capped /tmp
+
+Agents and checks used to leave multi-GB scratch in the system /tmp (a RAM
+tmpfs) until it filled up. A recipe can give every run one bubblewrap
+namespace whose `/tmp`, `/var/tmp` and `/dev/shm` are private tmpfs mounts
+with a size cap; every agent call and check of the run shares it, and it is
+gone when the run's processes exit:
+
+```yaml
+sandbox:
+  mode: auto        # auto | bwrap | off
+  tmp_size: auto    # auto = 50% of the alloy.slice memory limit; or 40% (of it) / 8G
+  share: []         # host paths bound through, e.g. a /tmp dir a container mounts
+```
+
+`tdd-loop-sol-no-context` ships with `mode: auto`; other built-ins are `off`.
+`auto` uses bwrap when a cached startup probe (`bwrap --bind / / --tmpfs /tmp
+true`) works, otherwise it logs a warning and runs unsandboxed with a per-run
+`TMPDIR` that is deleted at run end; `bwrap` refuses to start the run instead.
+`ALLOY_SANDBOX=off` (or `auto`/`bwrap`) in the scheduler's environment overrides
+every recipe -- the one-line rollback. With no slice limit detectable (not
+started via `scripts/alloy-startup`), `auto` caps /tmp at 25% of RAM and warns.
+
+How it works (see `src/alloy/sandbox.py`): the run stays in the scheduler (or
+`alloy run`) process, so pids, adoption, cancel, `stop --now` and stall
+detection are unchanged. At run start Alloy launches a small bwrap *holder*
+(`--bind / /`, fresh `--dev /dev`, sized tmpfs mounts, no pid namespace), and
+each harness and check is spawned as `nsenter -U -m --root --wd=<cwd>` into
+it; nsenter execs, so the recorded pid, process group and exit code are the
+command's own. The host filesystem (repo, `$HOME`, harness auth, bd's dolt,
+`/run/user/<uid>`, the docker socket) stays visible and writable; `TMPDIR=/tmp`
+inside. The run's own worktree/log dir are bound through if they live under
+/tmp. Caveats: dockerd resolves `-v` paths in the host namespace, so a
+container mounting a path under the private /tmp sees the host's (empty) one
+-- list such paths in `share`; host devices like `/dev/kvm` need `share` too;
+setuid tools (sudo) do not work inside. The scheduler logs the probe result
+and the resolved cap at start; `alloy status --json` shows them under
+`sandbox.host` and each active run's sandbox under `sandbox.runs`.
+
 ## Project memory
 
 Alloy keeps what it learns about a repository in Beads memories (`bd remember`,

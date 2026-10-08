@@ -17,6 +17,11 @@
 #                            memory pressure (only if systemd-oomd is active)
 #   ALLOY_TASKS_MAX=4096     max processes/threads in alloy.slice
 #   ALLOY_BIN=...            alloy executable (default: repo .venv, then PATH)
+#   ALLOY_SANDBOX=off        disable the per-run bwrap sandbox (auto|bwrap|off;
+#                            overrides every recipe's `sandbox.mode`)
+#
+# The per-run sandbox's private /tmp is a tmpfs charged to this slice:
+# `sandbox.tmp_size: auto` resolves to 50% of the slice's MemoryMax.
 #
 # Every limit is set once, on the top process; Linux passes cgroup, affinity,
 # nice, scheduling class and IO class down to every child automatically.
@@ -41,7 +46,7 @@ case "${1:-}" in
     dry_run=1; shift
     ;;
   -h|--help|"")
-    sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
     ;;
 esac

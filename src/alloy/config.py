@@ -17,6 +17,7 @@ from typing import Any
 import yaml
 
 from alloy.models import COMPLEXITY_LEVELS, _load_calibration
+from alloy.sandbox import SandboxSpec
 
 log = logging.getLogger(__name__)
 
@@ -303,6 +304,8 @@ class RecipeConfig:
     source_path: Path | None = None
     complexity: ComplexitySpec = field(default_factory=ComplexitySpec)
     memory: MemorySpec = field(default_factory=MemorySpec)
+    sandbox: SandboxSpec = field(default_factory=SandboxSpec)
+    """Per-run bubblewrap namespace with a private tmpfs /tmp (alloy.sandbox)."""
 
     def role(self, name: str) -> RoleSpec:
         try:
@@ -343,6 +346,7 @@ class RecipeConfig:
             limits=Limits.parse(raw.get("limits")),
             verification=VerificationSpec.parse(raw.get("verification"), legacy=legacy_verify),
             memory=MemorySpec.parse(raw.get("memory")),
+            sandbox=SandboxSpec.parse(raw.get("sandbox")),
             runners=dict(raw.get("runners") or {}),
             source_path=source,
         )

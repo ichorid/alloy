@@ -201,6 +201,19 @@ limits:
     complex: 120
   cheap_roles: [verifier, acceptance, harvest, triage, estimate, judge]
 
+# Every run gets one bubblewrap namespace with a private, size-capped tmpfs
+# /tmp (and /var/tmp, /dev/shm) that every agent and check of the run shares;
+# it vanishes when the run's processes exit (see src/alloy/sandbox.py).
+# mode: auto (bwrap when the probe works, else a per-run TMPDIR + warning),
+#       bwrap (required: refuse the run without it), off (no sandbox).
+# tmp_size: auto = 50% of the alloy.slice memory limit; or 40% / 8G.
+# share: host paths bound through, e.g. a /tmp dir a docker container mounts.
+# Rollback: `mode: off` here, or ALLOY_SANDBOX=off in the scheduler's env.
+sandbox:
+  mode: auto
+  tmp_size: auto
+  share: []
+
 
 runners:
   jev:

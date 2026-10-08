@@ -32,6 +32,9 @@ from alloy.paths import AlloyPaths
 from alloy.procs import pid_alive, read_pid, terminate_group, terminate_pid
 from alloy.runners import RunnerRegistry
 from alloy.runtime import RunContext
+from alloy.sandbox import RunSandbox, SandboxError, SandboxSpec
+from alloy.sandbox import activate as sandbox_activate
+from alloy.sandbox import write_status as write_sandbox_status
 from alloy.store import (
     RUN_CANCELLED,
     RUN_CLAIMING,
@@ -619,63 +622,123 @@ class Engine:
             except (ConfigError, KeyError, WorktreeError) as exc:
                 raise EngineError(str(exc)) from exc
 
-            self._record_dispatch(
-                bead,
-                recipe_name,
-                ctx,
-                run_id=run_id,
-                prior=prior,
-                fresh=fresh,
-                expect=expect,
-                parent_run_id=parent_run_id,
-            )
-            deliver_pending(self.store, self.beads, bead_id=bead.id)
-
-            graph = recipe.build_graph(ctx)
-            config = {
-                "configurable": {"thread_id": thread_id},
-                "recursion_limit": RECURSION_LIMIT,
-            }
-
-            if resume_payload is not None:
-                payload: Any = Command(resume=resume_payload)
-            elif fresh or read_checkpoint(self.paths.workflows_db, thread_id) is None:
-                # A run that died before its first checkpoint has nothing to
-                # continue from; LangGraph would refuse an empty input.
-                payload = recipe.initial_state(ctx)
-            else:
-                payload = None  # continue from the last checkpoint
-
+            # Before dispatch is recorded: a refused sandbox (`mode: bwrap` on
+            # a host without bwrap) must not take an adopted row over first.
             try:
-                final = await graph.ainvoke(payload, config)
-            except Exception as exc:
-                # A cancellation is not an Exception, so an interrupted process
-                # leaves the run marked running -- which is what makes it
-                # recoverable later. Only a genuine error fails the task here.
-                log.exception("%s: run %s crashed", bead.id, run_id)
-                if self.store.finish_run(
-                    run_id,
-                    status=RUN_FAILED,
-                    outcome=Outcome.FAILED.value,
-                    reason=str(exc),
-                    bead_id=bead.id,
-                    outbox=[
-                        ("status", {"status": bd.STATUS_FAILED, "if_status": bd.STATUS_IMPLEMENTING}),
-                        ("note", {"text": f"alloy: run {run_id} crashed: {exc}. Worktree kept at {ctx.worktree.path}"}),
-                    ],
-                    expect=self._owned(),
-                ):
-                    deliver_pending(self.store, self.beads, bead_id=bead.id)
-                else:
-                    self._log_lost_settle(bead.id, run_id, "failed")
-                raise
-            except BaseException:
-                log.warning("%s: run %s interrupted; it stays resumable", bead.id, run_id)
-                raise
+                sandbox = self._start_sandbox(ctx, run_id)
+            except SandboxError as exc:
+                raise EngineError(f"{bead.id}: {exc}") from exc
+            try:
+                final = await self._invoke(
+                    ctx,
+                    bead,
+                    recipe,
+                    recipe_name,
+                    sandbox,
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    prior=prior,
+                    fresh=fresh,
+                    expect=expect,
+                    parent_run_id=parent_run_id,
+                    resume_payload=resume_payload,
+                )
+            finally:
+                self._stop_sandbox(sandbox)
 
             result = self._settle(ctx, bead, recipe_name, run_id, final)
             log.info("%s: run %s -> %s %s", bead.id, run_id, result.outcome, result.reason)
             return result
+
+    async def _invoke(
+        self,
+        ctx: RunContext,
+        bead: Bead,
+        recipe: Any,
+        recipe_name: str,
+        sandbox: RunSandbox,
+        *,
+        run_id: str,
+        thread_id: str,
+        prior: dict[str, Any] | None,
+        fresh: bool,
+        expect: dict[str, Any] | None,
+        parent_run_id: str | None,
+        resume_payload: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Take the run row, then run the graph inside `sandbox`."""
+        self._record_dispatch(
+            bead,
+            recipe_name,
+            ctx,
+            run_id=run_id,
+            prior=prior,
+            fresh=fresh,
+            expect=expect,
+            parent_run_id=parent_run_id,
+        )
+        deliver_pending(self.store, self.beads, bead_id=bead.id)
+        graph = recipe.build_graph(ctx)
+        config = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": RECURSION_LIMIT,
+        }
+
+        if resume_payload is not None:
+            payload: Any = Command(resume=resume_payload)
+        elif fresh or read_checkpoint(self.paths.workflows_db, thread_id) is None:
+            # A run that died before its first checkpoint has nothing to
+            # continue from; LangGraph would refuse an empty input.
+            payload = recipe.initial_state(ctx)
+        else:
+            payload = None  # continue from the last checkpoint
+
+        try:
+            with sandbox_activate(sandbox):
+                return await graph.ainvoke(payload, config)
+        except Exception as exc:
+            # A cancellation is not an Exception, so an interrupted process
+            # leaves the run marked running -- which is what makes it
+            # recoverable later. Only a genuine error fails the task here.
+            log.exception("%s: run %s crashed", bead.id, run_id)
+            if self.store.finish_run(
+                run_id,
+                status=RUN_FAILED,
+                outcome=Outcome.FAILED.value,
+                reason=str(exc),
+                bead_id=bead.id,
+                outbox=[
+                    ("status", {"status": bd.STATUS_FAILED, "if_status": bd.STATUS_IMPLEMENTING}),
+                    ("note", {"text": f"alloy: run {run_id} crashed: {exc}. Worktree kept at {ctx.worktree.path}"}),
+                ],
+                expect=self._owned(),
+            ):
+                deliver_pending(self.store, self.beads, bead_id=bead.id)
+            else:
+                self._log_lost_settle(bead.id, run_id, "failed")
+            raise
+        except BaseException:
+            log.warning("%s: run %s interrupted; it stays resumable", bead.id, run_id)
+            raise
+
+    def _start_sandbox(self, ctx: RunContext, run_id: str) -> RunSandbox:
+        """The run's private-/tmp namespace (alloy.sandbox); `off` is a no-op.
+        Started before dispatch is recorded, so a refusal (`mode: bwrap` on
+        a host without bwrap) never takes an adopted row over."""
+        spec = getattr(ctx.recipe, "sandbox", None) or SandboxSpec()
+        own_paths = (ctx.worktree.path, ctx.worktrees.repo, ctx.log_dir, self.paths.root)
+        sandbox = RunSandbox(run_id=run_id, spec=spec, extra_share=tuple(str(p) for p in own_paths)).start()
+        if sandbox.kind != "off":
+            write_sandbox_status(self.paths.root, run=sandbox.info())
+        return sandbox
+
+    def _stop_sandbox(self, sandbox: RunSandbox) -> None:
+        try:
+            sandbox.stop()
+        except Exception:
+            log.warning("could not stop the sandbox of run %s", sandbox.run_id, exc_info=True)
+        if sandbox.kind != "off":
+            write_sandbox_status(self.paths.root, drop_run=sandbox.run_id)
 
     def _record_dispatch(
         self,

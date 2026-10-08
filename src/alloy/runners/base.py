@@ -20,6 +20,7 @@ from typing import Any, Callable, Protocol, runtime_checkable
 
 from alloy.models import AgentResult, RunnerUnavailable, clip, prompt_hash, utcnow
 from alloy.procs import terminate_process_tree
+from alloy.sandbox import wrap_command
 
 DEFAULT_TIMEOUT = timedelta(minutes=20)
 
@@ -269,14 +270,18 @@ class CLIRunner:
         limit_s = (timeout or DEFAULT_TIMEOUT).total_seconds()
 
         timed_out = False
+        # Inside the run's sandbox (alloy.sandbox), when one is active: the
+        # harness joins the run's private-/tmp namespace via nsenter, which
+        # execs it -- the pid and process group are still the harness's own.
+        spawn_argv, spawn_env = wrap_command(argv, cwd, env)
         try:
             process = await asyncio.create_subprocess_exec(
-                *argv,
+                *spawn_argv,
                 cwd=str(cwd),
                 stdin=asyncio.subprocess.PIPE if stdin_prompt is not None else asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=env,
+                env=spawn_env,
                 start_new_session=True,  # own process group: see alloy.procs
             )
         except OSError as exc:
