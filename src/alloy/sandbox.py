@@ -18,7 +18,8 @@ those paths. Instead, at run start Alloy launches a tiny holder:
           [--bind-try P P ...] -- /bin/sh -c 'echo $$; read -r _'   # lives until its stdin pipe closes
 
 and every agent subprocess and check command of the run is started as
-``nsenter -t <holder> -U -m --preserve-credentials --root --wd=<cwd> -- argv``:
+``nsenter -t <holder> -U -m --preserve-credentials --root -- sh -c 'cd "$1"; shift;
+exec "$@"' _ <cwd> argv`` (not ``--wd``, see `RunSandbox.wrap`):
 it joins the holder's user + mount namespace, so all of them share the same
 private /tmp. nsenter only needs to fork for a pid namespace, which is not
 used, so it *execs* the command: the pid the runner records, the process
@@ -540,8 +541,14 @@ class RunSandbox:
                 "-m",
                 "--preserve-credentials",
                 "--root",
-                f"--wd={wd}",
                 "--",
+                # Not nsenter --wd: it opens the directory *before* setns, so
+                # the cwd stays a dentry of the host mount tree, unreachable
+                # from the namespace's root -- getcwd(2) then returns
+                # "(unreachable)/..." and e.g. codex (Rust current_dir) dies
+                # with ENOENT. cd inside instead; `exec` keeps the pid.
+                *ENTER_CWD,
+                wd,
                 *argv,
             ]
             return wrapped, env
@@ -563,6 +570,9 @@ class RunSandbox:
             "started_at": time.time(),
         }
 
+
+ENTER_CWD = ("/bin/sh", "-c", 'cd -- "$1" || exit 126; shift; exec "$@"', "alloy-sandbox-cd")
+"""Prefix that chdirs inside the joined namespace, then execs the command."""
 
 PRIVATE_MOUNTS = ("/tmp", "/var/tmp", "/dev/shm")
 

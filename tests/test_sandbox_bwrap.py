@@ -207,3 +207,52 @@ def test_capability_report_inside_the_sandbox(box, capsys):
             lines.append(f"  {argv[0]:8} timed out")
     with capsys.disabled():
         print("\nsandbox capability report:\n" + "\n".join(lines))
+
+
+_GETCWD_SYSCALL = {"x86_64": 79, "aarch64": 17}.get(os.uname().machine)
+
+
+@pytest.mark.skipif(_GETCWD_SYSCALL is None, reason="raw getcwd syscall number unknown on this arch")
+def test_cwd_is_reachable_inside_the_namespace(box, tmp_path):
+    """Regression (codex exec: "No such file or directory (os error 2)"):
+    nsenter --wd left the cwd in the host mount tree, so the raw getcwd(2)
+    returned "(unreachable)/..." -- glibc/sh hid it, Rust's current_dir did
+    not. The raw syscall is the stand-in for that failure class."""
+    script = (
+        "import ctypes; b = ctypes.create_string_buffer(4096); "
+        f"ctypes.CDLL(None).syscall({_GETCWD_SYSCALL}, b, 4096); print(b.value.decode())"
+    )
+    for cwd in (tmp_path, Path.home()):
+        argv, env = box.wrap([sys.executable, "-c", script], cwd, os.environ)
+        proc = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=30)
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.strip() == str(cwd)
+
+
+def _codex_logged_in() -> str | None:
+    codex = shutil.which("codex")
+    if codex is None or "fakebin" in codex:
+        return "codex is not installed"
+    try:
+        proc = subprocess.run([codex, "login", "status"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"codex login status failed: {exc}"
+    if proc.returncode != 0:
+        return "codex is not logged in"
+    return None
+
+
+def test_real_codex_exec_runs_inside_the_sandbox(box, tmp_path):
+    """The real harness through the sandboxed command builder, once per
+    session (a few tokens). Skipped without an installed, logged-in codex."""
+    why = _codex_logged_in()
+    if why:
+        pytest.skip(why)
+    argv, env = box.wrap(
+        [shutil.which("codex"), "exec", "--skip-git-repo-check", "--json", "reply with the single word ok"],
+        tmp_path,
+        os.environ,
+    )
+    proc = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+    assert proc.returncode == 0, (proc.stdout[-2000:], proc.stderr[-2000:])
+    assert '"agent_message"' in proc.stdout and "ok" in proc.stdout.lower()

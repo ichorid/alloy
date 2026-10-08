@@ -251,7 +251,7 @@ How it works (see `src/alloy/sandbox.py`): the run stays in the scheduler (or
 `alloy run`) process, so pids, adoption, cancel, `stop --now` and stall
 detection are unchanged. At run start Alloy launches a small bwrap *holder*
 (`--bind / /`, fresh `--dev /dev`, sized tmpfs mounts, no pid namespace), and
-each harness and check is spawned as `nsenter -U -m --root --wd=<cwd>` into
+each harness and check is spawned as `nsenter -U -m --root` into
 it; nsenter execs, so the recorded pid, process group and exit code are the
 command's own. The host filesystem (repo, `$HOME`, harness auth, bd's dolt,
 `/run/user/<uid>`, the docker socket) stays visible and writable; `TMPDIR=/tmp`
