@@ -11,7 +11,7 @@ from alloy.models import (
     _load_calibration,
 )
 from alloy.recipes.role_prompts import REMEDIATION_MIN_AGENT_CALLS, scope_prompt, triage_prompt
-from alloy.recipes.shared_verification import _checks_of, classify
+from alloy.recipes.shared_verification import _checks_of, classify, limit_gate, limit_stop
 from alloy.recipes.state import TddState
 from alloy.runtime import RunContext
 
@@ -165,9 +165,22 @@ async def triage_reports(state: TddState, ctx, _first_available, _park, _file_bu
         "triaged_titles": triaged,
         "filed_bugs": filed,
     }
+    def stopped(breach: str) -> dict[str, Any]:
+        # The reports left untriaged are triaged after the human resumes
+        # (implement -> triage); what was already decided stays in `notes`.
+        return {
+            **update,
+            "triage_route": "guard",
+            "instructions": "\n".join(notes),
+            **limit_stop(breach, f"triage in iteration {iteration}", next_instructions="\n".join(notes)),
+        }
+
     for raw in untriaged(state):
         report = BugReport.model_validate(raw)
         where = f"{report.where or '?'}: {report.evidence}"
+        breach = limit_gate(ctx, state, include_iterations=False)
+        if breach:
+            return stopped(breach)
         spec = _first_available(configured)
         if spec is None:
             return {
@@ -198,6 +211,9 @@ async def triage_reports(state: TddState, ctx, _first_available, _park, _file_bu
             iteration=iteration,
         )
         if verdict is failure:
+            breach = limit_gate(ctx, state, include_iterations=False)
+            if breach:
+                return stopped(breach)
             return {
                 **update,
                 **_park(

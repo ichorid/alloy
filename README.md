@@ -174,6 +174,17 @@ is the only place the loop can continue from. It refuses `done` while tests are
 red, downgrades a `consilium` request when the budget is spent, and escalates to
 a human when a limit is hit. An agent cannot talk its way past a limit.
 
+Cycles that do not pass through `guard` -- the reported-bug repair cycle
+(implement → triage → implement), the verifier ↔ check loop, acceptance ↔
+verifier, fast-track's implement ↔ check -- are gated too: every node that
+starts agent work first checks the run's limits (`implement`, which starts a
+new iteration, includes `max_iterations`; nodes inside an iteration check the
+rest) and on a breach routes to `guard`, which parks the run (or budget-lands
+it) exactly as for any other limit. Every implement call is an iteration,
+bug-repair ones included. Wall time is also checked right before each agent
+call, fallbacks included: once it is spent no new call starts (only `harvest`
+and `memory_reviewer`, which run after the loop, are exempt).
+
 ```yaml
 limits:
   max_iterations: 5

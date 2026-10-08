@@ -40,6 +40,14 @@ from alloy.worktree import Worktree, WorktreeManager, tree_fingerprint
 
 log = logging.getLogger("alloy.runtime")
 
+LIMIT_REFUSED_KEY = "limit_refused"
+"""usage_json flag on the synthetic result `RunContext.call` returns when it
+refused to start a call because the run's wall time was already spent."""
+
+PRECALL_EXEMPT_ROLES: frozenset[str] = frozenset({"harvest", "memory_reviewer"})
+"""Roles that run after the loop has ended (lesson harvest, memory review):
+the pre-call wall-time stop never refuses them."""
+
 _WEAK_LIMIT_MAX_DURATION_S = 120.0
 """A failed call whose error only says "rate limit" (no harness limit
 wording) trips the runner breaker only when it failed this fast."""
@@ -64,6 +72,10 @@ class RunContext:
     started_monotonic: float = field(default_factory=time.monotonic)
     _stage: str = "starting"
     _iteration: int = 0
+    _budget_multiplier: int | None = None
+    """The run's budget window (1 + human extensions) as last seen by
+    `check_limits`; None until a node has consulted the limits in this
+    process, in which case the pre-call wall-time check is skipped."""
 
     def task_brief(self) -> str:
         """The bead's brief as every role sees it, plus -- for an in-place run
@@ -98,6 +110,9 @@ class RunContext:
         # spend or rate limit is skipped -- no ledger row, no budget -- and
         # the chain goes straight to its fallback. The last spec of the chain
         # always runs, as a probe, even when it is marked too.
+        refused = self._refuse_call(role, spec)
+        if refused is not None:
+            return refused
         skipped_from = spec
         spec = self._skip_blocked(role, spec)
         if spec is not skipped_from and resume_session is not None:
@@ -131,6 +146,11 @@ class RunContext:
                     spec.label,
                 )
                 resume_session = None
+            refused = self._refuse_call(role, spec.fallback)
+            if refused is not None:
+                # The primary already spent the window; a fallback would only
+                # push the run further past its wall-time limit.
+                return refused
             spec = self._skip_blocked(role, spec.fallback)
             result = await self._call_one(
                 role,
@@ -143,6 +163,50 @@ class RunContext:
             )
             counted = counted or not is_unavailable(result)
         return result
+
+    def wall_time_breach(self) -> str | None:
+        """The wall-time breach under the last budget window `check_limits`
+        saw, or None (also when no window is known yet in this process)."""
+        if self._budget_multiplier is None:
+            return None
+        limits = getattr(self.recipe, "limits", None)
+        if limits is None:
+            return None
+        return self._wall_breach(limits.max_wall_time_minutes * self._budget_multiplier)
+
+    def _wall_breach(self, allowed_minutes: float) -> str | None:
+        elapsed = self.elapsed()
+        allowed_wall = timedelta(minutes=allowed_minutes)
+        if elapsed > allowed_wall:
+            return (
+                f"max_wall_time reached ({elapsed.total_seconds() / 60:.0f}m/{allowed_wall.total_seconds() / 60:.0f}m)"
+            )
+        return None
+
+    def _refuse_call(self, role: str, spec: RoleSpec) -> AgentResult | None:
+        """Wall time is checked before every agent call, not only between
+        nodes: a call that would start after the run's wall-time budget is
+        spent is not started. The synthetic failed result leaves no ledger
+        row and spends no budget; the node's own limit gate (or guard) turns
+        the breach into the usual needs-human / budget-landed stop."""
+        if role in PRECALL_EXEMPT_ROLES:
+            return None
+        breach = self.wall_time_breach()
+        if breach is None:
+            return None
+        log.warning("%s: not calling %s -- %s", role, spec.label, breach)
+        now = utcnow()
+        return AgentResult(
+            runner=spec.runner,
+            model=spec.model,
+            ok=False,
+            exit_code=-1,
+            started_at=now,
+            ended_at=now,
+            duration_s=0.0,
+            error=f"alloy: {breach}; the call was not started",
+            usage={LIMIT_REFUSED_KEY: True, "limit": breach},
+        )
 
     def _skip_blocked(self, role: str, spec: RoleSpec) -> RoleSpec:
         """The first spec of the chain starting at `spec` whose harness the
@@ -477,14 +541,20 @@ class RunContext:
         """Tier-scaled ceiling on calls of `limits.cheap_roles`, before budget extensions."""
         return resolve_max_cheap_agent_calls(self.recipe, state.get("complexity"))
 
-    def check_limits(self, state: dict[str, Any]) -> str | None:
-        """Return a description of the first limit breached, else None."""
+    def check_limits(self, state: Mapping[str, Any], *, include_iterations: bool = True) -> str | None:
+        """Return a description of the first limit breached, else None.
+
+        `include_iterations=False` is for gates *inside* an iteration (the
+        verifier loop, triage, the acceptance gate): `max_iterations` caps how
+        many implement iterations may *start*, so the last allowed iteration
+        must still be verifiable. Every other limit applies everywhere."""
         limits = self.recipe.limits
-        multiplier = self.budget(state)
+        multiplier = self.budget(dict(state))
+        self._budget_multiplier = multiplier
 
         iteration = int(state.get("iteration", 0) or 0)
         allowed_iterations = limits.max_iterations * multiplier
-        if iteration >= allowed_iterations:
+        if include_iterations and iteration >= allowed_iterations:
             return f"max_iterations reached ({iteration}/{allowed_iterations})"
 
         consiliums = int(state.get("consiliums", 0) or 0)
@@ -504,13 +574,7 @@ class RunContext:
         if self.total_checks(state) >= self.total_checks_allowed(state):
             return "max_total_checks reached"
 
-        elapsed = self.elapsed()
-        allowed_wall = timedelta(minutes=limits.max_wall_time_minutes * multiplier)
-        if elapsed > allowed_wall:
-            return (
-                f"max_wall_time reached ({elapsed.total_seconds() / 60:.0f}m/{allowed_wall.total_seconds() / 60:.0f}m)"
-            )
-        return None
+        return self._wall_breach(limits.max_wall_time_minutes * multiplier)
 
     def total_checks(self, state: Mapping[str, Any]) -> int:
         """Checks this run has executed: the baseline plus every verifier check."""

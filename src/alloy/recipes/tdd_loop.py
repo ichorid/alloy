@@ -325,11 +325,11 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         ["tests", "tests_review", "implement", "human_gate"],
     )
     graph.add_conditional_edges("tests_review", route_after_review, ["tests", "implement"])
-    graph.add_conditional_edges("implement", route_after_implement, ["triage", "verifier_step", "human_gate"])
+    graph.add_conditional_edges("implement", route_after_implement, ["triage", "verifier_step", "human_gate", "guard"])
     graph.add_conditional_edges(
         "triage",
         route_after_triage,
-        ["human_gate", "implement", "verifier_step"],
+        ["human_gate", "implement", "verifier_step", "guard"],
     )
     graph.add_edge("start_final_pass", "verifier_step")
     graph.add_conditional_edges(
@@ -415,6 +415,7 @@ def initial_state(ctx: RunContext) -> TddState:
         outcome=None,
         outcome_reason="",
         limit_hit=None,
+        limit_breach=None,
     )
 
 

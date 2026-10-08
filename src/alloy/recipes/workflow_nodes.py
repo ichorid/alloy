@@ -60,6 +60,9 @@ from alloy.recipes.role_prompts import (
 )
 from alloy.recipes.shared_verification import (
     VERIFY_MORE_BREACH_PREFIX,
+    limit_gate,
+    limit_refused,
+    limit_stop,
     _check_hints,
     _checks_headline,
     _checks_of,
@@ -80,7 +83,6 @@ from alloy.worktree import is_test_path, tree_fingerprint
 BUDGET_LIMITS: tuple[str, ...] = ("max_agent_calls", "max_cheap_agent_calls", "max_iterations", "max_wall_time")
 """Breaches a budget-stop auto-land may follow. Other stops (consiliums,
 total checks) say something about the work, not just the clock."""
-
 
 def _make_node__capture_bugs(ctx):
     def _capture_bugs(role: str, result: AgentResult, state: TddState, iteration: int) -> list[dict[str, Any]]:
@@ -211,6 +213,9 @@ def _make_node_estimate(ctx):
 def _make_node_write_tests(ctx, _capture_bugs):
     async def write_tests(state: TddState) -> dict[str, Any]:
         ctx.set_stage("tests")
+        breach = limit_gate(ctx, state, include_iterations=False)
+        if breach:
+            return _tests_limit_park(breach)
         spec = ctx.role_spec("tests", state)
         # A repair pass (green or unrunnable baseline) continues the session
         # that wrote the tests; the first pass has no session yet.
@@ -233,6 +238,8 @@ def _make_node_write_tests(ctx, _capture_bugs):
             iteration=0,
         )
         reported_bugs = _capture_bugs("tests", result, state, 0)
+        if limit_refused(result):
+            return {"reported_bugs": reported_bugs, **_tests_limit_park(result.usage.get("limit") or result.error)}
         if not result.ok:
             # Usually transient (a session limit, an outage): park the run at
             # the human gate with the tests stage as the resume target. Failing
@@ -264,6 +271,22 @@ def _make_node_write_tests(ctx, _capture_bugs):
         return update
 
     return write_tests
+
+
+def _tests_limit_park(breach: str) -> dict[str, Any]:
+    """The tests stage has no guard downstream of it: a limit breach parks
+    the run at the human gate directly, resumable at the tests stage."""
+    log.warning("limit gate tests: %s", breach)
+    return {
+        "stage": "tests",
+        "resume_to": "tests",
+        "limit_hit": breach,
+        "decision": JudgeDecision(
+            decision="human",
+            reason=f"Alloy stopped the loop: {breach} (before the tests stage)",
+            next_instructions="Resume to grant one more budget window; the tests stage runs again.",
+        ).model_dump(),
+    }
 
 
 def _make_node_route_after_tests():
@@ -387,6 +410,9 @@ def _make_node_review_tests(ctx, _first_available):
         reviews = state.get("tests_reviews", 0) + 1
         ctx.set_stage("tests_review")
         update: dict[str, Any] = {"stage": "tests_review", "tests_reviews": reviews}
+        if limit_gate(ctx, state, include_iterations=False):
+            # Advisory: skip it; implement's own gate parks the run.
+            return update
         role_spec = ctx.recipe.role("tests_review")
         prompt = tests_review_prompt(
             ctx.task_brief(),
@@ -453,6 +479,22 @@ def _make_node_route_after_review():
 def _make_node_implement(ctx, _capture_bugs):
     async def implement(state: TddState) -> dict[str, Any]:
         iteration = state.get("iteration", 0) + 1
+        # Every edge into implement -- guard's retry, triage's bug repair,
+        # synthesize, a human resume, the tests review -- starts a new
+        # iteration, so the full limits (max_iterations included) are
+        # checked here, before the agent is called.
+        breach = limit_gate(ctx, state, include_iterations=True)
+        if breach:
+            ctx.set_stage("implement", iteration=state.get("iteration", 0))
+            return {
+                "stage": "implement",
+                "implement_unavailable": False,
+                **limit_stop(
+                    breach,
+                    f"before implement iteration {iteration}",
+                    next_instructions=state.get("instructions", ""),
+                ),
+            }
         ctx.set_stage("implement", iteration=iteration)
         spec = ctx.role_spec("implement", state)
         if ctx.recipe.complexity.routing == "live" and ctx.recipe.role("implement").tiered:
@@ -477,6 +519,18 @@ def _make_node_implement(ctx, _capture_bugs):
             iteration=iteration,
         )
         reported_bugs = _capture_bugs("implement", result, state, iteration)
+        if limit_refused(result):
+            return {
+                "reported_bugs": reported_bugs,
+                "iteration": iteration,
+                "stage": "implement",
+                "implement_unavailable": False,
+                **limit_stop(
+                    result.usage.get("limit") or result.error or "max_wall_time reached",
+                    f"during implement iteration {iteration}",
+                    next_instructions=state.get("instructions", ""),
+                ),
+            }
         if is_unavailable(result):
             return {
                 "reported_bugs": reported_bugs,
@@ -488,6 +542,7 @@ def _make_node_implement(ctx, _capture_bugs):
             }
         return {
             "implement_unavailable": False,
+            "limit_breach": None,
             "reported_bugs": reported_bugs,
             "implementer_stopped": any(bug.get("blocks_task") for bug in reported_bugs),
             "iteration": iteration,
@@ -509,6 +564,8 @@ def _make_node_route_after_implement():
     def route_after_implement(state: TddState) -> str:
         if state.get("implement_unavailable"):
             return "human_gate"
+        if state.get("limit_breach"):
+            return "guard"
         return "triage" if untriaged(state) else "verifier_step"
 
     return route_after_implement
@@ -708,7 +765,9 @@ def _make_node_guard(ctx):
         proposed = JudgeDecision.model_validate(
             state.get("decision") or {"decision": "retry", "reason": "no decision recorded"}
         )
-        breach = ctx.check_limits(state)
+        # A node's limit gate may have stopped on a breach (wall time spent
+        # just before a call); guard always honours it.
+        breach = state.get("limit_breach") or ctx.check_limits(state)
         # Green means: every required target checked this iteration passed on
         # its latest run.
         tests_green = not any(
@@ -960,6 +1019,7 @@ def _make_node_human_gate(ctx):
             "human_note": instructions or "",
             "retries_on_tier": 0,
             "limit_hit": None,
+            "limit_breach": None,
             "budget_extensions": state.get("budget_extensions", 0) + 1,
             "stage": "resumed",
             # Where to continue: the stage that parked us (e.g. "tests" after a

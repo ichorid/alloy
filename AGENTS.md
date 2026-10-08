@@ -259,7 +259,10 @@ deterministic backstop: a run is capped by its own `max_agent_calls`
 (remediation children spend their own budget, not the parent's), while wall
 time spent in children still counts toward the parent's
 `max_wall_time_minutes`, so a bead can only remediate as much as its own
-limits allow. Remediation is one level
+limits allow. Each implement call folded from a blocking bug is its own
+iteration and counts toward `max_iterations`; the implement → triage →
+implement cycle checks every limit before each call and parks at the human
+gate on a breach. Remediation is one level
 deep -- a blocking bug found inside a child is filed unclaimed at P1 and the
 child parks, which parks the parent in turn. When reviewing a parent branch
 that carries a merged child branch, read the parent's WIP commit, the merge of

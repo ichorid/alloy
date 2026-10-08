@@ -36,6 +36,9 @@ from alloy.recipes.shared_verification import (
     _unavailable_decision,
     answer_of,
     call_in_session,
+    limit_gate,
+    limit_refused,
+    limit_stop,
     resumable_session,
 )
 from alloy.recipes.role_prompts import extract_summary
@@ -62,6 +65,25 @@ def _make_node_fast_implement(ctx: RunContext, _capture_bugs):
     async def implement(state: FastTrackState) -> dict[str, Any]:
         previous_iteration = state.get("iteration", 0)
         iteration = previous_iteration + 1
+        # implement <-> run_check loops without guard, so the limits are
+        # checked before every implement call. Coming straight back from a
+        # green run_check the worker is still verifying the same change (its
+        # "done" needs a check of this iteration), so that edge is bounded by
+        # agent calls, total checks and wall time, not by max_iterations --
+        # otherwise a run would park on the very call that says done.
+        from_check = state.get("verify_route") == "implement"
+        breach = limit_gate(ctx, state, include_iterations=not from_check)
+        if breach:
+            ctx.set_stage("implement", iteration=previous_iteration)
+            return {
+                "stage": "implement",
+                "verify_route": "guard",
+                **limit_stop(
+                    breach,
+                    f"before implement iteration {iteration}",
+                    next_instructions=state.get("instructions", ""),
+                ),
+            }
         ctx.set_stage("implement", iteration=iteration)
         spec = ctx.role_spec("implement", state)
         worker_session = state.get("worker_session")
@@ -84,6 +106,14 @@ def _make_node_fast_implement(ctx: RunContext, _capture_bugs):
             iteration=iteration,
         )
         reported_bugs = _capture_bugs("implement", result, state, iteration)
+        if limit_refused(result):
+            return {
+                "reported_bugs": reported_bugs,
+                "iteration": iteration,
+                "stage": "implement",
+                "verify_route": "guard",
+                **limit_stop(result.usage.get("limit") or result.error, f"during implement iteration {iteration}"),
+            }
         if is_unavailable(result):
             return {
                 "reported_bugs": reported_bugs,
@@ -116,6 +146,7 @@ def _make_node_fast_implement(ctx: RunContext, _capture_bugs):
                     "(action=run_check) before claiming done.",
                 )
         update: dict[str, Any] = {
+            "limit_breach": None,
             "reported_bugs": reported_bugs,
             "implementer_stopped": any(bug.get("blocks_task") for bug in reported_bugs),
             "iteration": iteration,
@@ -294,4 +325,5 @@ def initial_state(ctx: RunContext) -> FastTrackState:
         outcome=None,
         outcome_reason="",
         limit_hit=None,
+        limit_breach=None,
     )

@@ -76,6 +76,10 @@ class TddState(TypedDict, total=False):
     outcome: str | None
     outcome_reason: str
     limit_hit: str | None
+    limit_breach: str | None
+    """Set by a node's limit gate (see `workflow_nodes.limit_gate`) when it
+    refused to start more work because a run limit is spent; the node routes
+    to guard, which turns it into the needs-human / budget-landed stop."""
     budget_landed: dict[str, Any] | None
     """Set when guard finished a budget-stopped run as done because every
     check was green on an unchanged tree (see `workflow_nodes.budget_landing`);
@@ -134,6 +138,7 @@ class FastTrackState(TypedDict, total=False):
     outcome: str | None
     outcome_reason: str
     limit_hit: str | None
+    limit_breach: str | None
     human_note: str
     resume_to: str | None
     resume_target: str | None

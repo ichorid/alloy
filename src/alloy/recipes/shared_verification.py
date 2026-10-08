@@ -36,7 +36,7 @@ from alloy.recipes.role_prompts import (
     verifier_prompt,
 )
 from alloy.recipes.state import TddState
-from alloy.runtime import RunContext
+from alloy.runtime import LIMIT_REFUSED_KEY, RunContext
 from alloy.verify import (
     detect_commands,
     normalize_command,
@@ -236,6 +236,42 @@ def _make_implementer(ctx, implementer_fallback):
     return _implementer
 
 
+LIMIT_GATE_PREFIX = "Alloy limit gate: "
+"""Reason prefix of the decision a node's limit gate hands guard."""
+
+
+def limit_gate(ctx, state, *, include_iterations: bool) -> str | None:
+    """The breach a node must stop on before it starts more agent work, else
+    None. Every loop edge passes one of these -- `implement` (with
+    `max_iterations`, it starts a new iteration), triage, the verifier loop,
+    the acceptance gate, the judge, the tests stage -- so no cycle (the
+    reported-bug repair cycle implement -> triage -> implement included) can
+    run past a limit just because it never reaches guard. Iteration-internal
+    gates pass `include_iterations=False`: the last allowed iteration must
+    still be verifiable."""
+    return ctx.check_limits(state, include_iterations=include_iterations)
+
+
+def limit_refused(result: AgentResult | None) -> bool:
+    """`RunContext.call` refused to start the call: the wall time is spent."""
+    return result is not None and bool((result.usage or {}).get(LIMIT_REFUSED_KEY))
+
+
+def limit_stop(breach: str, where: str, *, next_instructions: str = "") -> dict[str, Any]:
+    """State update a node's limit gate returns; the caller adds its own
+    route to guard. Guard sees a plain retry plus the breach and applies the
+    same needs-human / budget-landed handling as any other limit stop."""
+    log.warning("limit gate %s: %s", where, breach)
+    return {
+        "limit_breach": breach,
+        "decision": JudgeDecision(
+            decision="retry",
+            reason=f"{LIMIT_GATE_PREFIX}{breach} ({where})",
+            next_instructions=next_instructions,
+        ).model_dump(),
+    }
+
+
 VERIFY_MORE_BREACH_PREFIX = "acceptance asked for more verification but "
 """Reason prefix of the decision acceptance_gate hands guard when it wanted
 more evidence but a run budget was spent -- the one "nothing is wrong, it
@@ -278,6 +314,10 @@ def _make_verifier_nodes(ctx):
                     reason=f"the run's verification budget is spent ({total} checks)",
                 ).model_dump(),
             )
+            return update
+        breach = limit_gate(ctx, state, include_iterations=False)
+        if breach:
+            update.update(verify_route="guard", **limit_stop(breach, f"verifier in iteration {iteration}"))
             return update
         if iteration_checks >= per_iteration:
             # `pending_check` still holds the action behind the check that just ran.
@@ -330,6 +370,12 @@ def _make_verifier_nodes(ctx):
         except Exception as exc:
             failure.reason = f"verifier failed: {exc}"
             result = None
+        if limit_refused(result):
+            update.update(
+                verify_route="guard",
+                **limit_stop(result.usage.get("limit") or result.error, f"verifier in iteration {iteration}"),
+            )
+            return update
         if session_id is not None and (result is None or not was_resumed(result)):
             # The session is gone (or the harness refused it): stop paying
             # for a failed resume before every fresh call.
@@ -391,6 +437,9 @@ def _make_check_nodes(ctx, _implementer):
         failed_required: CheckResult | None = None
 
         for request in requests:
+            if records and ctx.wall_time_breach():
+                # The rest of a batch waits: verifier_step's gate stops the run.
+                break
             result = await ctx.run_check(request)
             result.iteration = iteration
             records.append(result.model_dump(mode="json"))
@@ -508,6 +557,13 @@ def _make_acceptance_nodes(ctx, _implementer):
         finalise `done`."""
         iteration = state.get("iteration", 0)
         ctx.set_stage("acceptance", iteration=iteration)
+        breach = limit_gate(ctx, state, include_iterations=False)
+        if breach:
+            return {
+                "stage": "acceptance",
+                "acceptance_route": "guard",
+                **limit_stop(breach, f"acceptance gate in iteration {iteration}"),
+            }
         spec = ctx.recipe.role("acceptance")
         verification = ctx.recipe.verification
         iteration_checks = int(state.get("iteration_checks", 0) or 0)
@@ -616,6 +672,9 @@ def _make_judge_node(ctx, _implementer):
 
     async def judge(state: TddState) -> dict[str, Any]:
         ctx.set_stage("judge", iteration=state.get("iteration", 0))
+        breach = limit_gate(ctx, state, include_iterations=False)
+        if breach:
+            return {"stage": "judge", **limit_stop(breach, f"judge in iteration {state.get('iteration', 0)}")}
         spec = ctx.recipe.role("judge")
         diff = ctx.diff()
         changed_tests = _implementer_changed_tests(ctx, state)
@@ -640,6 +699,11 @@ def _make_judge_node(ctx, _implementer):
                 schema=JudgeDecision.schema_for_agents(),
                 iteration=state.get("iteration", 0),
             )
+            if limit_refused(result):
+                return {
+                    "stage": "judge",
+                    **limit_stop(result.usage.get("limit") or result.error, "judge"),
+                }
             if is_unavailable(result):
                 # The fallback chain is exhausted too: retrying would only burn
                 # budget on a harness that cannot answer.
