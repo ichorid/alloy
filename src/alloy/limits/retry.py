@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 DEFAULT_RATE_LIMIT_WAIT = timedelta(minutes=30)
 """What to assume when the harness says "rate limit" without a time."""
@@ -34,6 +34,37 @@ _RESETS_ON_DATE = re.compile(
     r"(?:resets?|ends?)\b[^.\n]{0,60}?\bon\s+(\d{1,2})/(\d{1,2})/(\d{4})",
     re.IGNORECASE,
 )
+# codex: "... or try again at Oct 14th, 2026 5:31 AM." -- a named month, an
+# optional ordinal suffix, optional year, optional time (12h or 24h) and an
+# optional timezone abbreviation. Without a year it is the next such date.
+_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}  # fmt: skip
+# Fixed offsets (hours) for the abbreviations a harness is likely to print.
+_TZ_OFFSETS = {
+    "UTC": 0, "GMT": 0, "Z": 0,
+    "EST": -5, "EDT": -4, "CST": -6, "CDT": -5, "MST": -7, "MDT": -6, "PST": -8, "PDT": -7,
+    "AKST": -9, "AKDT": -8, "HST": -10,
+    "WET": 0, "WEST": 1, "BST": 1, "CET": 1, "CEST": 2, "EET": 2, "EEST": 3, "MSK": 3,
+    "JST": 9, "KST": 9, "AEST": 10, "AEDT": 11,
+}  # fmt: skip
+_RESETS_AT_DATE = re.compile(
+    r"(?:resets?|try\s+again|available\s+again)\s+(?:(?:at|on)\s+)?"
+    r"(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?,?\s+)?"
+    r"(?P<month>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?"
+    r"|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+"
+    r"(?P<day>\d{1,2})(?:st|nd|rd|th)?\b"
+    r"(?:,?\s+(?P<year>\d{4})\b(?!:))?"
+    r"(?:,?\s+(?:at\s+)?(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?(?:\s*(?P<ampm>[ap]\.?m\b\.?))?"
+    r"(?:\s*\(?(?P<tz>(?:UTC|GMT)\s*[+-]\s*\d{1,2}(?::?\d{2})?|"
+    + "|".join(sorted(_TZ_OFFSETS, key=len, reverse=True))
+    + r")\b\)?)?)?",
+    re.IGNORECASE,
+)
+_TZ_NUMERIC = re.compile(r"(?:UTC|GMT)\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?", re.IGNORECASE)
+_MAX_RESET_AHEAD = timedelta(days=366)
+"""A named reset date further out than this is nonsense, not a limit window."""
 _RATE_LIMIT = re.compile(r"rate[\s_-]*limit", re.IGNORECASE)
 # Harness wording for a spend/usage/session limit that is not a "rate limit"
 # (journal: overnight 2026-10-06, 134 calls burned on these):
@@ -70,10 +101,28 @@ def parse_retry_at(error: str, now: datetime) -> datetime | None:
 
     `now` is the reference clock; the result carries the same tzinfo (naive
     local time in, naive local time out). "resets H:MM(am|pm)" is the next
-    such local time after `now`.
+    such local time after `now`; "try again at Oct 14th, 2026 5:31 AM" is that
+    local date and time (the next such date when the year is left out).
+    A message naming no usable time falls back to `DEFAULT_RATE_LIMIT_WAIT`
+    when it mentions a limit at all.
     """
     if not error:
         return None
+    reset_at = _named_reset(error, now)
+    if reset_at is not None:
+        return reset_at
+    if _RATE_LIMIT.search(error) or _USAGE_LIMIT.search(error):
+        return now + DEFAULT_RATE_LIMIT_WAIT
+    return None
+
+
+def _named_reset(error: str, now: datetime) -> datetime | None:
+    """The reset time the message itself names, or None (no defaults)."""
+    match = _RESETS_AT_DATE.search(error)
+    if match:
+        # A named date that does not parse (Feb 30, a past year) is unparsed:
+        # do not let the bare "try again at H:MM" reading guess around it.
+        return _month_date(match, now)
     match = _RESETS_AT.search(error)
     if match:
         hour = int(match.group(1)) % 12
@@ -90,12 +139,73 @@ def parse_retry_at(error: str, now: datetime) -> datetime | None:
     if match:
         unit = match.group(2).lower().rstrip("s") or "s"
         return now + timedelta(seconds=float(match.group(1)) * _UNIT_SECONDS[unit])
-    reset_on = _reset_date(error, now)
-    if reset_on is not None:
-        return reset_on
-    if _RATE_LIMIT.search(error) or _USAGE_LIMIT.search(error):
-        return now + DEFAULT_RATE_LIMIT_WAIT
-    return None
+    return _reset_date(error, now)
+
+
+def _month_date(match: re.Match[str], now: datetime) -> datetime | None:
+    """The datetime of a `_RESETS_AT_DATE` match in `now`'s tzinfo, or None
+    when it is invalid, already past, or implausibly far ahead."""
+    month = _MONTHS[match.group("month")[:3].lower()]
+    day = int(match.group("day"))
+    clock = _clock(match)
+    if clock is None:
+        return None
+    hour, minute = clock
+    tz = _tzinfo(match.group("tz"))
+
+    def build(year: int) -> datetime | None:
+        try:
+            naive = datetime(year, month, day, hour, minute)
+        except ValueError:
+            return None
+        if tz is None:
+            return naive.replace(tzinfo=now.tzinfo)
+        aware = naive.replace(tzinfo=tz)
+        # Same convention as the rest: naive local in, naive local out.
+        return aware.astimezone(now.tzinfo) if now.tzinfo else aware.astimezone().replace(tzinfo=None)
+
+    if match.group("year"):
+        candidate = build(int(match.group("year")))
+    else:
+        candidate = build(now.year)
+        if candidate is None or candidate <= now:
+            candidate = build(now.year + 1)
+    if candidate is None or candidate <= now or candidate - now > _MAX_RESET_AHEAD:
+        return None
+    return candidate
+
+
+def _clock(match: re.Match[str]) -> tuple[int, int] | None:
+    """(hour, minute) of a `_RESETS_AT_DATE` match (midnight when it names no
+    time), or None when the time is invalid."""
+    if match.group("hour") is None:
+        return 0, 0
+    hour = int(match.group("hour"))
+    minute = int(match.group("minute") or 0)
+    ampm = match.group("ampm")
+    if ampm:
+        if not 1 <= hour <= 12:
+            return None
+        hour = hour % 12 + (12 if ampm[0].lower() == "p" else 0)
+    elif match.group("minute") is None:
+        return None  # a bare number with neither ":MM" nor am/pm is no time
+    if hour > 23 or minute > 59:
+        return None
+    return hour, minute
+
+
+def _tzinfo(name: str | None) -> timezone | None:
+    if not name:
+        return None
+    numeric = _TZ_NUMERIC.fullmatch(name.strip())
+    if numeric:
+        sign = -1 if numeric.group(1) == "-" else 1
+        hours, minutes = int(numeric.group(2)), int(numeric.group(3) or 0)
+        if hours > 14 or minutes > 59:
+            return None
+        return timezone(sign * timedelta(hours=hours, minutes=minutes))
+    offset = _TZ_OFFSETS.get(name.upper())
+    return None if offset is None else timezone(timedelta(hours=offset))
 
 
 def _reset_date(error: str, now: datetime) -> datetime | None:
@@ -139,12 +249,7 @@ def parse_limit(error: str, now: datetime) -> LimitHit | None:
         return None
     if not (_USAGE_LIMIT.search(error) or _RATE_LIMIT.search(error)):
         return None
-    reset_at: datetime | None = None
-    match = _RESETS_AT.search(error) or _RETRY_AFTER.search(error)
-    if match:
-        reset_at = parse_retry_at(error, now)
-    else:
-        reset_at = _reset_date(error, now)
+    reset_at = _named_reset(error, now)
     line = next(
         (part.strip() for part in error.splitlines() if _USAGE_LIMIT.search(part) or _RATE_LIMIT.search(part)), ""
     )

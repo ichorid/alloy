@@ -291,3 +291,28 @@ def test_status_json_lists_runners_unavailable(beads_project, alloy_home):
     entries = payload["runners_unavailable"]
     assert [(e["harness"], e["model"]) for e in entries] == [("codex", None), ("cursor", "kimi-k3-high")]
     assert datetime.fromisoformat(entries[0]["until"]) == until
+
+
+async def test_a_dated_codex_reset_days_ahead_round_trips_through_runner_breaker(store, tmp_path):
+    # The real 2026-10-08 wording (typographic apostrophe, ordinal day, year),
+    # dated relative to the wall clock so the test does not rot.
+    reset = (datetime.now() + timedelta(days=6)).replace(hour=5, minute=31, second=0, microsecond=0)
+    error = (
+        "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit "
+        "https://chatgpt.com/codex/settings/usage to purchase more credits or try again at "
+        f"{reset:%b} {reset.day}th, {reset.year} 5:31 AM."
+    )
+    codex = ScriptedRunner("codex", (False, error, 1.4))
+    claude = ScriptedRunner("claude-write")
+    ctx = _ctx(store, tmp_path, {"codex": codex, "claude-write": claude})
+
+    await ctx.call("implement", CHAIN, "prompt")
+
+    (entry,) = Store(store.path).runners_unavailable()
+    assert (entry["harness"], entry["model"], entry["reset_parsed"]) == ("codex", None, True)
+    until = datetime.fromisoformat(entry["until"])
+    assert until.tzinfo is not None
+    assert until == reset.astimezone()  # honoured days ahead, not clamped to hours
+    assert store.runner_unavailable_until("codex", "gpt-6.1-sol") == until
+    with store.connect() as conn:
+        assert conn.execute("SELECT parsed FROM runner_breaker WHERE harness = 'codex'").fetchone()[0] == 1
