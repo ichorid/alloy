@@ -22,6 +22,7 @@ complexity:
     simple:
       - {runner: cursor, model: composer-2.5}
       - {runner: codex, model: gpt-6-luna, timeout_minutes: 15}
+      - {runner: claude-write, model: haiku, effort: low}   # alternative to luna (haiku 5.5)
       - {runner: codex, model: gpt-6.1-sol, effort: low, timeout_minutes: 15}
       - {runner: claude-write, model: sonnet, effort: low}
     medium:
@@ -104,6 +105,11 @@ roles:
       - runner: codex-readonly
         model: gpt-6-luna
         timeout_minutes: 10
+        fallback:                # alternative to luna: haiku 5.5, same read-only review
+          runner: claude
+          model: haiku
+          effort: low
+          timeout_minutes: 10
     fallback:
       runner: claude
       model: sonnet
