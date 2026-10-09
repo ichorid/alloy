@@ -13,13 +13,13 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
 from alloy.beads import META_COMPLEXITY_ESTIMATED, META_STAGE, Bead, BeadsClient
 from alloy.config import RecipeConfig, RoleSpec, resolve_max_agent_calls, resolve_max_cheap_agent_calls
-from alloy.limits import harness_for_runner, parse_retry_at
+from alloy.limits import breaker, harness_for_runner, parse_retry_at
 from alloy.limits.retry import parse_limit
 from alloy.models import (
     UNAVAILABLE_KEY,
@@ -72,6 +72,14 @@ class RunContext:
     started_monotonic: float = field(default_factory=time.monotonic)
     _stage: str = "starting"
     _iteration: int = 0
+    limit_state: breaker.StateReader | None = None
+    """harness -> its current rate-limit state from local files (see
+    `alloy.limits.breaker.read_state`); None reads nothing, so the breaker
+    relies on the limit message and probe calls alone."""
+    clock: Any = utcnow
+    """Aware-UTC wall clock of the runner breaker (tests pass a fake one)."""
+    probe_rng: Any = None
+    """random.Random for probe jitter (tests pass a seeded one)."""
     _budget_multiplier: int | None = None
     """The run's budget window (1 + human extensions) as last seen by
     `check_limits`; None until a node has consulted the limits in this
@@ -211,11 +219,14 @@ class RunContext:
     def _skip_blocked(self, role: str, spec: RoleSpec) -> RoleSpec:
         """The first spec of the chain starting at `spec` whose harness the
         breaker lets run; the chain's last spec when every one is marked (it
-        runs as a probe). Skipped specs leave no ledger row and spend nothing."""
+        runs as a probe). A blocked spec with a fallback also runs as a probe
+        when its probe is due (`_claim_probe`). Skipped specs leave no ledger
+        row and spend nothing."""
         while True:
-            blocked_until = self._breaker_until(spec)
-            if blocked_until is None:
+            entries = self._breaker_entries(spec)
+            if not entries:
                 return spec
+            blocked_until = entries[0]["until_dt"]
             if spec.fallback is None:
                 log.warning(
                     "%s: %s is marked unavailable until %s but is the last runner in the chain; probing it",
@@ -224,26 +235,99 @@ class RunContext:
                     blocked_until.isoformat(),
                 )
                 return spec
+            if self._claim_probe(entries):
+                log.warning(
+                    "%s: %s is marked unavailable until %s (%s window); probing it once in case it was reset early",
+                    role,
+                    spec.label,
+                    blocked_until.isoformat(),
+                    entries[0]["window"],
+                )
+                return spec
             log.warning(
-                "%s: skipping %s -- harness marked unavailable until %s; using %s",
+                "%s: skipping %s -- harness marked unavailable until %s (%s window); using %s",
                 role,
                 spec.label,
                 blocked_until.isoformat(),
+                entries[0]["window"],
                 spec.fallback.label,
             )
             spec = spec.fallback
 
-    def _breaker_until(self, spec: RoleSpec) -> datetime | None:
-        """When the breaker lets `spec`'s harness (or its model) run again;
-        None when it may run now or belongs to no known harness."""
+    def _breaker_entries(self, spec: RoleSpec) -> list[dict[str, Any]]:
+        """Active breaker rows covering `spec`, latest `until` first, after
+        re-checking the harness's rate-limit state (rows whose blocking
+        windows reset early are cleared here)."""
         harness = harness_for_runner(spec.runner)
         if harness is None:
-            return None
+            return []
         try:
-            return self.store.runner_unavailable_until(harness, spec.model)
+            now = self.clock()
+            entries = self.store.runner_breaker_entries(harness, spec.model, now=now)
+            if entries and self.limit_state is not None:
+                entries = [e for e in entries if not self._recheck(e, now)]
+            return entries
         except Exception:
             log.warning("runner breaker lookup failed for %s", spec.label, exc_info=True)
-            return None
+            return []
+
+    def _recheck(self, entry: dict[str, Any], now: datetime) -> bool:
+        """Re-read the harness's state for one row at most every
+        `breaker.CHECK_INTERVAL`; True when it cleared the row early.
+        Per-model rows are never re-checked (the state is per harness)."""
+        if entry["model"]:
+            return False
+        last = _parse_time(entry["checked_at"]) or entry["marked_dt"]
+        if last is not None and now - last < breaker.CHECK_INTERVAL:
+            return False
+        sample = self.limit_state(entry["harness"]) if self.limit_state is not None else None
+        verdict = None
+        if entry["marked_dt"] is not None:
+            verdict = breaker.recovery_verdict(
+                sample,
+                window=entry["window"],
+                window_keys=entry["window_keys"],
+                marked_at=entry["marked_dt"],
+                now=now,
+            )
+        if verdict == "reset":
+            self.store.clear_breaker_entry(entry["harness"], entry["model"])
+            log.warning(
+                "breaker cleared early: %s reset detected (%s, was marked until %s)",
+                entry["window"],
+                entry["harness"],
+                entry["until_dt"].isoformat(),
+            )
+            return True
+        # Fresh state that still shows the window exhausted makes a probe
+        # pointless: push it out.
+        pushed = breaker.next_probe_at(now, self.probe_rng) if verdict == "blocked" else None
+        self.store.set_breaker_checked(entry["harness"], entry["model"], now, next_probe_at=pushed)
+        return False
+
+    def _claim_probe(self, entries: list[dict[str, Any]]) -> bool:
+        """Whether a call that would skip this runner probes it instead: every
+        covering row's probe is due (`next_probe_at`, else `marked_at` +
+        `PROBE_INTERVAL`) and lies before its `until`. Claiming moves
+        `next_probe_at` on, so concurrent calls probe once per interval."""
+        try:
+            now = self.clock()
+            for entry in entries:
+                due = _parse_time(entry["next_probe_at"])
+                if due is None and entry["marked_dt"] is not None:
+                    due = entry["marked_dt"] + breaker.PROBE_INTERVAL
+                if due is None or due > now or due >= entry["until_dt"]:
+                    return False
+            for entry in entries:
+                next_at = breaker.next_probe_at(now, self.probe_rng)
+                if not self.store.claim_breaker_probe(
+                    entry["harness"], entry["model"], entry["next_probe_at"], next_at
+                ):
+                    return False
+            return True
+        except Exception:
+            log.warning("runner breaker probe claim failed", exc_info=True)
+            return False
 
     def _update_breaker(self, spec: RoleSpec, result: AgentResult) -> None:
         """Mark the harness unavailable after a limit, clear it after a success."""
@@ -254,26 +338,43 @@ class RunContext:
             if result.ok:
                 self.store.clear_runner_unavailable(harness, spec.model)
                 return
-            hit = parse_limit(result.error or result.text, now=datetime.now())
+            now = self.clock()
+            hit = parse_limit(result.error or result.text, now=now.astimezone().replace(tzinfo=None))
             if hit is None or (not hit.strong and result.duration_s > _WEAK_LIMIT_MAX_DURATION_S):
                 # A bare "rate limit" in the answer of a call that worked for
                 # minutes is more likely the task's own subject than a limit.
                 return
-            until = hit.until(datetime.now()).astimezone()
             model = spec.model if hit.model_scoped else None
+            # Per-model limits are not in the per-harness state.
+            sample = None
+            if model is None and self.limit_state is not None:
+                try:
+                    sample = self.limit_state(harness)
+                except Exception:
+                    log.warning("rate-limit state read failed for %s", harness, exc_info=True)
+            available = breaker.resolve(hit, sample, failed_at=result.started_at, now=now)
+            until = available.until.astimezone()
             self.store.mark_runner_unavailable(
                 harness,
                 until,
                 model=model,
                 reason=hit.reason,
-                parsed=hit.reset_at is not None,
+                parsed=available.source != "default",
+                window=available.window,
+                source=available.source,
+                window_keys=available.window_keys,
+                next_probe_at=breaker.next_probe_at(now, self.probe_rng),
+                now=now,
             )
             log.warning(
-                "runner breaker: %s%s marked unavailable until %s (%s)",
+                "runner breaker: %s%s marked unavailable until %s (%s window; time from %s)",
                 harness,
                 f":{model}" if model else "",
                 until.isoformat(),
-                "reset time from the message" if hit.reset_at is not None else "no reset time given; default wait",
+                available.window,
+                {"window": "the harness's rate-limit state", "message": "the message"}.get(
+                    available.source, "no reset time given; default wait"
+                ),
             )
         except Exception:
             log.warning("runner breaker update failed for %s", spec.label, exc_info=True)
@@ -686,3 +787,14 @@ def _accepts_kwarg(runner: Any, name: str) -> bool:
         return name in inspect.signature(runner.run).parameters
     except (TypeError, ValueError):
         return False
+
+
+def _parse_time(value: Any) -> datetime | None:
+    """A stored ISO timestamp as an aware datetime (naive means UTC), or None."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)

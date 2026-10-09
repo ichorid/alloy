@@ -63,7 +63,9 @@ def status_impl(bead_id, repo, root, json, limit):
         "root": str(engine.paths.root),
         "repo": str(engine.repo),
         "scheduler": {"running": scheduler_pid is not None, "pid": scheduler_pid},
-        # Runner circuit breaker: harnesses (or single models) skipped until `until`.
+        # Runner circuit breaker: harnesses (or single models) skipped until
+        # `until`; `window` (5h/weekly/month/unknown) blocks them and `source`
+        # (window/message/default) says where `until` came from.
         "runners_unavailable": engine.store.runners_unavailable(),
         "sandbox": _sandbox_status(engine),
         "beads": rows,
@@ -78,7 +80,13 @@ def status_impl(bead_id, repo, root, json, limit):
     )
     for entry in payload["runners_unavailable"]:
         label = f"{entry['harness']}:{entry['model']}" if entry["model"] else entry["harness"]
-        console.print(f"runner [yellow]{label}[/] unavailable until {entry['until']} -- {entry['reason']}")
+        source = {"window": "from rate-limit state", "message": "from the limit message"}.get(
+            entry.get("source"), "default wait, no reset time known"
+        )
+        console.print(
+            f"runner [yellow]{label}[/] unavailable until {entry['until']} "
+            f"({entry.get('window') or 'unknown'} window, {source}) -- {entry['reason']}"
+        )
     if not rows:
         console.print("alloy is not tracking any beads yet")
         return

@@ -63,6 +63,9 @@ _RESETS_AT_DATE = re.compile(
     re.IGNORECASE,
 )
 _TZ_NUMERIC = re.compile(r"(?:UTC|GMT)\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?", re.IGNORECASE)
+_JUST_PASSED = timedelta(minutes=30)
+"""A bare "try again at H:MM" this little in the past means now, not tomorrow
+(2026-10-09: "1:57 AM" read at 01:57:27 kept codex out for a day)."""
 _MAX_RESET_AHEAD = timedelta(days=366)
 """A named reset date further out than this is nonsense, not a limit window."""
 _RATE_LIMIT = re.compile(r"rate[\s_-]*limit", re.IGNORECASE)
@@ -118,28 +121,46 @@ def parse_retry_at(error: str, now: datetime) -> datetime | None:
 
 def _named_reset(error: str, now: datetime) -> datetime | None:
     """The reset time the message itself names, or None (no defaults)."""
+    return _named_reset_kind(error, now)[0]
+
+
+def _named_reset_kind(error: str, now: datetime) -> tuple[datetime | None, str]:
+    """(reset time the message names or None, which wording named it:
+    "date", "clock", "after", "cycle" or "" when none)."""
     match = _RESETS_AT_DATE.search(error)
     if match:
         # A named date that does not parse (Feb 30, a past year) is unparsed:
         # do not let the bare "try again at H:MM" reading guess around it.
-        return _month_date(match, now)
+        return _month_date(match, now), "date"
     match = _RESETS_AT.search(error)
     if match:
-        hour = int(match.group(1)) % 12
-        if match.group(3).lower() == "pm":
-            hour += 12
-        minute = int(match.group(2) or 0)
-        if hour > 23 or minute > 59:
-            return None
-        candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if candidate <= now:
-            candidate += timedelta(days=1)
-        return candidate
+        return _clock_reset(match, now), "clock"
     match = _RETRY_AFTER.search(error)
     if match:
         unit = match.group(2).lower().rstrip("s") or "s"
-        return now + timedelta(seconds=float(match.group(1)) * _UNIT_SECONDS[unit])
-    return _reset_date(error, now)
+        return now + timedelta(seconds=float(match.group(1)) * _UNIT_SECONDS[unit]), "after"
+    reset = _reset_date(error, now)
+    return reset, "cycle" if reset is not None else ""
+
+
+def _clock_reset(match: re.Match[str], now: datetime) -> datetime | None:
+    """The next local occurrence of a bare "resets/try again at H:MM am|pm"."""
+    hour = int(match.group(1)) % 12
+    if match.group(3).lower() == "pm":
+        hour += 12
+    minute = int(match.group(2) or 0)
+    if hour > 23 or minute > 59:
+        return None
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= now:
+        if now - candidate <= _JUST_PASSED:
+            # The message names minutes and the window resets at some second
+            # of that minute: a call in the named minute (codex at 15:40:26
+            # said "3:40 PM", the window reset at 15:40:42) or just past it
+            # means "any moment now", not this time tomorrow.
+            return max(candidate + timedelta(minutes=1), now + timedelta(minutes=1))
+        candidate += timedelta(days=1)
+    return candidate
 
 
 def _month_date(match: re.Match[str], now: datetime) -> datetime | None:
@@ -220,6 +241,24 @@ def _reset_date(error: str, now: datetime) -> datetime | None:
     return candidate if candidate > now else None
 
 
+SHORT_WINDOW_MAX = timedelta(hours=6)
+"""A named reset at most this far ahead is the short (5-hour) window; further
+out it is the weekly one."""
+
+_MONTHLY = re.compile(r"monthly|billing\s+cycle|this\s+month", re.IGNORECASE)
+
+
+def message_window(reset_at: datetime | None, kind: str, error: str, now: datetime) -> str:
+    """Which usage window a message's reset time belongs to, by wording and
+    magnitude: "month" (cursor's monthly cycle), "5h" (within
+    `SHORT_WINDOW_MAX`), "weekly" (days away) or "unknown"."""
+    if reset_at is None or kind in ("", "after"):
+        return "unknown"
+    if kind == "cycle" or (_MONTHLY.search(error) and reset_at - now > timedelta(days=8)):
+        return "month"
+    return "5h" if reset_at - now <= SHORT_WINDOW_MAX else "weekly"
+
+
 @dataclass(frozen=True)
 class LimitHit:
     """A harness said it hit a usage, spend, session or rate limit.
@@ -227,13 +266,17 @@ class LimitHit:
     `reset_at` is the time the message itself names, or None when it names
     none (the circuit breaker then waits `DEFAULT_BREAKER_WAIT`).
     `model_scoped` means the limit is on the model, not the whole harness:
-    cursor says "switch to a different model ... to continue with this model"."""
+    cursor says "switch to a different model ... to continue with this model".
+    `window` is the window the message's time belongs to (see
+    `message_window`); the breaker cross-checks it with the harness's own
+    rate-limit state (`alloy.limits.breaker.resolve`)."""
 
     reason: str
     reset_at: datetime | None
     model_scoped: bool = False
     strong: bool = True
     """Harness limit wording ("hit your usage limit"), not just "rate limit"."""
+    window: str = "unknown"
 
     def until(self, now: datetime) -> datetime:
         return self.reset_at if self.reset_at is not None else now + DEFAULT_BREAKER_WAIT
@@ -249,7 +292,7 @@ def parse_limit(error: str, now: datetime) -> LimitHit | None:
         return None
     if not (_USAGE_LIMIT.search(error) or _RATE_LIMIT.search(error)):
         return None
-    reset_at = _named_reset(error, now)
+    reset_at, kind = _named_reset_kind(error, now)
     line = next(
         (part.strip() for part in error.splitlines() if _USAGE_LIMIT.search(part) or _RATE_LIMIT.search(part)), ""
     )
@@ -258,4 +301,5 @@ def parse_limit(error: str, now: datetime) -> LimitHit | None:
         reset_at=reset_at,
         model_scoped=bool(_MODEL_SCOPED.search(error)),
         strong=bool(_USAGE_LIMIT.search(error)),
+        window=message_window(reset_at, kind, error, now),
     )

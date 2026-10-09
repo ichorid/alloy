@@ -151,6 +151,7 @@ async def review_plan(
         checkpointer=None,
         log_dir=log_dir,
         beads=engine.beads,
+        limit_state=engine.limit_state_reader() if hasattr(engine, "limit_state_reader") else None,
     )
     return await review_memory(ctx, memory, today=today)
 

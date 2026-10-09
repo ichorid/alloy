@@ -13,7 +13,7 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -196,6 +196,16 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     "agent_calls": {
         "structured_json": "TEXT",  # the raw structured output, e.g. the judge's verdict
         "prefix_hash": "TEXT",  # sha256 of the prompt's stable layers (alloy-4ef.6)
+    },
+    "runner_breaker": {
+        # Which window blocks the harness (5h/weekly/month/unknown) and where
+        # `until` came from (window/message/default); '' on rows older than
+        # these columns (`runners_unavailable` derives them).
+        "window": "TEXT NOT NULL DEFAULT ''",
+        "source": "TEXT NOT NULL DEFAULT ''",
+        "window_keys": "TEXT NOT NULL DEFAULT ''",  # comma-separated state keys (codex primary/secondary)
+        "checked_at": "TEXT",  # last re-read of the harness's rate-limit state
+        "next_probe_at": "TEXT",  # when a skipped call may next probe the runner
     },
     "inflight_calls": {
         "pid": "INTEGER",  # the harness process group, so a dead run's orphan can be killed
@@ -602,33 +612,90 @@ class Store:
         model: str | None = None,
         reason: str = "",
         parsed: bool = False,
+        window: str = "",
+        source: str = "",
+        window_keys: tuple[str, ...] | list[str] = (),
+        next_probe_at: datetime | None = None,
+        now: datetime | None = None,
     ) -> None:
         """Keep `harness` (or only its `model`) out of rotation until `until`.
         A later mark replaces an earlier one for the same key."""
         with self.connect() as conn:
             conn.execute(
-                "INSERT INTO runner_breaker (harness, model, until, reason, parsed, marked_at)"
-                " VALUES (?,?,?,?,?,?) ON CONFLICT(harness, model) DO UPDATE SET"
+                "INSERT INTO runner_breaker (harness, model, until, reason, parsed, marked_at,"
+                " window, source, window_keys, checked_at, next_probe_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,NULL,?) ON CONFLICT(harness, model) DO UPDATE SET"
                 " until = excluded.until, reason = excluded.reason, parsed = excluded.parsed,"
-                " marked_at = excluded.marked_at",
-                (harness, model or "", _iso(until), reason, int(parsed), utcnow().isoformat()),
+                " marked_at = excluded.marked_at, window = excluded.window, source = excluded.source,"
+                " window_keys = excluded.window_keys, checked_at = NULL, next_probe_at = excluded.next_probe_at",
+                (
+                    harness,
+                    model or "",
+                    _iso(until),
+                    reason,
+                    int(parsed),
+                    (now or utcnow()).isoformat(),
+                    window,
+                    source,
+                    ",".join(window_keys),
+                    _iso(next_probe_at) if next_probe_at is not None else None,
+                ),
             )
 
-    def runner_unavailable_until(self, harness: str, model: str | None = None) -> datetime | None:
-        """The latest active breaker window covering `harness` (whole-harness
-        entries, or the entry for `model`), or None when it may be used."""
-        now = utcnow()
-        latest: datetime | None = None
+    def runner_breaker_entries(
+        self, harness: str, model: str | None = None, *, now: datetime | None = None
+    ) -> list[dict[str, Any]]:
+        """Active breaker rows covering `harness` (whole-harness entries and
+        the entry for `model`), latest `until` first, as `_breaker_entry` dicts."""
+        now = now or utcnow()
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT until FROM runner_breaker WHERE harness = ? AND model IN ('', ?)",
+                "SELECT * FROM runner_breaker WHERE harness = ? AND model IN ('', ?)",
                 (harness, model or ""),
             ).fetchall()
-        for row in rows:
-            until = _parse_aware(row["until"])
-            if until is not None and until > now and (latest is None or until > latest):
-                latest = until
-        return latest
+        entries = [_breaker_entry(row) for row in rows]
+        active = [e for e in entries if e["until_dt"] is not None and e["until_dt"] > now]
+        return sorted(active, key=lambda e: e["until_dt"], reverse=True)
+
+    def runner_unavailable_until(
+        self, harness: str, model: str | None = None, *, now: datetime | None = None
+    ) -> datetime | None:
+        """The latest active breaker window covering `harness` (whole-harness
+        entries, or the entry for `model`), or None when it may be used."""
+        entries = self.runner_breaker_entries(harness, model, now=now)
+        return entries[0]["until_dt"] if entries else None
+
+    def set_breaker_checked(
+        self, harness: str, model: str, at: datetime, *, next_probe_at: datetime | None = None
+    ) -> None:
+        """Record a re-read of the harness's state on one row (exact key);
+        `next_probe_at` also pushes the next probe out."""
+        with self.connect() as conn:
+            if next_probe_at is None:
+                conn.execute(
+                    "UPDATE runner_breaker SET checked_at = ? WHERE harness = ? AND model = ?",
+                    (_iso(at), harness, model),
+                )
+            else:
+                conn.execute(
+                    "UPDATE runner_breaker SET checked_at = ?, next_probe_at = ? WHERE harness = ? AND model = ?",
+                    (_iso(at), _iso(next_probe_at), harness, model),
+                )
+
+    def claim_breaker_probe(self, harness: str, model: str, expected: str | None, next_at: datetime) -> bool:
+        """Move one row's `next_probe_at` from `expected` (its raw stored
+        value) to `next_at`; False when another caller claimed it first."""
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "UPDATE runner_breaker SET next_probe_at = ? WHERE harness = ? AND model = ? AND next_probe_at IS ?",
+                (_iso(next_at), harness, model, expected),
+            )
+            return cursor.rowcount == 1
+
+    def clear_breaker_entry(self, harness: str, model: str) -> None:
+        """Drop exactly one breaker row (`model` '' is the whole-harness row)."""
+        with self.connect() as conn:
+            conn.execute("DELETE FROM runner_breaker WHERE harness = ? AND model = ?", (harness, model))
 
     def clear_runner_unavailable(self, harness: str, model: str | None = None) -> None:
         """A call on `harness` (`model`) worked: drop the entries that cover it."""
@@ -638,22 +705,27 @@ class Store:
                 (harness, model or ""),
             )
 
-    def runners_unavailable(self) -> list[dict[str, Any]]:
+    def runners_unavailable(self, *, now: datetime | None = None) -> list[dict[str, Any]]:
         """Active breaker entries, soonest reset first (`alloy status --json`)."""
-        now = utcnow()
+        now = now or utcnow()
         with self.connect() as conn:
             rows = conn.execute("SELECT * FROM runner_breaker ORDER BY until, harness, model").fetchall()
         active = []
         for row in rows:
-            until = _parse_aware(row["until"])
-            if until is not None and until > now:
+            entry = _breaker_entry(row)
+            if entry["until_dt"] is not None and entry["until_dt"] > now:
                 active.append(
                     {
-                        "harness": row["harness"],
-                        "model": row["model"] or None,
-                        "until": until.isoformat(),
-                        "reason": row["reason"],
-                        "reset_parsed": bool(row["parsed"]),
+                        "harness": entry["harness"],
+                        "model": entry["model"] or None,
+                        "until": entry["until_dt"].isoformat(),
+                        "reason": entry["reason"],
+                        "reset_parsed": entry["parsed"],
+                        "window": entry["window"],
+                        "source": entry["source"],
+                        "marked_at": entry["marked_at"],
+                        "checked_at": entry["checked_at"],
+                        "next_probe_at": entry["next_probe_at"],
                     }
                 )
         return active
@@ -1089,6 +1161,45 @@ def _parse_aware(value: str | None) -> datetime | None:
 
 def _iso(value: datetime | str) -> str:
     return value.isoformat() if isinstance(value, datetime) else str(value)
+
+
+def _breaker_entry(row: sqlite3.Row) -> dict[str, Any]:
+    """One runner_breaker row as a dict; `window`/`source` derived for rows
+    written before those columns existed (source from `parsed`, window from
+    the reason's wording and how far ahead `until` was of `marked_at`)."""
+    keys = row.keys()
+
+    def col(name: str) -> Any:
+        return row[name] if name in keys else None
+
+    until = _parse_aware(row["until"])
+    marked = _parse_aware(row["marked_at"])
+    parsed = bool(row["parsed"])
+    source = col("source") or ("message" if parsed else "default")
+    window = col("window") or ""
+    if not window:
+        reason = (row["reason"] or "").lower()
+        if not parsed or until is None or marked is None:
+            window = "unknown"
+        elif "monthly" in reason:
+            window = "month"
+        else:
+            window = "5h" if until - marked <= timedelta(hours=6) else "weekly"
+    raw_keys = col("window_keys") or ""
+    return {
+        "harness": row["harness"],
+        "model": row["model"] or "",
+        "until_dt": until,
+        "reason": row["reason"],
+        "parsed": parsed,
+        "marked_at": row["marked_at"],
+        "marked_dt": marked,
+        "window": window,
+        "source": source,
+        "window_keys": tuple(k for k in raw_keys.split(",") if k),
+        "checked_at": col("checked_at"),
+        "next_probe_at": col("next_probe_at"),
+    }
 
 
 def _ensure_columns(conn: sqlite3.Connection, migrations: dict[str, dict[str, str]]) -> None:

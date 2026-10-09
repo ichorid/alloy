@@ -569,8 +569,18 @@ class Engine:
             log_dir=log_dir,
             beads=self.beads,
             checkout_note=checkout_note,
+            limit_state=self.limit_state_reader(),
         )
         return ctx
+
+    def limit_state_reader(self):
+        """harness -> its rate-limit state from local files, for the runner
+        breaker (`alloy.limits.breaker.read_state`)."""
+        from functools import partial
+
+        from alloy.limits.breaker import read_state
+
+        return partial(read_state, cache_path=self.paths.limits_cache)
 
     # -- internals --------------------------------------------------------
 
