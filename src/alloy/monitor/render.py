@@ -705,12 +705,13 @@ def _tests(run: dict[str, Any], mode: str | None = None) -> str:
     tests summary verbatim (ascii), or tick/cross glyphs in nerd/unicode."""
     checks = run.get("checks")
     if isinstance(checks, dict) and checks.get("total") is not None:
+        cached = int(checks.get("cached") or 0)
         if mode is None or mode == "ascii":
-            return f"{checks['total']} checks"
+            return f"{checks['total']} checks" + (f" (+{cached} cached)" if cached else "")
         total = checks["total"]
         last = checks.get("last") or {}
         glyph = "test_ok" if last.get("exit_code") == 0 else "test_fail"
-        return f"{icon(glyph, mode)}{total}"
+        return f"{icon(glyph, mode)}{total}" + (f"+{cached}c" if cached else "")
     summary = run.get("tests_summary")
     if mode is None or mode == "ascii":
         return _text(summary)

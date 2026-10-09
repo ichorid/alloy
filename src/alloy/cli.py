@@ -678,6 +678,7 @@ def logs(
                 "log_dir": record["log_dir"],
                 "calls": calls,
                 "checks": checks,
+                "checks_cached": sum(1 for check in checks if check.get("cached")),
             },
             True,
         )
@@ -713,8 +714,10 @@ def logs(
     console.print(table)
     if not checks:
         return
-    table = Table(show_header=True, header_style="bold", title="checks (in start order)")
-    for column in ("#", "kind", "exit", "command", "artifact"):
+    cached = sum(1 for check in checks if check.get("cached"))
+    title = f"checks (in start order): {len(checks) - cached}" + (f" (+{cached} cached)" if cached else "")
+    table = Table(show_header=True, header_style="bold", title=title)
+    for column in ("#", "kind", "exit", "cached", "command", "artifact"):
         table.add_column(column)
     for index, check in enumerate(checks, 1):
         exit_code = check["exit_code"]
@@ -722,6 +725,7 @@ def logs(
             str(index),
             check["kind"],
             "-" if exit_code is None else str(exit_code),
+            "yes" if check.get("cached") else "",
             check["command"],
             check["log_path"],
         )

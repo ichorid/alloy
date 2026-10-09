@@ -35,7 +35,7 @@ from alloy.models import (
 from alloy.paths import project_brief
 from alloy.runners import RunnerRegistry
 from alloy.store import CHAIN_FREE_KEY, CHEAP_KEY, Store
-from alloy.verify import noop_reason, run_check
+from alloy.verify import noop_reason, run_check, spent_check_count
 from alloy.worktree import Worktree, WorktreeManager, tree_fingerprint
 
 log = logging.getLogger("alloy.runtime")
@@ -577,8 +577,11 @@ class RunContext:
         return self._wall_breach(limits.max_wall_time_minutes * multiplier)
 
     def total_checks(self, state: Mapping[str, Any]) -> int:
-        """Checks this run has executed: the baseline plus every verifier check."""
-        return len(state.get("baseline") or []) + len(state.get("checks") or [])
+        """Checks this run has executed: the baseline plus every verifier check,
+        minus the ones answered from the check cache (`cached=True`): those are
+        still recorded, so the verifier and judge see them, but nothing ran --
+        no wall time, no subprocess -- so they spend no `max_total_checks`."""
+        return spent_check_count(state.get("baseline")) + spent_check_count(state.get("checks"))
 
     def total_checks_allowed(self, state: Mapping[str, Any]) -> int:
         return self.recipe.verification.max_total_checks * self.budget(dict(state))

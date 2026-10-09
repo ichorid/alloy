@@ -295,18 +295,48 @@ async def run_check(
     )
 
 
+def is_cached_check(item: Any) -> bool:
+    """True for a check record answered from the run's check cache
+    (`CheckResult.cached`): nothing ran, so it spends no check budget.
+    Records written before the flag existed carry no key and count as run."""
+    if isinstance(item, Mapping):
+        return bool(item.get("cached"))
+    return bool(getattr(item, "cached", False))
+
+
+def spent_check_count(items: Any) -> int:
+    """How many of `items` (check records or `CheckResult`s) actually ran --
+    the count `max_total_checks` limits. Cached answers are excluded."""
+    return sum(1 for item in items or [] if not is_cached_check(item))
+
+
+def cached_check_count(items: Any) -> int:
+    return sum(1 for item in items or [] if is_cached_check(item))
+
+
+def checks_label(items: Any) -> str:
+    """`14 checks` or `14 checks (+4 cached)`: spent budget first, cached
+    answers (recorded, but free) beside it."""
+    cached = cached_check_count(items)
+    text = f"{spent_check_count(items)} checks"
+    return f"{text} (+{cached} cached)" if cached else text
+
+
 def checks_summary(state: Mapping[str, Any]) -> dict[str, Any] | None:
     """The `checks` object of `alloy status --json` and the monitor snapshot.
 
-    Read from the graph state: how many verifier checks the run has executed,
-    how many of those in the current iteration, and what the last one said.
-    None until the first check has run."""
+    Read from the graph state: how many verifier checks the run has executed
+    (`total`, the count that spends `max_total_checks`), how many more were
+    answered from the run's check cache without running (`cached`), how many
+    records the current iteration added, and what the last one said. None
+    until the first check has run."""
     checks = list(state.get("checks") or [])
     if not checks:
         return None
     last = CheckResult.model_validate(checks[-1])
     return {
-        "total": len(checks),
+        "total": spent_check_count(checks),
+        "cached": cached_check_count(checks),
         "iteration": int(state.get("iteration_checks", 0) or 0),
         "last": {
             "command": last.command,
@@ -318,8 +348,10 @@ def checks_summary(state: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 def check_logs(log_dir: Path | str | None) -> list[dict[str, Any]]:
-    """Every check-*.log a run wrote, in start order, with the kind and exit
-    code from its header (`check-{index}-{kind}-{ms}.log`, see `run_check`)."""
+    """Every check-*.log a run wrote, in start order, with the kind, exit
+    code and whether it was a cached answer (`cached=true`, written by
+    `RunContext._cached_check`) from its header
+    (`check-{index}-{kind}-{ms}.log`, see `run_check`)."""
     if not log_dir or not Path(log_dir).is_dir():
         return []
     entries: list[tuple[int, int, dict[str, Any]]] = []
@@ -329,7 +361,7 @@ def check_logs(log_dir: Path | str | None) -> list[dict[str, Any]]:
             index, started_ms = int(parts[1]), int(parts[-1])
         except (IndexError, ValueError):
             continue
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[:4]
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[:6]
         header = dict(line.split("=", 1) for line in lines[1:] if "=" in line)
         command = lines[0] if lines else ""
         entries.append(
@@ -341,6 +373,7 @@ def check_logs(log_dir: Path | str | None) -> list[dict[str, Any]]:
                     "command": command[2:] if command.startswith("$ ") else command,
                     "kind": header.get("kind") or "-".join(parts[2:-1]) or "custom",
                     "exit_code": int(header["exit"]) if header.get("exit", "").lstrip("-").isdigit() else None,
+                    "cached": header.get("cached") == "true",
                     "log_path": str(path),
                 },
             )

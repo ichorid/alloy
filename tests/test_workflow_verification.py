@@ -150,7 +150,11 @@ async def test_max_checks_per_iteration_forces_verifier_stop(project, alloy_home
 
 
 async def test_max_total_checks_parks_at_human_gate(project, alloy_home, fake_harnesses):
-    """A run-wide check cap parks at the human gate like max_iterations."""
+    """A run-wide check cap parks at the human gate like max_iterations.
+
+    Distinct commands: a repeat of one passing command on an unchanged tree
+    is answered from the check cache and spends no budget
+    (tests/test_cached_checks_budget.py)."""
     config = replace(
         load_config(),
         verification=replace(
@@ -161,7 +165,7 @@ async def test_max_total_checks_parks_at_human_gate(project, alloy_home, fake_ha
     )
     fake_harnesses.configure(
         verification_script(
-            verifier=[verifier_run_entry('sh -c "exit 0"', kind="custom")] * 20,
+            verifier=[verifier_run_entry(f'sh -c "exit 0; : {n}"', kind="custom") for n in range(20)],
         )
     )
     harness = make_harness(project, alloy_home, config=config)

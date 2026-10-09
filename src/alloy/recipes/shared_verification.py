@@ -38,8 +38,10 @@ from alloy.recipes.role_prompts import (
 from alloy.recipes.state import TddState
 from alloy.runtime import LIMIT_REFUSED_KEY, RunContext
 from alloy.verify import (
+    checks_label,
     detect_commands,
     normalize_command,
+    spent_check_count,
     verifier_check_requests,
 )
 from alloy.worktree import is_test_path
@@ -298,7 +300,7 @@ def _make_verifier_nodes(ctx):
         allowed_total = ctx.total_checks_allowed(state)
         checks = list(state.get("checks") or [])
         iteration_checks = int(state.get("iteration_checks", 0) or 0)
-        total = len(state.get("baseline") or []) + len(checks)
+        total = ctx.total_checks(state)  # cached answers are free
         update: dict[str, Any] = {
             "stage": "verify",
             "pending_check": None,
@@ -474,7 +476,8 @@ def _make_check_nodes(ctx, _implementer):
         checks = [*(state.get("checks") or []), *records]
         iteration_checks = int(state.get("iteration_checks", 0) or 0) + len(records)
         last = CheckResult.model_validate(records[-1]) if records else None
-        ctx.set_tests_summary(f"{len(checks)} checks, last: {last.headline()}" if last else f"{len(checks)} checks")
+        label = checks_label(checks)
+        ctx.set_tests_summary(f"{label}, last: {last.headline()}" if last else label)
         update: dict[str, Any] = {
             "stage": "verify",
             "checks": records,
@@ -592,7 +595,8 @@ def _make_acceptance_nodes(ctx, _implementer):
         # The acceptance <-> verifier cycle never passes through guard, so the run's
         # own budgets and a stalled cycle (verify_more with no new evidence) are
         # enforced here.
-        n_checks = len(state.get("checks") or [])
+        # Only checks that actually ran are new evidence; a cached repeat is not.
+        n_checks = spent_check_count(state.get("checks"))
         declined = int(state.get("verify_more_declined", 0) or 0)
         if verdict.decision == "verify_more":
             breach = ctx.check_limits(state)

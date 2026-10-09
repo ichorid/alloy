@@ -76,7 +76,9 @@ async def test_endless_bug_repair_loop_stops_at_max_iterations(project, alloy_ho
 
 
 async def test_endless_bug_repair_loop_stops_at_max_agent_calls(project, alloy_home, fake_harnesses):
-    config = limited(triage_config(), max_iterations=50, max_agent_calls=4, max_agent_calls_by_tier={}, max_cheap_agent_calls=100)
+    config = limited(
+        triage_config(), max_iterations=50, max_agent_calls=4, max_agent_calls_by_tier={}, max_cheap_agent_calls=100
+    )
     harness, final = await _run_endless(project, alloy_home, fake_harnesses, config)
 
     assert "__interrupt__" in final
@@ -164,8 +166,11 @@ async def test_bounded_bug_repair_still_finishes_done(project, alloy_home, fake_
 
 async def test_fast_track_implement_check_loop_is_bounded(project, alloy_home, fake_harnesses):
     """fast-track's implement -> run_check -> implement cycle has no guard
-    either; an endless "check again" loop stops on the run's limits."""
-    fake_harnesses.configure({"implement": [run_check_entry(f"{sys.executable} -c \"print(1)\"", reason="again")]})
+    either; an endless "check again" loop stops on the run's limits.
+    Distinct commands, so none is a free cached repeat."""
+    fake_harnesses.configure(
+        {"implement": [run_check_entry(f'{sys.executable} -c "print({n})"', reason="again") for n in range(20)]}
+    )
     config = limited(fast_track_config(), max_iterations=3, max_agent_calls=100, max_agent_calls_by_tier={})
     config = replace(config, verification=replace(config.verification, max_total_checks=6))
     harness = make_harness(
