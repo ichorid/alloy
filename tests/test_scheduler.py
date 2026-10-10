@@ -192,6 +192,31 @@ async def test_serve_writes_and_removes_its_pidfile(scheduler):
     assert read_pid(scheduler.pidfile) is None
 
 
+async def test_serve_survives_a_bd_failure_between_ticks(scheduler, monkeypatch, caplog):
+    """`bd` can time out for over a minute while other bd processes hold the
+    store; that must cost one poll, not the scheduler process."""
+    scheduler.once = False
+    calls = []
+
+    async def flaky_tick():
+        calls.append(1)
+        if len(calls) == 1:
+            raise bd.BeadsError("bd list --all timed out after 60.0 seconds")
+        scheduler._stopping = True
+        return False
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(scheduler, "tick", flaky_tick)
+    monkeypatch.setattr(scheduler, "_sleep", no_sleep)
+    with caplog.at_level(logging.WARNING, logger="alloy.scheduler"):
+        await scheduler.serve()
+
+    assert len(calls) == 2
+    assert any("bd unavailable" in r.getMessage() for r in caplog.records)
+
+
 async def test_serve_logs_the_alloy_commit_it_loaded_not_the_target_repos(scheduler, caplog):
     """A committed fix does nothing to a scheduler already running: the
     startup line must say which Alloy code this process is."""

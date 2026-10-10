@@ -122,7 +122,18 @@ class Scheduler:
         try:
             await self.recover()
             while not self._stopping:
-                started = await self.tick()
+                try:
+                    started = await self.tick()
+                except bd.BeadsError as exc:
+                    # bd timed out or failed between runs (it can take over a
+                    # minute while other bd processes hold the store): wait
+                    # one poll and try again rather than take the whole
+                    # scheduler down.
+                    if self.once:
+                        raise
+                    log.warning("tick skipped, bd unavailable: %s", exc)
+                    await self._sleep(self.poll_seconds)
+                    continue
                 if self.once:
                     return
                 if not started:
