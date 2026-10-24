@@ -17,7 +17,7 @@ consilium:
 verification:
   max_checks_per_iteration: 5
   max_total_checks: 20
-  max_command_timeout_minutes: 15
+  max_command_timeout_minutes: 30  # tentura server mr suite ~16 min, full pg ~10 min
   max_baseline_repairs: 2
   max_test_reviews: 2
   min_acceptance_confidence: 0.6
