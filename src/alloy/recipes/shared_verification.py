@@ -166,6 +166,165 @@ def was_resumed(result: AgentResult) -> bool:
     return bool((result.usage or {}).get("resumed"))
 
 
+async def _ask_verifier(
+    ctx: RunContext,
+    state: TddState,
+    spec: RoleSpec,
+    tests_session: dict[str, Any] | None,
+    prompt_args: tuple,
+    prompt_kwargs: dict[str, Any],
+    iteration: int,
+) -> tuple[AgentResult | None, str | None, dict[str, Any]]:
+    """One verifier call: (result or None, failure reason, state update).
+
+    With `branch_from_tests` the verifier is its own read-only branch of the
+    tests writer's session (the agent that wrote the tests chooses how to
+    verify them, without seeing the implementer's turns); otherwise it
+    continues the tests session itself, as before."""
+    prompt = verifier_prompt(*prompt_args, **prompt_kwargs)
+    resumed_prompt = verifier_prompt(*prompt_args, **prompt_kwargs, resumed=True)
+    schema = VerifierAction.schema_for_agents()
+    if can_branch_tests_session(ctx, spec, tests_session, read_only=True) or state.get("verifier_session"):
+        try:
+            result, session = await call_on_branch(
+                ctx,
+                "verifier",
+                spec,
+                prompt,
+                resumed_prompt,
+                own=state.get("verifier_session"),
+                tests_session=tests_session,
+                read_only=True,
+                schema=schema,
+                iteration=iteration,
+            )
+        except Exception as exc:
+            return None, f"verifier failed: {exc}", {}
+        return result, None, {"verifier_session": session}
+    session_id = resumable_session(spec, tests_session)
+    try:
+        result = await call_in_session(
+            ctx, "verifier", spec, prompt, resumed_prompt, session_id=session_id, schema=schema, iteration=iteration
+        )
+    except Exception as exc:
+        return None, f"verifier failed: {exc}", {}
+    if session_id is not None and not limit_refused(result) and not was_resumed(result):
+        # The session is gone (or the harness refused it): stop paying for a
+        # failed resume before every fresh call.
+        return result, None, {"tests_session": None}
+    return result, None, {}
+
+
+READ_ONLY_TWIN = {"codex": "codex-readonly", "claude-write": "claude"}
+"""The read-only harness that can open a branch of a writer's session."""
+
+
+def _session_spec(spec: RoleSpec, session: dict[str, Any], *, read_only: bool) -> RoleSpec | None:
+    runner = session.get("runner")
+    if read_only:
+        runner = READ_ONLY_TWIN.get(runner, runner if runner in READ_ONLY_TWIN.values() else None)
+    if not runner:
+        return None
+    return replace(spec, runner=runner, model=session.get("model") or spec.model, fallback=None)
+
+
+def can_branch_tests_session(
+    ctx: RunContext, spec: RoleSpec, tests_session: dict[str, Any] | None, *, read_only: bool
+) -> bool:
+    """Branching is on and the tests writer's harness can fork its session
+    (cursor cannot: a cursor tests session is resumed directly, as before)."""
+    if not getattr(ctx.recipe, "branch_from_tests", False):
+        return False
+    if not tests_session or not tests_session.get("session_id"):
+        return False
+    branch_spec = _session_spec(spec, tests_session, read_only=read_only)
+    return branch_spec is not None and ctx.can_branch(branch_spec, fork=True)
+
+
+async def call_on_branch(
+    ctx: RunContext,
+    role: str,
+    spec: RoleSpec,
+    prompt: str,
+    branch_prompt: str,
+    *,
+    own: dict[str, Any] | None,
+    tests_session: dict[str, Any] | None,
+    read_only: bool,
+    schema: dict[str, Any] | None = None,
+    iteration: int = 0,
+) -> tuple[AgentResult, dict[str, Any] | None]:
+    """Call `role` on its own branch of the tests writer's session.
+
+    The agent that wrote (or repaired) the tests also writes the code, and a
+    second, read-only branch of the same session checks it. Each branch is a
+    fork taken from the tests session as it stood when the tests were done, so
+    both start with the task, the repo and the tests in context and a warm
+    prompt cache, and neither sees the other's turns. The tests writer was
+    never told it would implement; it learns that from the first implement
+    prompt, in its own branch.
+
+    - `own` is this role's branch from an earlier call: it is continued while
+      it was forked from the current tests revision.
+    - Otherwise the tests session is forked (implementer: same harness;
+      verifier: that harness's read-only twin).
+    - A branch that cannot be opened or fails falls back to the role's own
+      configured chain, cold, with the full `prompt`; that cold session then
+      becomes the role's session for later calls.
+
+    Returns the result and the role's session to keep (None = keep nothing).
+    """
+    revision = (tests_session or {}).get("revision")
+    enabled = getattr(ctx.recipe, "branch_from_tests", False)
+    # Without a forkable tests session (branching off, no session, or a
+    # harness that cannot fork such as cursor) the role runs cold every time,
+    # exactly as before; nothing is kept.
+    own_or_branch_tried = False
+    if enabled and tests_session and tests_session.get("session_id"):
+        call_kwargs: dict[str, Any] = {}
+        branch_spec: RoleSpec | None = None
+        if own and own.get("session_id") and own.get("forked_from_revision") == revision:
+            branch_spec = replace(spec, runner=own["runner"], model=own.get("model") or spec.model, fallback=None)
+            if ctx.can_branch(branch_spec, fork=False):
+                call_kwargs = {"resume_session": own["session_id"]}
+        if not call_kwargs:
+            branch_spec = _session_spec(spec, tests_session, read_only=read_only)
+            if branch_spec is not None and ctx.can_branch(branch_spec, fork=True):
+                call_kwargs = {"fork_session": tests_session["session_id"]}
+        if call_kwargs and branch_spec is not None:
+            own_or_branch_tried = True
+            result = await ctx.call(role, branch_spec, branch_prompt, schema=schema, iteration=iteration, **call_kwargs)
+            if result.ok:
+                session_id = result.session_id or call_kwargs.get("resume_session")
+                kept = {
+                    "runner": branch_spec.runner,
+                    "model": branch_spec.model,
+                    "session_id": session_id,
+                    "forked_from_revision": revision,
+                }
+                return result, kept if session_id else None
+            if limit_refused(result):
+                return result, own
+            log.warning(
+                "%s: its branch of the tests session on %s failed (%s); running cold",
+                role,
+                branch_spec.label,
+                (result.error or f"exit {result.exit_code}")[:200],
+            )
+    result = await ctx.call(role, spec, prompt, schema=schema, iteration=iteration)
+    kept = None
+    if result.ok and result.session_id and own_or_branch_tried:
+        # The branch could not be opened this time; the cold session takes
+        # its place, so later calls of this role still continue a session.
+        kept = {
+            "runner": result.runner,
+            "model": result.model,
+            "session_id": result.session_id,
+            "forked_from_revision": revision,
+        }
+    return result, kept
+
+
 async def call_in_session(
     ctx: RunContext,
     role: str,
@@ -355,33 +514,18 @@ def _make_verifier_nodes(ctx):
             repo_root=ctx.worktree.path,
             pinned_checks=parse_pinned_check_hints(state.get("memory_pinned_checks", "")),
         )
-        # The verifier continues the tests writer's session: the agent that
-        # wrote the tests chooses how to verify them, context intact.
-        session_id = resumable_session(spec, tests_session)
-        try:
-            result = await call_in_session(
-                ctx,
-                "verifier",
-                spec,
-                verifier_prompt(*prompt_args, **prompt_kwargs),
-                verifier_prompt(*prompt_args, **prompt_kwargs, resumed=True),
-                session_id=session_id,
-                schema=VerifierAction.schema_for_agents(),
-                iteration=iteration,
-            )
-        except Exception as exc:
-            failure.reason = f"verifier failed: {exc}"
-            result = None
+        result, error, session_update = await _ask_verifier(
+            ctx, state, spec, tests_session, prompt_args, prompt_kwargs, iteration
+        )
+        update.update(session_update)
+        if error is not None:
+            failure.reason = error
         if limit_refused(result):
             update.update(
                 verify_route="guard",
                 **limit_stop(result.usage.get("limit") or result.error, f"verifier in iteration {iteration}"),
             )
             return update
-        if session_id is not None and (result is None or not was_resumed(result)):
-            # The session is gone (or the harness refused it): stop paying
-            # for a failed resume before every fresh call.
-            update["tests_session"] = None
         # The verifier is read-only by contract; an edit would let it pass
         # or fail the task for the wrong reason, so a human decides.
         changed_after = ctx.worktrees.changed_files(ctx.worktree)

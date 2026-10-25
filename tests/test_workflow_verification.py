@@ -29,6 +29,7 @@ from workflow_support import (
 )
 
 from alloy.config import RoleSpec
+from alloy.recipes.role_prompts import implement_prompt
 from alloy.recipes.tdd_loop import tests_prompt, verifier_prompt
 from alloy.store import Store
 
@@ -482,8 +483,9 @@ async def test_green_baseline_repair_resumes_tests_session(project, alloy_home, 
     assert REPOSITORY_CONTEXT_HEADING not in tests_calls[1]["prompt"]
 
 
-async def test_tests_fallback_clears_session_for_later_calls(project, alloy_home, fake_harnesses):
-    """(c) After tests fallback, no later harness call attempts session resume."""
+async def test_tests_fallback_session_is_branched_by_implementer_and_verifier(project, alloy_home, fake_harnesses):
+    """(c) After a tests fallback to a forkable harness, the verifier branches
+    that session read-only; a live-tiered implementer keeps its tier runner."""
     config = load_config()
     roles = dict(config.roles)
     roles["tests"] = replace(
@@ -515,14 +517,23 @@ async def test_tests_fallback_clears_session_for_later_calls(project, alloy_home
     ]
     assert final["tests_session"] == {
         "runner": "claude-write",
+        "model": "fable",
         "session_id": FAKE_SESSION,
+        "revision": 1,
     }
+    # The fallback's claude session can be forked. The verifier runs on its
+    # own read-only branch of it; the implementer does not, because this
+    # recipe routes implement by complexity tier (live routing wins).
+    implement_calls = fake_harnesses.calls_for("implement")
+    assert all("fork" not in call for call in implement_calls)
     verifier_calls = fake_harnesses.calls_for("verifier")
     assert verifier_calls
-    assert all("resume" not in call for call in verifier_calls)
+    assert verifier_calls[0]["runner"] == "claude" and verifier_calls[0].get("fork") == FAKE_SESSION
+    assert "--permission-mode" not in verifier_calls[0]["argv"]  # the read-only twin
+    assert all(call.get("resume") == FAKE_SESSION for call in verifier_calls[1:])
     verifier_ledger = [row for row in harness.store.agent_calls(harness.run_id) if row["role"] == "verifier"]
-    assert json.loads(verifier_ledger[0]["usage_json"])["resumed"] is False
-    for fn in (tests_prompt, verifier_prompt):
+    assert json.loads(verifier_ledger[0]["usage_json"])["forked_from"] == FAKE_SESSION
+    for fn in (tests_prompt, verifier_prompt, implement_prompt):
         assert "resumed" in inspect.signature(fn).parameters
 
 

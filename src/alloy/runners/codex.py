@@ -70,15 +70,16 @@ class CodexRunner(CLIRunner):
         structured_schema: dict | None,
         effort: str | None = None,
         resume_session: str | None = None,
+        fork_session: str | None = None,
     ) -> list[str]:
-        if resume_session:
-            # `codex exec resume <SESSION_ID> [PROMPT]` (checked against
-            # codex-cli 0.155.1). The subcommand takes --json, --model and -c
-            # but not --sandbox, so the sandbox rides on the config key.
+        if resume_session or fork_session:
+            # `codex exec resume|fork <SESSION_ID> [PROMPT]` (checked against
+            # codex-cli 0.164.0). Both take --json, --model and -c but not
+            # --sandbox, so the sandbox rides on the config key.
             args = [
                 "exec",
-                "resume",
-                resume_session,
+                "fork" if fork_session and not resume_session else "resume",
+                resume_session or fork_session,
                 "--json",
                 "--skip-git-repo-check",
                 "-c",
@@ -108,6 +109,7 @@ class CodexRunner(CLIRunner):
         structured_schema: dict | None,
         effort: str | None = None,
         resume_session: str | None = None,
+        fork_session: str | None = None,
     ) -> list[str]:
         return self.build_command(
             "-",
@@ -115,6 +117,7 @@ class CodexRunner(CLIRunner):
             structured_schema=structured_schema,
             effort=effort,
             resume_session=resume_session,
+            fork_session=fork_session,
         )
 
     def parse(self, stdout, stderr, exit_code):

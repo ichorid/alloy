@@ -27,7 +27,11 @@ class TddState(TypedDict, total=False):
     baseline: list[dict[str, Any]] | None  # CheckResult dicts from prove_red
     baseline_repairs: int
     tests_reviews: int  # independent reviews of the tests so far
-    tests_session: dict[str, Any] | None  # {runner, session_id} of the last tests call
+    tests_session: dict[str, Any] | None  # {runner, model, session_id, revision} of the last tests call
+    # Branches of the tests session (see shared_verification.call_on_branch):
+    # {runner, model, session_id, forked_from_revision}.
+    implement_session: dict[str, Any] | None
+    verifier_session: dict[str, Any] | None
     test_fingerprints: dict[str, str]  # path -> sha256 of every test file after prove_red
 
     iteration: int

@@ -104,6 +104,7 @@ class RunContext:
         schema: dict[str, Any] | None = None,
         iteration: int = 0,
         resume_session: str | None = None,
+        fork_session: str | None = None,
     ) -> AgentResult:
         """Run one harness, always inside this task's worktree, always recorded.
 
@@ -112,8 +113,8 @@ class RunContext:
         Every attempt is recorded, so the ledger shows what actually ran.
 
         `resume_session` continues an earlier session of the primary runner;
-        a fallback is a different harness and cannot resume it, so the
-        fallback attempt always starts cold.
+        `fork_session` branches a new session off one. A fallback is a
+        different harness and can do neither, so it always starts cold.
         """
         # Runner circuit breaker: a harness that recently reported a usage,
         # spend or rate limit is skipped -- no ledger row, no budget -- and
@@ -124,9 +125,14 @@ class RunContext:
             return refused
         skipped_from = spec
         spec = self._skip_blocked(role, spec)
-        if spec is not skipped_from and resume_session is not None:
-            log.warning("%s: dropping resume session %s -- %s was skipped", role, resume_session, skipped_from.label)
-            resume_session = None
+        if spec is not skipped_from and (resume_session is not None or fork_session is not None):
+            log.warning(
+                "%s: dropping session %s -- %s was skipped",
+                role,
+                resume_session or fork_session,
+                skipped_from.label,
+            )
+            resume_session = fork_session = None
         result = await self._call_resuming_timeouts(
             role,
             spec,
@@ -134,6 +140,7 @@ class RunContext:
             schema=schema,
             iteration=iteration,
             resume_session=resume_session,
+            fork_session=fork_session,
         )
         # The primary and its fallbacks are one logical call: only the first
         # attempt that actually ran spends the run's agent-call budget.
@@ -182,6 +189,7 @@ class RunContext:
         schema: dict[str, Any] | None,
         iteration: int,
         resume_session: str | None,
+        fork_session: str | None = None,
         chain_free: bool = False,
     ) -> AgentResult:
         """One attempt of `spec`; a call Alloy stopped at the role's time limit
@@ -201,6 +209,7 @@ class RunContext:
             schema=schema,
             iteration=iteration,
             resume_session=resume_session,
+            fork_session=fork_session,
             chain_free=chain_free,
         )
         limits = getattr(self.recipe, "limits", None)
@@ -228,6 +237,18 @@ class RunContext:
                 chain_free=True,
             )
         return result
+
+    def can_branch(self, spec: RoleSpec, *, fork: bool) -> bool:
+        """Whether `spec`'s harness can fork (`fork=True`) or resume a session
+        right now: it supports it and the breaker has not marked it."""
+        if not fork:
+            return self._can_resume(spec)
+        try:
+            runner = self.registry.get(spec.runner)
+        except RunnerUnavailable:
+            return False
+        can_fork = getattr(runner, "can_fork", None)
+        return bool(can_fork and can_fork()) and not self._breaker_entries(spec)
 
     def _can_resume(self, spec: RoleSpec) -> bool:
         """The harness can continue a session and the breaker has not marked
@@ -473,6 +494,7 @@ class RunContext:
         schema: dict[str, Any] | None,
         iteration: int,
         resume_session: str | None = None,
+        fork_session: str | None = None,
         chain_free: bool = False,
     ) -> AgentResult:
         """One harness invocation, visible in `inflight_calls` while it runs
@@ -500,6 +522,8 @@ class RunContext:
                     extra["effort"] = spec.effort
                 if resume_session is not None and _accepts_kwarg(runner, "resume_session"):
                     extra["resume_session"] = resume_session
+                if fork_session is not None and _accepts_kwarg(runner, "fork_session"):
+                    extra["fork_session"] = fork_session
                 result = await runner.run(
                     prompt,
                     self.worktree.path,
@@ -520,16 +544,7 @@ class RunContext:
                     duration_s=0.0,
                     error=str(exc),
                 )
-            # Recorded in usage_json so `alloy logs` can show which calls
-            # continued an earlier session.
-            result.usage = {
-                **(result.usage or {}),
-                "resumed": resume_session is not None,
-            }
-            if result.session_id:
-                # Lets an operator resume the session by hand (warm cache)
-                # after a timed-out call, from the ledger alone.
-                result.usage["session_id"] = result.session_id
+            _record_session(result, resume_session, fork_session)
             if not result.ok and result.retry_at is None:
                 # journal 38: "resets 1:20am" is local wall-clock time; keep it
                 # timezone-aware so the scheduler can compare it with utcnow().
@@ -855,6 +870,17 @@ def _accepts_on_spawn(runner: Any) -> bool:
     """Runners without a subprocess (HTTP adapters, test stubs) need not know
     about `on_spawn`; only pass it to those that declare the parameter."""
     return _accepts_kwarg(runner, "on_spawn")
+
+
+def _record_session(result: AgentResult, resume_session: str | None, fork_session: str | None) -> None:
+    """usage_json says which calls continued or branched an earlier session
+    (`alloy logs`), and keeps every session id so an operator can resume one
+    by hand -- e.g. after a timed-out call, while its cache is still warm."""
+    result.usage = {**(result.usage or {}), "resumed": resume_session is not None}
+    if fork_session is not None:
+        result.usage["forked_from"] = fork_session
+    if result.session_id:
+        result.usage["session_id"] = result.session_id
 
 
 def timeout_resume_prompt(spec: RoleSpec) -> str:

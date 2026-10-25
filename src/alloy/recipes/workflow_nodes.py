@@ -74,6 +74,7 @@ from alloy.recipes.shared_verification import (
     _retry_at_iso,
     _unavailable_decision,
     call_in_session,
+    call_on_branch,
     classify,
     resumable_session,
 )
@@ -83,6 +84,7 @@ from alloy.worktree import is_test_path, tree_fingerprint
 BUDGET_LIMITS: tuple[str, ...] = ("max_agent_calls", "max_cheap_agent_calls", "max_iterations", "max_wall_time")
 """Breaches a budget-stop auto-land may follow. Other stops (consiliums,
 total checks) say something about the work, not just the clock."""
+
 
 def _make_node__capture_bugs(ctx):
     def _capture_bugs(role: str, result: AgentResult, state: TddState, iteration: int) -> list[dict[str, Any]]:
@@ -264,9 +266,14 @@ def _make_node_write_tests(ctx, _capture_bugs):
             "baseline_checks": [c.model_dump(mode="json") for c in output.baseline_checks],
         }
         if result.session_id:
+            # Every tests pass (first or repair) is a new revision: branches
+            # forked from an older one (implementer, verifier) are re-forked.
+            previous = state.get("tests_session") or {}
             update["tests_session"] = {
                 "runner": result.runner,
+                "model": result.model,
                 "session_id": result.session_id,
+                "revision": int(previous.get("revision") or 0) + 1,
             }
         return update
 
@@ -497,25 +504,37 @@ def _make_node_implement(ctx, _capture_bugs):
             }
         ctx.set_stage("implement", iteration=iteration)
         spec = ctx.role_spec("implement", state)
-        if ctx.recipe.complexity.routing == "live" and ctx.recipe.role("implement").tiered:
+        live_tiered = ctx.recipe.complexity.routing == "live" and ctx.recipe.role("implement").tiered
+        if live_tiered:
             ctx.set_dispatch_tier(state.get("complexity"))
         last_check = state.get("last_check")
         repairing = bool(last_check) and _is_red(last_check)
-        result = await ctx.call(
+        prompt_args = (
+            ctx.task_brief(),
+            ctx.bead.acceptance_criteria,
+            state.get("context", {}),
+            state.get("instructions", ""),
+            state.get("attempts", []),
+            last_check if repairing else None,
+        )
+        prompt_kwargs = dict(
+            baseline_checks=state.get("baseline_checks", []),
+            diff=ctx.diff() if repairing else "",
+            previous_instructions=state.get("last_instructions", "") if repairing else "",
+            memory=state.get("memory_block", ""),
+        )
+        # The tests writer implements, in its own branch of its session.
+        result, implement_session = await call_on_branch(
+            ctx,
             "implement",
             spec,
-            implement_prompt(
-                ctx.task_brief(),
-                ctx.bead.acceptance_criteria,
-                state.get("context", {}),
-                state.get("instructions", ""),
-                state.get("attempts", []),
-                last_check if repairing else None,
-                baseline_checks=state.get("baseline_checks", []),
-                diff=ctx.diff() if repairing else "",
-                previous_instructions=state.get("last_instructions", "") if repairing else "",
-                memory=state.get("memory_block", ""),
-            ),
+            implement_prompt(*prompt_args, **prompt_kwargs),
+            implement_prompt(*prompt_args, **prompt_kwargs, resumed=True),
+            own=state.get("implement_session"),
+            # Live complexity routing picks the implementer per tier; that
+            # choice wins over branching the tests writer's session.
+            tests_session=None if live_tiered else state.get("tests_session"),
+            read_only=False,
             iteration=iteration,
         )
         reported_bugs = _capture_bugs("implement", result, state, iteration)
@@ -541,6 +560,7 @@ def _make_node_implement(ctx, _capture_bugs):
                 "decision": _unavailable_decision("implement", result).model_dump(),
             }
         return {
+            "implement_session": implement_session,
             "implement_unavailable": False,
             "limit_breach": None,
             "reported_bugs": reported_bugs,

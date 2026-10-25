@@ -126,6 +126,11 @@ def _accepts_kwarg(func: Callable[..., Any], name: str) -> bool:
         return False
 
 
+def _declared(func: Callable[..., Any], values: dict[str, Any]) -> dict[str, Any]:
+    """The set (non-None) keywords of `values` that `func` declares."""
+    return {name: value for name, value in values.items() if value is not None and _accepts_kwarg(func, name)}
+
+
 async def _drain(stream: asyncio.StreamReader | None, sink: bytearray) -> None:
     if stream is None:
         return
@@ -241,6 +246,10 @@ class CLIRunner:
         None."""
         return None
 
+    def can_fork(self) -> bool:
+        """Whether this harness can branch a new session off an earlier one."""
+        return _accepts_kwarg(self.build_command, "fork_session")
+
     def _partial_session_id(self, stdout: str, stderr: str) -> str | None:
         """The session id in the output of a call that was stopped midway."""
         try:
@@ -248,37 +257,34 @@ class CLIRunner:
         except Exception:  # partial output: any parse failure means "unknown"
             return None
 
-    def _build_invocation(self, prompt, model, structured_schema, effort, resume_session, session_id=None):
+    def _build_invocation(
+        self, prompt, model, structured_schema, effort, resume_session, session_id=None, fork_session=None
+    ):
         model = model or self.default_model
         effective_prompt = self.build_prompt(prompt, structured_schema)
+        optional = {
+            "effort": effort,
+            "resume_session": resume_session,
+            "session_id": session_id,
+            "fork_session": fork_session,
+        }
         command = None
         stdin_prompt = None
         if len(effective_prompt) > self.stdin_prompt_threshold:
-            stdin_kwargs: dict[str, Any] = {
-                "model": model,
-                "structured_schema": structured_schema,
-            }
-            if effort is not None and _accepts_kwarg(self.build_command_stdin, "effort"):
-                stdin_kwargs["effort"] = effort
-            if resume_session is not None and _accepts_kwarg(self.build_command_stdin, "resume_session"):
-                stdin_kwargs["resume_session"] = resume_session
-            if session_id is not None and _accepts_kwarg(self.build_command_stdin, "session_id"):
-                stdin_kwargs["session_id"] = session_id
-            command = self.build_command_stdin(**stdin_kwargs)
+            command = self.build_command_stdin(
+                model=model,
+                structured_schema=structured_schema,
+                **_declared(self.build_command_stdin, optional),
+            )
             if command is not None:
                 stdin_prompt = effective_prompt.encode("utf-8")
         if command is None:
-            build_kwargs: dict[str, Any] = {
-                "model": model,
-                "structured_schema": structured_schema,
-            }
-            if effort is not None and _accepts_kwarg(self.build_command, "effort"):
-                build_kwargs["effort"] = effort
-            if resume_session is not None and _accepts_kwarg(self.build_command, "resume_session"):
-                build_kwargs["resume_session"] = resume_session
-            if session_id is not None and _accepts_kwarg(self.build_command, "session_id"):
-                build_kwargs["session_id"] = session_id
-            command = self.build_command(effective_prompt, **build_kwargs)
+            command = self.build_command(
+                effective_prompt,
+                model=model,
+                structured_schema=structured_schema,
+                **_declared(self.build_command, optional),
+            )
         return effective_prompt, command, stdin_prompt
 
     async def run(
@@ -292,6 +298,7 @@ class CLIRunner:
         structured_schema: dict | None = None,
         on_spawn: Callable[[int], None] | None = None,
         resume_session: str | None = None,
+        fork_session: str | None = None,
     ) -> AgentResult:
         """`on_spawn(pid)` fires once the harness exists (journal 9): the
         caller records the pid so the process group can still be killed if
@@ -299,14 +306,20 @@ class CLIRunner:
 
         `resume_session` continues an earlier harness session (the
         ``session_id`` of a previous :class:`AgentResult`) instead of
-        starting cold; adapters whose CLI cannot resume simply ignore it."""
+        starting cold; adapters whose CLI cannot resume simply ignore it.
+
+        `fork_session` starts a new session branched from an earlier one: it
+        has everything that session saw (warm cache) but the original stays
+        as it was. The result's `session_id` is the new branch."""
+        if fork_session is not None and not self.can_fork():
+            raise RunnerUnavailable(f"{self.name}: cannot fork a session")
         binary_path = self.resolve_binary()
         if binary_path is None:
             raise RunnerUnavailable(f"{self.name}: '{self.binary}' not found on PATH")
 
         assigned_session = None if resume_session else self.new_session_id()
         effective_prompt, command, stdin_prompt = self._build_invocation(
-            prompt, model, structured_schema, effort, resume_session, assigned_session
+            prompt, model, structured_schema, effort, resume_session, assigned_session, fork_session
         )
         argv = [binary_path, *command]
         digest = prompt_hash(effective_prompt)

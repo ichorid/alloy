@@ -59,12 +59,26 @@ def find_prompt(argv: list[str]) -> tuple[str, str]:
 
 def find_resume(argv: list[str]) -> str | None:
     """The session id passed to `--resume <id>` (claude, cursor) or
-    `exec resume <id>` (codex), if any."""
+    `exec resume <id>` (codex), if any -- not a fork."""
     if argv[:2] == ["exec", "resume"] and len(argv) > 2:
         return argv[2]
+    if "--fork-session" in argv:
+        return None
     for index, arg in enumerate(argv[:-1]):
         if arg == "--resume":
             return argv[index + 1]
+    return None
+
+
+def find_fork(argv: list[str]) -> str | None:
+    """The session id a call branches from: `exec fork <id>` (codex) or
+    `--resume <id> --fork-session` (claude)."""
+    if argv[:2] == ["exec", "fork"] and len(argv) > 2:
+        return argv[2]
+    if "--fork-session" in argv:
+        for index, arg in enumerate(argv[:-1]):
+            if arg == "--resume":
+                return argv[index + 1]
     return None
 
 
@@ -135,6 +149,9 @@ def main() -> int:
     }
     if resume is not None:
         record["resume"] = resume
+    fork = find_fork(argv)
+    if fork is not None:
+        record["fork"] = fork
     with (workdir / "calls.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record) + "\n")
 

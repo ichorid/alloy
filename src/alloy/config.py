@@ -311,6 +311,13 @@ class RecipeConfig:
     memory: MemorySpec = field(default_factory=MemorySpec)
     sandbox: SandboxSpec = field(default_factory=SandboxSpec)
     """Per-run bubblewrap namespace with a private tmpfs /tmp (alloy.sandbox)."""
+    branch_from_tests: bool = True
+    """`sessions.branch_from_tests`: the implementer and the verifier each run
+    in their own branch (fork) of the tests writer's session -- the agent that
+    wrote the tests writes the code, with its context and prompt cache, and
+    a separate branch of the same session checks it (see
+    alloy.recipes.shared_verification.call_on_branch). False: both start cold
+    with their own configured runners, as before."""
     graph: str | None = None
     """Registered graph (alloy.recipes.REGISTRY) this recipe runs; when unset,
     the graph is looked up by the recipe's own (file) name. Lets a project add
@@ -351,9 +358,13 @@ class RecipeConfig:
         graph = raw.get("graph")
         if graph is not None and (not isinstance(graph, str) or not graph.strip()):
             raise ConfigError(f"recipe 'graph' must be a registered graph name, got {graph!r}")
+        sessions = raw.get("sessions") or {}
+        if not isinstance(sessions, dict):
+            raise ConfigError(f"recipe 'sessions' must be a mapping, got {sessions!r}")
         return cls(
             name=raw.get("name") or (source.stem if source else "unnamed"),
             graph=graph.strip() if graph else None,
+            branch_from_tests=bool(sessions.get("branch_from_tests", True)),
             roles=roles,
             complexity=complexity,
             consilium=ConsiliumSpec.parse(raw.get("consilium")),

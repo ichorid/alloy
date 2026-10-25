@@ -33,11 +33,18 @@ class ClaudeRunner(CLIRunner):
         effort: str | None = None,
         resume_session: str | None = None,
         session_id: str | None = None,
+        fork_session: str | None = None,
     ) -> list[str]:
         args: list[str] = []
         if resume_session:
             # `--resume <session-id>` (checked against claude 2.1.280).
             args += ["--resume", resume_session]
+        elif fork_session:
+            # `--resume <id> --fork-session` branches a new session; the new
+            # id is the one given by `--session-id`.
+            args += ["--resume", fork_session, "--fork-session"]
+            if session_id:
+                args += ["--session-id", session_id]
         elif session_id:
             args += ["--session-id", session_id]
         args += ["-p", prompt, "--output-format", "json"]
@@ -58,6 +65,7 @@ class ClaudeRunner(CLIRunner):
         effort: str | None = None,
         resume_session: str | None = None,
         session_id: str | None = None,
+        fork_session: str | None = None,
     ) -> list[str]:
         # Reuse the command builder to retain ClaudeWriteRunner's permissions.
         args = self.build_command(
@@ -67,6 +75,7 @@ class ClaudeRunner(CLIRunner):
             effort=effort,
             resume_session=resume_session,
             session_id=session_id,
+            fork_session=fork_session,
         )
         del args[args.index("-p") + 1]
         return args
@@ -99,7 +108,9 @@ class ClaudeWriteRunner(ClaudeRunner):
 
     name = "claude-write"
 
-    def build_command(self, prompt, *, model, structured_schema, effort=None, resume_session=None, session_id=None):
+    def build_command(
+        self, prompt, *, model, structured_schema, effort=None, resume_session=None, session_id=None, fork_session=None
+    ):
         return [
             "--permission-mode",
             "bypassPermissions",
@@ -110,5 +121,6 @@ class ClaudeWriteRunner(ClaudeRunner):
                 effort=effort,
                 resume_session=resume_session,
                 session_id=session_id,
+                fork_session=fork_session,
             ),
         ]

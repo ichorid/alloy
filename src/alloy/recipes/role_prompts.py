@@ -278,6 +278,13 @@ Finish with one paragraph inside <summary> and </summary> tags describing what y
 {BUG_PROTOCOL}"""
 
 
+IMPLEMENT_RESUMED = (
+    "This continues your session: the task brief, acceptance criteria and repository "
+    "context are the ones you already have, and the failing tests are the ones in the "
+    "working tree. Your task now is to make them pass."
+)
+
+
 def implement_prompt(
     brief: str,
     acceptance: str,
@@ -290,11 +297,15 @@ def implement_prompt(
     diff: str = "",
     previous_instructions: str = "",
     memory: str = "",
+    resumed: bool = False,
 ) -> str:
-    task = [_task_layer(brief, acceptance)]
+    """`resumed` is the variant sent into a session that already holds the task:
+    a branch of the tests writer's session, or the implementer's own session on
+    a later iteration. It drops the run and task layers and says so."""
+    task = [] if resumed else [_task_layer(brief, acceptance)]
     if baseline_checks:
         task.append("## Checks that must go green\n" + _render_checks(baseline_checks))
-    volatile: list[str] = []
+    volatile: list[str] = [IMPLEMENT_RESUMED] if resumed else []
     if failed_check:
         # A repair iteration: a required check went red and the run came
         # straight back here without a judge call.
@@ -312,7 +323,7 @@ def implement_prompt(
     return assemble(
         IMPLEMENT_STATIC,
         _project_layer(memory),
-        _run_layer(context),
+        "" if resumed else _run_layer(context),
         "\n\n".join(task),
         "\n\n".join(volatile),
     ).text

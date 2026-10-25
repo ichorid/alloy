@@ -232,6 +232,18 @@ runners:
     writable_roots: [~/.cache, ~/.pub-cache]
 ```
 
+**One agent writes the tests and the code.** The tests writer's session is
+branched (forked) for the next roles: the implementer continues the agent
+that wrote (or repaired) the tests in its own branch, with the task, the
+tests and a warm prompt cache, and keeps that branch across iterations; the
+verifier is a second, read-only branch of the same tests session, so it shares
+the tests writer's context without seeing the implementer's turns. The tests
+writer is never told it will implement. Branches are re-forked when the tests
+are rewritten; a branch that cannot be opened falls back to the role's own
+chain, cold. Harnesses that cannot fork (cursor) keep the old behaviour, and
+live complexity routing keeps choosing the implementer by tier. Off:
+`sessions: {branch_from_tests: false}`.
+
 A call stopped at its role's time limit continues its own session once
 (`limits.timeout_resumes: 1`; 0 falls back at once) before the chain moves to
 the fallback: the session's prompt cache is still warm. Only a time-limit stop
