@@ -7,6 +7,7 @@ Claude is the only harness here with native structured output (``--json-schema``
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 from alloy.runners.base import CLIRunner
@@ -18,6 +19,11 @@ class ClaudeRunner(CLIRunner):
     default_model = "sonnet"
     supports_native_schema = True
 
+    def new_session_id(self) -> str | None:
+        # `--session-id <uuid>`: the id is known before the call ends, so a
+        # call stopped at the time limit can still be resumed.
+        return str(uuid.uuid4())
+
     def build_command(
         self,
         prompt: str,
@@ -26,11 +32,14 @@ class ClaudeRunner(CLIRunner):
         structured_schema: dict | None,
         effort: str | None = None,
         resume_session: str | None = None,
+        session_id: str | None = None,
     ) -> list[str]:
         args: list[str] = []
         if resume_session:
             # `--resume <session-id>` (checked against claude 2.1.280).
             args += ["--resume", resume_session]
+        elif session_id:
+            args += ["--session-id", session_id]
         args += ["-p", prompt, "--output-format", "json"]
         if model:
             args += ["--model", model]
@@ -48,6 +57,7 @@ class ClaudeRunner(CLIRunner):
         structured_schema: dict | None,
         effort: str | None = None,
         resume_session: str | None = None,
+        session_id: str | None = None,
     ) -> list[str]:
         # Reuse the command builder to retain ClaudeWriteRunner's permissions.
         args = self.build_command(
@@ -56,6 +66,7 @@ class ClaudeRunner(CLIRunner):
             structured_schema=structured_schema,
             effort=effort,
             resume_session=resume_session,
+            session_id=session_id,
         )
         del args[args.index("-p") + 1]
         return args
@@ -88,7 +99,7 @@ class ClaudeWriteRunner(ClaudeRunner):
 
     name = "claude-write"
 
-    def build_command(self, prompt, *, model, structured_schema, effort=None, resume_session=None):
+    def build_command(self, prompt, *, model, structured_schema, effort=None, resume_session=None, session_id=None):
         return [
             "--permission-mode",
             "bypassPermissions",
@@ -98,5 +109,6 @@ class ClaudeWriteRunner(ClaudeRunner):
                 structured_schema=structured_schema,
                 effort=effort,
                 resume_session=resume_session,
+                session_id=session_id,
             ),
         ]

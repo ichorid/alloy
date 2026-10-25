@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Protocol, runtime_checkable
 
-from alloy.models import AgentResult, RunnerUnavailable, clip, prompt_hash, utcnow
+from alloy.models import TIMED_OUT_KEY, AgentResult, RunnerUnavailable, clip, prompt_hash, utcnow
 from alloy.procs import terminate_process_tree
 from alloy.sandbox import wrap_command
 
@@ -126,6 +126,34 @@ def _accepts_kwarg(func: Callable[..., Any], name: str) -> bool:
         return False
 
 
+async def _drain(stream: asyncio.StreamReader | None, sink: bytearray) -> None:
+    if stream is None:
+        return
+    while chunk := await stream.read(65536):
+        sink.extend(chunk)
+
+
+async def _feed(stream: asyncio.StreamWriter | None, data: bytes) -> None:
+    if stream is None:
+        return
+    try:
+        stream.write(data)
+        await stream.drain()
+    except (BrokenPipeError, ConnectionResetError):
+        pass  # the harness exited without reading all of its prompt
+    finally:
+        stream.close()
+
+
+async def _settle_io(tasks: list[asyncio.Future], grace_s: float = 5.0) -> None:
+    """Let the pipe readers reach EOF after the harness was killed; a pipe a
+    surviving grandchild still holds open must not hang the call."""
+    _, pending = await asyncio.wait(tasks, timeout=grace_s)
+    for task in pending:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
 class CLIRunner:
     """Base adapter: builds argv, runs it, records raw output, normalizes the result.
 
@@ -205,7 +233,22 @@ class CLIRunner:
 
     # -- execution --------------------------------------------------------
 
-    def _build_invocation(self, prompt, model, structured_schema, effort, resume_session):
+    def new_session_id(self) -> str | None:
+        """A session id to start a fresh call under, for harnesses that accept
+        one up front (claude `--session-id`). Knowing the id before the call
+        ends is what lets a call stopped by the time limit be resumed later;
+        harnesses that print their id early (codex) or cannot resume return
+        None."""
+        return None
+
+    def _partial_session_id(self, stdout: str, stderr: str) -> str | None:
+        """The session id in the output of a call that was stopped midway."""
+        try:
+            return self._normalise_parsed(self.parse(stdout, stderr, -1))[3]
+        except Exception:  # partial output: any parse failure means "unknown"
+            return None
+
+    def _build_invocation(self, prompt, model, structured_schema, effort, resume_session, session_id=None):
         model = model or self.default_model
         effective_prompt = self.build_prompt(prompt, structured_schema)
         command = None
@@ -219,6 +262,8 @@ class CLIRunner:
                 stdin_kwargs["effort"] = effort
             if resume_session is not None and _accepts_kwarg(self.build_command_stdin, "resume_session"):
                 stdin_kwargs["resume_session"] = resume_session
+            if session_id is not None and _accepts_kwarg(self.build_command_stdin, "session_id"):
+                stdin_kwargs["session_id"] = session_id
             command = self.build_command_stdin(**stdin_kwargs)
             if command is not None:
                 stdin_prompt = effective_prompt.encode("utf-8")
@@ -231,6 +276,8 @@ class CLIRunner:
                 build_kwargs["effort"] = effort
             if resume_session is not None and _accepts_kwarg(self.build_command, "resume_session"):
                 build_kwargs["resume_session"] = resume_session
+            if session_id is not None and _accepts_kwarg(self.build_command, "session_id"):
+                build_kwargs["session_id"] = session_id
             command = self.build_command(effective_prompt, **build_kwargs)
         return effective_prompt, command, stdin_prompt
 
@@ -257,8 +304,9 @@ class CLIRunner:
         if binary_path is None:
             raise RunnerUnavailable(f"{self.name}: '{self.binary}' not found on PATH")
 
+        assigned_session = None if resume_session else self.new_session_id()
         effective_prompt, command, stdin_prompt = self._build_invocation(
-            prompt, model, structured_schema, effort, resume_session
+            prompt, model, structured_schema, effort, resume_session, assigned_session
         )
         argv = [binary_path, *command]
         digest = prompt_hash(effective_prompt)
@@ -287,20 +335,32 @@ class CLIRunner:
         except OSError as exc:
             raise RunnerUnavailable(f"{self.name}: cannot execute {binary_path}: {exc}") from exc
 
+        # Output is collected as it arrives, so a call stopped by the time
+        # limit still leaves what it printed -- codex announces its session id
+        # on the first line, which is what lets the call be resumed.
+        out_buf, err_buf = bytearray(), bytearray()
+        io_tasks = [
+            asyncio.ensure_future(_drain(process.stdout, out_buf)),
+            asyncio.ensure_future(_drain(process.stderr, err_buf)),
+        ]
+        if stdin_prompt is not None:
+            io_tasks.append(asyncio.ensure_future(_feed(process.stdin, stdin_prompt)))
         try:
             if on_spawn is not None:
                 on_spawn(process.pid)
-            raw_out, raw_err = await asyncio.wait_for(process.communicate(input=stdin_prompt), timeout=limit_s)
+            await asyncio.wait_for(asyncio.gather(process.wait(), *io_tasks), timeout=limit_s)
         except asyncio.TimeoutError:
             timed_out = True
-            raw_out, raw_err = b"", b""
             await terminate_process_tree(process)
+            await _settle_io(io_tasks)
         except BaseException:
             # Cancellation (operator stop, scheduler shutdown, SIGTERM): the
             # harness must die with us, not keep editing the worktree.
             await terminate_process_tree(process)
+            await _settle_io(io_tasks)
             raise
 
+        raw_out, raw_err = bytes(out_buf), bytes(err_buf)
         stdout = raw_out.decode("utf-8", "replace")
         stderr = raw_err.decode("utf-8", "replace")
         exit_code = -1 if timed_out else (process.returncode or 0)
@@ -319,10 +379,12 @@ class CLIRunner:
                 started_at=started,
                 ended_at=utcnow(),
                 duration_s=duration,
+                usage={TIMED_OUT_KEY: True},
                 log_path=log_path,
                 prompt_hash=digest,
                 prefix_hash=prefix,
                 error=f"timed out after {limit_s:.0f}s",
+                session_id=resume_session or assigned_session or self._partial_session_id(stdout, stderr),
             )
 
         text, structured, usage, session_id, failed = self._normalise_parsed(self.parse(stdout, stderr, exit_code))

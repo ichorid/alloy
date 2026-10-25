@@ -149,6 +149,10 @@ class Limits:
     `max_agent_calls`, and the rest never count toward this one."""
     max_cheap_agent_calls_by_tier: dict[str, int] = field(default_factory=dict)
     cheap_roles: tuple[str, ...] = DEFAULT_CHEAP_ROLES
+    timeout_resumes: int = 1
+    """How many times a call stopped at its role's time limit continues its
+    own session (warm prompt cache, its edits still in the tree) before the
+    chain moves on to the fallback. 0 = fall back at once, as before."""
 
     @classmethod
     def parse(cls, raw: dict[str, Any] | None) -> "Limits":
@@ -166,6 +170,7 @@ class Limits:
             max_cheap_agent_calls=int(raw.get("max_cheap_agent_calls", defaults.max_cheap_agent_calls)),
             max_cheap_agent_calls_by_tier=_tier_map(raw, "max_cheap_agent_calls_by_tier"),
             cheap_roles=tuple(cheap_roles or ()),
+            timeout_resumes=max(0, int(raw.get("timeout_resumes", defaults.timeout_resumes))),
         )
 
     def is_cheap_role(self, role: str) -> bool:

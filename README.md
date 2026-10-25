@@ -232,6 +232,11 @@ runners:
     writable_roots: [~/.cache, ~/.pub-cache]
 ```
 
+A call stopped at its role's time limit continues its own session once
+(`limits.timeout_resumes: 1`; 0 falls back at once) before the chain moves to
+the fallback: the session's prompt cache is still warm. Only a time-limit stop
+resumes; a failed call, or one that hit a token or usage limit, falls back.
+
 A harness Alloy has never heard of needs no code:
 
 ```yaml

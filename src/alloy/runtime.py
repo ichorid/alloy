@@ -30,6 +30,7 @@ from alloy.models import (
     ProjectSnapshot,
     RunnerUnavailable,
     is_unavailable,
+    timed_out,
     utcnow,
 )
 from alloy.paths import project_brief
@@ -126,7 +127,7 @@ class RunContext:
         if spec is not skipped_from and resume_session is not None:
             log.warning("%s: dropping resume session %s -- %s was skipped", role, resume_session, skipped_from.label)
             resume_session = None
-        result = await self._call_one(
+        result = await self._call_resuming_timeouts(
             role,
             spec,
             prompt,
@@ -160,7 +161,7 @@ class RunContext:
                 # push the run further past its wall-time limit.
                 return refused
             spec = self._skip_blocked(role, spec.fallback)
-            result = await self._call_one(
+            result = await self._call_resuming_timeouts(
                 role,
                 spec,
                 prompt,
@@ -171,6 +172,78 @@ class RunContext:
             )
             counted = counted or not is_unavailable(result)
         return result
+
+    async def _call_resuming_timeouts(
+        self,
+        role: str,
+        spec: RoleSpec,
+        prompt: str,
+        *,
+        schema: dict[str, Any] | None,
+        iteration: int,
+        resume_session: str | None,
+        chain_free: bool = False,
+    ) -> AgentResult:
+        """One attempt of `spec`; a call Alloy stopped at the role's time limit
+        then continues its own session (`limits.timeout_resumes` times, 1 by
+        default) before the chain falls back to a cold harness: the session
+        still has its prompt cache warm and knows what it already did.
+
+        Only a time-limit stop resumes. A harness that failed, or reported a
+        usage, spend or token limit, goes to the fallback as before -- resuming
+        a session that ran out of context or quota would just fail again. A
+        resumed attempt is part of the same logical call (no extra agent-call
+        budget) and is still refused once the run's wall time is spent."""
+        result = await self._call_one(
+            role,
+            spec,
+            prompt,
+            schema=schema,
+            iteration=iteration,
+            resume_session=resume_session,
+            chain_free=chain_free,
+        )
+        limits = getattr(self.recipe, "limits", None)
+        allowed = getattr(limits, "timeout_resumes", 0) if limits is not None else 0
+        resumes = 0
+        while timed_out(result) and result.session_id and resumes < allowed and self._can_resume(spec):
+            if self._refuse_call(role, spec) is not None:
+                return result
+            resumes += 1
+            log.warning(
+                "%s: %s stopped at its time limit; resuming its session %s (%d/%d) instead of starting cold",
+                role,
+                spec.label,
+                result.session_id,
+                resumes,
+                allowed,
+            )
+            result = await self._call_one(
+                role,
+                spec,
+                timeout_resume_prompt(spec),
+                schema=schema,
+                iteration=iteration,
+                resume_session=result.session_id,
+                chain_free=True,
+            )
+        return result
+
+    def _can_resume(self, spec: RoleSpec) -> bool:
+        """The harness can continue a session and the breaker has not marked
+        it unavailable since the call started."""
+        try:
+            runner = self.registry.get(spec.runner)
+        except RunnerUnavailable:
+            return False
+        if not _accepts_kwarg(runner, "resume_session"):
+            return False
+        try:
+            if "resume_session" not in inspect.signature(runner.build_command).parameters:
+                return False
+        except (TypeError, ValueError):
+            return False
+        return not self._breaker_entries(spec)
 
     def wall_time_breach(self) -> str | None:
         """The wall-time breach under the last budget window `check_limits`
@@ -453,6 +526,10 @@ class RunContext:
                 **(result.usage or {}),
                 "resumed": resume_session is not None,
             }
+            if result.session_id:
+                # Lets an operator resume the session by hand (warm cache)
+                # after a timed-out call, from the ledger alone.
+                result.usage["session_id"] = result.session_id
             if not result.ok and result.retry_at is None:
                 # journal 38: "resets 1:20am" is local wall-clock time; keep it
                 # timezone-aware so the scheduler can compare it with utcnow().
@@ -778,6 +855,17 @@ def _accepts_on_spawn(runner: Any) -> bool:
     """Runners without a subprocess (HTTP adapters, test stubs) need not know
     about `on_spawn`; only pass it to those that declare the parameter."""
     return _accepts_kwarg(runner, "on_spawn")
+
+
+def timeout_resume_prompt(spec: RoleSpec) -> str:
+    minutes = spec.timeout.total_seconds() / 60 if spec.timeout else None
+    limit = f" ({minutes:.0f} min)" if minutes else ""
+    return (
+        f"Alloy stopped your previous turn at this role's time limit{limit} before you finished. "
+        "The working tree still has every edit you made. Continue the same task from where you "
+        "stopped -- do not start over, and skip work you already finished. Keep any test runs short "
+        "and targeted. End with the final answer in exactly the format the task asked for."
+    )
 
 
 def _accepts_kwarg(runner: Any, name: str) -> bool:

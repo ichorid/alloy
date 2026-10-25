@@ -20,6 +20,7 @@ DEFAULT_ESTIMATE_STRUCTURED = {
 }
 
 ROLE_MARKERS = [
+    ("timeout_resume", "Alloy stopped your previous turn"),
     ("context", "You are gathering context"),
     ("estimate", "You are estimating how hard this task is"),
     ("tests_review", "You are an independent reviewer of the tests"),
@@ -100,6 +101,14 @@ def apply_side_effects(entry: dict) -> None:
         time.sleep(float(entry["sleep"]))
 
 
+def announce_thread(runner: str, entry: dict) -> None:
+    """Real codex announces its thread first, before doing any work -- a call
+    killed at the time limit has still printed it."""
+    if runner.startswith("codex"):
+        thread_id = str(entry.get("session_id", "fake-thread"))
+        print(json.dumps({"type": "thread.started", "thread_id": thread_id}), flush=True)
+
+
 def _is_error(entry: dict, exit_code: int) -> bool:
     return bool(entry["is_error"]) if "is_error" in entry else exit_code != 0
 
@@ -129,6 +138,7 @@ def main() -> int:
     with (workdir / "calls.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record) + "\n")
 
+    announce_thread(runner, entry)
     apply_side_effects(entry)
 
     text = entry.get("text", f"{runner} handled {role}")
@@ -155,8 +165,6 @@ def main() -> int:
             envelope["structured_output"] = structured
         print(json.dumps(envelope))
     elif runner.startswith("codex"):
-        thread_id = str(entry.get("session_id", "fake-thread"))
-        print(json.dumps({"type": "thread.started", "thread_id": thread_id}))
         if entry.get("codex_error") is not None:
             print(
                 json.dumps(

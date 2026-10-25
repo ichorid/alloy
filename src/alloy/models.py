@@ -277,6 +277,16 @@ UNAVAILABLE_KEY = "unavailable"
 """usage_json flag on a call whose harness never ran (see `is_unavailable`)."""
 
 
+TIMED_OUT_KEY = "timed_out"
+"""usage_json flag on a call Alloy stopped at the role's time limit (see `timed_out`)."""
+
+
+def timed_out(result: "AgentResult") -> bool:
+    """A call Alloy stopped at the role's time limit -- the harness itself
+    neither failed nor hit a usage, spend or token limit."""
+    return not result.ok and bool((result.usage or {}).get(TIMED_OUT_KEY))
+
+
 def is_unavailable(result: "AgentResult") -> bool:
     """A failed call that says nothing about the work: the harness was missing
     (exit 127) or reported a spend, session or rate limit (it names a
