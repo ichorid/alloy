@@ -21,6 +21,7 @@ from conftest import (
 )
 from support import load_config, make_harness
 
+import alloy
 from alloy import beads as bd
 from alloy.config import RoleSpec
 from alloy.engine import Engine, EngineError
@@ -316,6 +317,30 @@ async def test_an_unknown_recipe_is_refused_before_the_bead_is_claimed(engine, b
 
     assert engine.beads.show(bead_id).status == bd.STATUS_READY
     assert engine.store.latest_run_for_bead(bead_id) is None
+
+
+def _project_recipe(beads_project, name, extra=""):
+    builtin = (Path(alloy.__file__).parent / "recipes" / "tdd-loop.yaml").read_text(encoding="utf-8")
+    body = "\n".join(line for line in builtin.splitlines() if not line.startswith("name:"))
+    directory = beads_project / ".alloy" / "recipes"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{name}.yaml").write_text(f"name: {name}\n{extra}{body}\n", encoding="utf-8")
+
+
+def test_a_project_recipe_under_a_new_name_runs_the_graph_it_names(engine, beads_project):
+    _project_recipe(beads_project, "my-loop", extra="graph: tdd-loop\n")
+
+    config = engine.validate_recipe("my-loop")
+
+    assert config.name == "my-loop"
+    assert config.graph == "tdd-loop"
+
+
+def test_a_project_recipe_under_a_new_name_without_graph_is_refused(engine, beads_project):
+    _project_recipe(beads_project, "my-loop")
+
+    with pytest.raises(EngineError, match="unknown recipe graph 'my-loop'"):
+        engine.validate_recipe("my-loop")
 
 
 async def test_a_bead_with_a_live_run_cannot_be_started_twice(engine, beads_project):

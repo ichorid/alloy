@@ -7,16 +7,60 @@ last ``agent_message`` item; token usage arrives on ``turn.completed``.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from alloy.runners.base import CLIRunner
 
 
 class CodexRunner(CLIRunner):
+    """Codex with its own `workspace-write` sandbox.
+
+    That sandbox, left at its defaults, blocks every socket and makes
+    everything outside the checkout read-only. Implementers then cannot run
+    the project's tests: test runners bind localhost (flutter test), pg suites
+    and package managers need the network, and SDK/tool caches (~/.cache,
+    ~/.pub-cache, the Flutter SDK cache) must be writable. A codex implement
+    call once spent its whole 25-minute budget working around exactly that.
+    So the network is on by default and extra writable directories are
+    configurable per recipe::
+
+        runners:
+          codex:
+            network_access: true
+            writable_roots: [~/.cache, ~/.pub-cache]
+
+    claude-write runs without a sandbox at all; Alloy's per-run bubblewrap
+    namespace (alloy.sandbox) still gives every run a private /tmp.
+    """
+
     name = "codex"
     binary = "codex"
     default_model = None
     sandbox = "workspace-write"
+
+    def __init__(
+        self,
+        binary: str | None = None,
+        *,
+        network_access: bool = True,
+        writable_roots: list[str] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(binary, **kwargs)
+        self.network_access = bool(network_access)
+        self.writable_roots = [os.path.expanduser(str(root)) for root in (writable_roots or [])]
+
+    def _sandbox_args(self) -> list[str]:
+        """`-c` overrides for the workspace-write sandbox (none for read-only)."""
+        if self.sandbox != "workspace-write":
+            return []
+        args = ["-c", f"sandbox_workspace_write.network_access={'true' if self.network_access else 'false'}"]
+        if self.writable_roots:
+            # A TOML array of basic strings; JSON string quoting is valid TOML.
+            roots = ",".join(json.dumps(root) for root in self.writable_roots)
+            args += ["-c", f"sandbox_workspace_write.writable_roots=[{roots}]"]
+        return args
 
     def build_command(
         self,
@@ -52,6 +96,7 @@ class CodexRunner(CLIRunner):
             args += ["--model", model]
         if effort:
             args += ["-c", f'model_reasoning_effort="{effort}"']
+        args += self._sandbox_args()
         args += self.extra_args
         args.append(prompt)
         return args

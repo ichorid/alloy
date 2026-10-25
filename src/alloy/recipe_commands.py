@@ -34,6 +34,7 @@ def _recipe_entries(found, paths, repo_path, probe):
             "name": name,
             "config": str(path),
             "graph": name in recipes.REGISTRY,
+            "graph_name": name,
         }
         try:
             config = load_recipe(name, alloy_root=paths.shared_root, project=repo_path)
@@ -41,6 +42,8 @@ def _recipe_entries(found, paths, repo_path, probe):
             entry["error"] = str(exc)
             entries.append(entry)
             continue
+        entry["graph_name"] = config.graph or name
+        entry["graph"] = entry["graph_name"] in recipes.REGISTRY
         # The recipe's own `runners:` block (api keys, binaries) decides what
         # is available -- a bare registry would call Jev "missing" forever.
         registry = RunnerRegistry(config.runners, log_dir=paths.logs / "probes" / name)
@@ -118,7 +121,9 @@ def _show_recipe_entry(entry):
         console.print(f"  [red]{entry['error']}[/red]")
         return
     if not entry["graph"]:
-        console.print("  [yellow]no graph registered for this name[/yellow]")
+        console.print(f"  [yellow]no graph registered as '{entry.get('graph_name', entry['name'])}'[/yellow]")
+    elif entry.get("graph_name", entry["name"]) != entry["name"]:
+        console.print(f"  graph      {entry['graph_name']}")
     for role, info in entry.get("roles", {}).items():
         console.print(f"  {role:<10} {_role_label(info)}")
     complexity = entry["complexity"]

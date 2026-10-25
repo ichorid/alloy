@@ -213,7 +213,26 @@ roles:
 ```
 
 Drop a file in `~/.alloy/recipes/` or `<repo>/.alloy/recipes/` to override the
-built-in. A harness Alloy has never heard of needs no code:
+built-in of the same file name. The graph is looked up by the recipe's name, so
+a recipe under a new name says which registered graph it runs:
+
+```yaml
+name: tdd-loop-complex-codex
+graph: tdd-loop-complex-no-context
+```
+
+The codex runner's own `workspace-write` sandbox has the network on by default
+(test runners bind localhost; pg suites and package managers need it); extra
+directories it may write, such as SDK and tool caches, are per recipe:
+
+```yaml
+runners:
+  codex:
+    network_access: true
+    writable_roots: [~/.cache, ~/.pub-cache]
+```
+
+A harness Alloy has never heard of needs no code:
 
 ```yaml
 runners:

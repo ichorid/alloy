@@ -453,3 +453,23 @@ def test_builtin_recipe_memory_reviewer_role(recipe_name):
     reviewer = config.role("memory_reviewer")
     assert reviewer.runner == "cursor"
     assert reviewer.model == "composer-2.5"
+
+
+# ---------------------------------------------------------------------------
+# `graph:` -- which registered graph a recipe runs
+# ---------------------------------------------------------------------------
+
+
+def test_graph_is_unset_by_default():
+    assert RecipeConfig.parse({"name": "tdd-loop", "roles": {}}).graph is None
+
+
+def test_graph_names_a_registered_graph_for_a_new_recipe_name():
+    config = RecipeConfig.parse({"name": "my-loop", "graph": " tdd-loop-complex-no-context ", "roles": {}})
+    assert config.graph == "tdd-loop-complex-no-context"
+
+
+@pytest.mark.parametrize("bad", ["", "   ", 3, ["tdd-loop"]])
+def test_graph_must_be_a_non_empty_string(bad):
+    with pytest.raises(ConfigError, match="graph"):
+        RecipeConfig.parse({"name": "my-loop", "graph": bad, "roles": {}})

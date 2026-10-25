@@ -448,8 +448,9 @@ class Engine:
     def validate_recipe(self, name: str) -> RecipeConfig:
         """Both halves of a recipe must exist: the YAML and the graph builder."""
         try:
-            recipes.get(name)
-            return self.load_config(name)
+            config = self.load_config(name)
+            recipes.get(config.graph or name)
+            return config
         except (KeyError, ConfigError) as exc:
             raise EngineError(str(exc)) from exc
 
@@ -608,7 +609,7 @@ class Engine:
         read and judged dead/paused: taking the row over is CAS'd on it, so
         two adopters of the same orphan can never both execute it."""
         assert fresh or expect is not None, "adopting/resuming a run needs the (status, pid) it was judged on"
-        recipe = recipes.get(recipe_name)
+        recipe = recipes.get(self.load_config(recipe_name).graph or recipe_name)
         # One graph thread per run, not per bead: re-running a cancelled bead
         # must start from an empty graph, not inherit the abandoned one.
         thread_id = thread_id or run_id

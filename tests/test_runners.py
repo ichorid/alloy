@@ -608,3 +608,42 @@ async def test_claude_subthreshold_prompt_stays_in_argv(fake_harnesses, project,
     call = fake_harnesses.calls_for("implement")[0]
     assert _prompt_in_argv(call, prompt)
     assert not _claude_argv_uses_stdin_prompt_flag(call["argv"])
+
+
+def _sandbox_overrides(argv):
+    return [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "-c" and argv[i + 1].startswith("sandbox_")]
+
+
+def test_codex_workspace_write_sandbox_allows_the_network_by_default():
+    runner = RunnerRegistry().get("codex")
+    argv = runner.build_command("hi", model="gpt-6.1-sol", effort=None, structured_schema=None)
+    assert _sandbox_overrides(argv) == ["sandbox_workspace_write.network_access=true"]
+
+
+def test_codex_sandbox_settings_come_from_the_recipe_runners_block(monkeypatch):
+    monkeypatch.setenv("HOME", "/home/someone")
+    runner = RunnerRegistry({"codex": {"network_access": False, "writable_roots": ["~/.cache", "/opt/flutter"]}}).get(
+        "codex"
+    )
+    argv = runner.build_command("hi", model="gpt-6.1-sol", effort=None, structured_schema=None)
+    assert _sandbox_overrides(argv) == [
+        "sandbox_workspace_write.network_access=false",
+        'sandbox_workspace_write.writable_roots=["/home/someone/.cache","/opt/flutter"]',
+    ]
+
+
+def test_codex_resume_keeps_the_sandbox_settings():
+    runner = RunnerRegistry({"codex": {"writable_roots": ["/opt/flutter"]}}).get("codex")
+    argv = runner.build_command("hi", model=None, effort=None, structured_schema=None, resume_session="S")
+    assert argv[:3] == ["exec", "resume", "S"]
+    assert _sandbox_overrides(argv) == [
+        'sandbox_mode="workspace-write"',
+        "sandbox_workspace_write.network_access=true",
+        'sandbox_workspace_write.writable_roots=["/opt/flutter"]',
+    ]
+
+
+def test_codex_readonly_gets_no_workspace_write_overrides():
+    runner = RunnerRegistry({"codex-readonly": {"writable_roots": ["/opt/flutter"]}}).get("codex-readonly")
+    argv = runner.build_command("hi", model=None, effort=None, structured_schema=None)
+    assert not any(arg.startswith("sandbox_workspace_write") for arg in argv)
