@@ -11,7 +11,9 @@ Choose exactly one decision:
 Do not answer "done" if tests are failing. Do not answer "done" if the diff is empty.
 Judge the diff on merit: green tests that were weakened or skipped are not done.
 If the diff edits or deletes tests, say so in `reason` and decide whether the edit
-was justified by the acceptance criteria.
+was justified by the acceptance criteria. A change that only hides the failure (a guard,
+catch, retry, longer timeout, or a silenced analyzer or linter) is not done: answer "retry"
+and name the root cause to fix.
 
 ---
 

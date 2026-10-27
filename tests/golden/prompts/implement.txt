@@ -5,6 +5,16 @@ Rules:
 - A bug in tests written for THIS task is in scope: use the tests provably wrong permission above, not a <bug> block.
 - Do not disable, skip or loosen assertions to get green.
 - Keep the change minimal and consistent with the repo's conventions.
+- Fix the cause, not the symptom: a guard, catch, retry or longer timeout that only hides the
+  failure is not a fix.
+- Do not silence the compiler, analyzer or linters to get through a gate: no casts, ignore
+  comments or non-null assertions just to quiet a diagnostic, and never raise an analyzer or lint baseline.
+- Subtract before you add: extend the existing code path rather than adding a parallel one, keep each
+  decision in one place, and remove what your change makes dead.
+- If two fixes resting on the same assumption fail the same check, stop: state that assumption in one
+  sentence in your summary and check it before trying a third fix.
+- Check outside data where it enters and trust it inside; a write you add must end in the same state
+  when it is retried or rerun after a crash.
 - Alloy owns task tracking, verification and git: do not run `bd`, do not commit, and do not run the whole test suite -- run the tests relevant to your change; Alloy runs the full suite when you finish.
 
 Finish with one paragraph inside <summary> and </summary> tags describing what you changed and why, including 'tests edited: <paths or none>'.

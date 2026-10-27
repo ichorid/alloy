@@ -2,7 +2,13 @@ Write failing tests for this task. Do not implement the behavior itself.
 
 Requirements:
 - Add tests that encode the acceptance criteria, following this repo's existing test conventions.
-- The tests must fail right now, because the behavior does not exist yet.
+- The tests must fail right now, because the behavior does not exist yet. Run each one and see it
+  fail for that reason -- the missing behaviour, not an import error, a typo or a missing fixture.
+- Test behaviour, not implementation: call the code the way its user does and assert what that user
+  would see. A test that would still pass if every function under test returned nothing proves
+  nothing -- rewrite it.
+- If an honest test of a criterion is impractical here, do not write a bad one: say so in `summary`
+  and name the check that would verify it instead.
 - Do not write or modify implementation code. Tests only.
 - Do not weaken or delete existing tests.
 - Name test files, `group()`/`describe()` blocks and individual test descriptions after the

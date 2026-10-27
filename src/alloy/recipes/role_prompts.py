@@ -145,11 +145,23 @@ def estimate_prompt(
     ).text
 
 
+ROOT_CAUSE_RULE = """Fix the cause, not the symptom: a guard, catch, retry or longer timeout that only hides the
+  failure is not a fix."""
+
+NO_SILENCING_RULE = """Do not silence the compiler, analyzer or linters to get through a gate: no casts, ignore
+  comments or non-null assertions just to quiet a diagnostic, and never raise an analyzer or lint baseline."""
+
 TESTS_STATIC = f"""Write failing tests for this task. Do not implement the behavior itself.
 
 Requirements:
 - Add tests that encode the acceptance criteria, following this repo's existing test conventions.
-- The tests must fail right now, because the behavior does not exist yet.
+- The tests must fail right now, because the behavior does not exist yet. Run each one and see it
+  fail for that reason -- the missing behaviour, not an import error, a typo or a missing fixture.
+- Test behaviour, not implementation: call the code the way its user does and assert what that user
+  would see. A test that would still pass if every function under test returned nothing proves
+  nothing -- rewrite it.
+- If an honest test of a criterion is impractical here, do not write a bad one: say so in `summary`
+  and name the check that would verify it instead.
 - Do not write or modify implementation code. Tests only.
 - Do not weaken or delete existing tests.
 - Name test files, `group()`/`describe()` blocks and individual test descriptions after the
@@ -213,7 +225,8 @@ You did not write these tests and you have not seen the author's reasoning. Firs
 task and the acceptance criteria and decide, in your own words, what the behaviour must be.
 Only then read the tests and compare. Look for:
 - a criterion no test would fail without (missing coverage), or a test that would pass for
-  a wrong implementation (too weak, asserts nothing that matters);
+  a wrong implementation (too weak, asserts nothing that matters -- e.g. it would still pass
+  if every function under test returned nothing);
 - a test that encodes a different reading of the task than the acceptance criteria state,
   or invents requirements the task does not ask for;
 - a test that pins incidental implementation details and would reject a correct solution;
@@ -269,6 +282,14 @@ criteria -- and say so explicitly if you do.
 - A bug in tests written for THIS task is in scope: use the tests provably wrong permission above, not a <bug> block.
 - Do not disable, skip or loosen assertions to get green.
 - Keep the change minimal and consistent with the repo's conventions.
+- {ROOT_CAUSE_RULE}
+- {NO_SILENCING_RULE}
+- Subtract before you add: extend the existing code path rather than adding a parallel one, keep each
+  decision in one place, and remove what your change makes dead.
+- If two fixes resting on the same assumption fail the same check, stop: state that assumption in one
+  sentence in your summary and check it before trying a third fix.
+- Check outside data where it enters and trust it inside; a write you add must end in the same state
+  when it is retried or rerun after a crash.
 - Alloy owns task tracking, verification and git: do not run `bd`, do not commit, and do not run the whole \
 test suite -- run the tests relevant to your change; Alloy runs the full suite when you finish.
 
@@ -344,6 +365,11 @@ Rules:
 - Do not claim `done` without Alloy having run at least one real check this iteration that
   supports it. A `done` with no checks proposed is rejected and forced back into verification.
 - Do not disable, skip, or loosen checks to get green.
+- For a behaviour change, add or extend a test that fails without your change and see it fail for the
+  expected reason before you make it pass; for config, docs or investigation tasks a real build, lint
+  or run check is enough -- do not write a test that asserts nothing.
+- {ROOT_CAUSE_RULE}
+- {NO_SILENCING_RULE}
 - Alloy owns task tracking and git: do not run `bd`, do not commit.
 
 Answer with the structured output:
@@ -543,7 +569,9 @@ Choose exactly one decision:
 Do not answer "done" if tests are failing. Do not answer "done" if the diff is empty.
 Judge the diff on merit: green tests that were weakened or skipped are not done.
 If the diff edits or deletes tests, say so in `reason` and decide whether the edit
-was justified by the acceptance criteria."""
+was justified by the acceptance criteria. A change that only hides the failure (a guard,
+catch, retry, longer timeout, or a silenced analyzer or linter) is not done: answer "retry"
+and name the root cause to fix."""
 
 
 def judge_prompt(
@@ -745,7 +773,9 @@ and that is deliberate -- give your own honest reading.
 
 Identify the single most likely root cause of the failure and the concrete fix.
 Be specific about files and behavior. If you believe the tests are wrong rather than
-the implementation, say that explicitly."""
+the implementation, say that explicitly. If the history shows two or more fixes that rest on
+one shared assumption failing the same check, name that assumption in one sentence and say
+whether the evidence supports it -- it is the likeliest root cause."""
 
 
 def critic_prompt(evidence: str) -> str:

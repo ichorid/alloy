@@ -4,7 +4,9 @@ and that is deliberate -- give your own honest reading.
 
 Identify the single most likely root cause of the failure and the concrete fix.
 Be specific about files and behavior. If you believe the tests are wrong rather than
-the implementation, say that explicitly.
+the implementation, say that explicitly. If the history shows two or more fixes that rest on
+one shared assumption failing the same check, name that assumption in one sentence and say
+whether the evidence supports it -- it is the likeliest root cause.
 
 ---
 
