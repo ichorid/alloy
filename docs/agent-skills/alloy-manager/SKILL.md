@@ -48,6 +48,10 @@ Rule:
 
 Do this during the periodic grooming sweep too, to backfill any bead that slipped through without this metadata — not only at the moment a bead is first created.
 
+Before pre-seeding, size from evidence: check where the change lands and whether the data it needs already reaches that layer. A change that crosses packages, touches DB/pool code or adds a wire field is never `simple`; when unsure, leave `alloy_complexity` unset and let `estimate` decide.
+
+When you write or edit bead text yourself (QA follow-ups, auto-filed bug cleanup, splits), follow the product designer's rules: the text holds only the task and acceptance — no git/tracker instructions ("Commit: ...", "push", "do not close #N"), no hard-coded release versions; link issues with `issue-<N>` labels. In grooming sweeps, fix any bead that has such lines at the source (rewrite its description), don't rely on Alloy stripping them.
+
 ## Bead grooming
 Periodically (not just when asked) list open beads and check each for: obsolete/superseded (references a file or test a prior commit already deleted or fixed — verify in git log/current file state, never assume from the title), already fixed by a since-landed commit, or a near-duplicate of another open bead (same root cause, different file/report). For a genuine duplicate, append the evidence to the surviving bead via `bd note` before closing the other with `bd close <id> -m "..."` naming the survivor and your evidence, then `alloy reconcile <id> --apply`. Never bundle several small findings into one new merged bead — close-as-duplicate only, higher blast radius for no speed gain. If a bead is actively mid-run (uncommitted WIP in the checkout), stick to bd-level closes/notes during the sweep and leave file edits for when the checkout is clean.
 

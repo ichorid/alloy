@@ -146,6 +146,22 @@ skill's job from here — you don't run anything yourself.
 - Never write acceptance criteria you can't imagine a test asserting. If you
   catch yourself writing "correctly" or "properly" in an acceptance
   criterion, that's the tell that it isn't concrete yet.
+- Bead text is what the agents read, so it holds only the task: what to change,
+  where, and the acceptance criteria. Never write git or tracker instructions
+  into a bead (no "Commit: fix(...): ...", "push", "close/do not close #N",
+  commit-message trailers). Alloy commits a finished bead itself and the
+  agents' `.git` is read-only, so such a line makes an agent try anyway and
+  park the run. Link a bead to its issue with an `issue-<N>` label instead.
+- Never hard-code a version number into a ship or release bead ("bump to
+  7.50.0"): plans go stale. Say "the next patch/minor above the current one".
+  A pure "bump patch version + run the suites" ship bead uses the `ship`
+  script recipe when the project has one; a ship bead that also raises a
+  server floor or edits docs needs an agent recipe.
+- Size from evidence, not from the title: before setting
+  `alloy_complexity`, check where the change lands and whether the data it
+  needs already reaches that layer. A change that crosses packages (client +
+  server/API), touches DB/pool code or adds a wire field is never `simple`.
+  When unsure, leave `alloy_complexity` unset so Alloy's estimate runs.
 - If alloy-manager comes back saying a bead thrashed against its limits
   because it was too big or ambiguous, that's your bug to fix — re-decompose
   that specific bead, don't ask the manager to raise its limits as a
