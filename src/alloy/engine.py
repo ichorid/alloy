@@ -577,15 +577,15 @@ class Engine:
         return ctx
 
     def _linted_bead(self, bead: Bead, recipe_name: str, config: RecipeConfig, *, run_id: str, announce: bool) -> Bead:
-        """The bead as this run's agents see it (alloy.brief_lint): git-write
-        instruction lines dropped; bd keeps the original. A fresh run start
-        announces what was dropped (and, for a ship bead, its hard-coded
-        version numbers) in one `brief-lint` event."""
+        """The bead this run's agents see -- unchanged. The brief lint
+        (alloy.brief_lint) only reports: a fresh run start names git-write
+        instruction lines (and, for a ship bead, hard-coded version numbers)
+        in one `brief-lint` event, so the bead text gets fixed at its source."""
         result = lint_bead(bead, ship_context=is_ship_context(bead, recipe_name=recipe_name, graph=config.graph))
         if announce and (result.dropped or result.version_pins or result.suspicious):
             parts = []
             if result.dropped:
-                parts.append(f"dropped {len(result.dropped)} git-write instruction line(s) from the agents' brief")
+                parts.append(f"{len(result.dropped)} git-write instruction line(s) in the bead text -- fix the bead")
             if result.suspicious:
                 parts.append(f"{len(result.suspicious)} acceptance line(s) read like git-write instructions (kept)")
             if result.version_pins:
@@ -597,11 +597,11 @@ class Engine:
                 bead=bead.id,
                 run=run_id,
                 reason=reason,
-                dropped=result.dropped,
+                flagged=result.dropped,
                 suspicious=result.suspicious,
                 version_pins=result.version_pins,
             )
-        return result.bead
+        return bead
 
     def limit_state_reader(self):
         """harness -> its rate-limit state from local files, for the runner

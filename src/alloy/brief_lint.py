@@ -1,23 +1,21 @@
-"""Bead brief lint: what agents see of a bead, minus git-write instructions.
+"""Bead brief lint: flags git-write instructions in bead text.
 
 Alloy commits a finished bead itself, and a sandboxed agent's `.git` is
 read-only: a bead description saying "Commit: fix(client): ..." or "push to
-main" made agents try anyway and park the run. Such lines are dropped from
-the description and design the run's agents see (`Engine.build_context`);
-acceptance criteria are behaviour under test and are only reported. The bd
-text is never modified, and one `brief-lint` event per run names what was
-dropped or looked suspicious.
+main" made agents try anyway and park the run. The fix belongs in the bead
+text (the product designer's rules); this lint only reports. At each fresh run
+start `Engine` emits one `brief-lint` event naming the flagged lines; agents
+always see the bead unchanged and the bd text is never modified.
 
-Dropping is deliberately conservative: never inside fenced code blocks, and
-only when the line *starts* with the instruction (after a bullet, a number,
-or a "then"/"and"/"finally"/"please") -- the whole line goes. The one
-exception is a "Commit: <type>(<scope>): ..." clause after a sentence
-boundary mid-line, as bead descriptions usually end a paragraph with it: only
-that clause is cut out. A line that merely mentions commits -- "the commit
-message includes the bead id", "do not run git push" -- is kept.
+Detection is deliberately conservative: whole lines, outside fenced code
+blocks, only when the line *starts* with the instruction (after a bullet, a
+number, or a "then"/"and"/"finally"/"please"), plus a `Commit: <type>:` clause
+after a sentence boundary. A line that merely mentions commits -- "the commit
+message includes the bead id", "do not run git push" -- is not flagged.
+Acceptance criteria are only checked (`suspicious`).
 
-In a ship context (a version bump), hard-coded version numbers are flagged in
-the event as a warning, never dropped: the bump script decides the version.
+In a ship context (a version bump), hard-coded version numbers are flagged as
+a warning: the bump script decides the version.
 """
 
 from __future__ import annotations

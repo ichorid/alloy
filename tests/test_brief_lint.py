@@ -101,7 +101,7 @@ def test_a_clean_bead_is_returned_as_is():
     assert result.bead is bead and not result.dropped and not result.version_pins
 
 
-async def test_agents_never_see_the_dropped_line_and_one_event_names_it(
+async def test_the_lint_only_reports_and_agents_see_the_bead_unchanged(
     beads_project, alloy_home, fake_harnesses, monkeypatch
 ):
     engine = Engine.open(beads_project, alloy_home)
@@ -128,12 +128,12 @@ async def test_agents_never_see_the_dropped_line_and_one_event_names_it(
     assert result.outcome == "done"
     prompts = [call["prompt"] for call in fake_harnesses.calls_for("implement")]
     assert prompts and all("Add slugify() to mypkg." in p for p in prompts)
-    assert not any("Commit: fix(mypkg)" in p for p in prompts)
+    assert all("Commit: fix(mypkg): add slugify" in p for p in prompts), "the lint reports, it never rewrites"
     assert engine.beads.show(bead_id).description == description, "the stored bd text is not modified"
     events = [json.loads(line) for line in (alloy_home / "events.jsonl").read_text().splitlines()]
     lint = [e for e in events if e["event"] == "brief-lint"]
     assert len(lint) == 1
-    assert lint[0]["dropped"] == ["Commit: fix(mypkg): add slugify"]
+    assert lint[0]["flagged"] == ["Commit: fix(mypkg): add slugify"]
 
 
 # -- a commit clause in the middle of a line ----------------------------------
