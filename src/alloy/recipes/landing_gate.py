@@ -87,7 +87,7 @@ def _make_node_landing_gate(ctx):
     async def landing_gate(state: dict[str, Any]) -> dict[str, Any]:
         iteration = state.get("iteration", 0)
         ctx.set_stage("landing-gate", iteration=iteration)
-        selected = gate_checks(ctx.recipe.landing_gate, ctx.worktrees.changed_files(ctx.worktree))
+        selected = gate_checks(ctx.recipe.landing_gate, ctx.worktrees.changed_files(ctx.worktree, keep_lockfiles=True))
         records: list[dict[str, Any]] = []
         for spec in selected:
             request = CheckRequest(command=spec.cmd, purpose=spec.purpose or LANDING_GATE_PURPOSE, kind="regression")

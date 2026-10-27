@@ -37,6 +37,12 @@ at diff time rather than relying on .gitignore.
 """
 
 
+LOCKFILE_PATTERNS: frozenset[str] = frozenset(
+    {"uv.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock"}
+)
+"""The JUNK_PATTERNS that are dependency lockfiles."""
+
+
 def junk_pathspecs(patterns: tuple[str, ...] = JUNK_PATTERNS) -> list[str]:
     """`:(exclude)` pathspecs matching each junk pattern at any depth.
 
@@ -166,10 +172,16 @@ class WorktreeManager:
         proc = _git(args, worktree.path, check=False)
         return proc.stdout
 
-    def changed_files(self, worktree: Worktree) -> list[str]:
+    def changed_files(self, worktree: Worktree, *, keep_lockfiles: bool = False) -> list[str]:
+        """Every path the work touched since the base. A move counts under its
+        old and its new path (`--no-renames`): a check selected by the old
+        location must still see it. `keep_lockfiles` keeps lockfiles that the
+        junk filter otherwise hides -- a dependency change is a real touch of
+        its package for path-based selection (landing gate, escalation)."""
         _git(["add", "-A", "--intent-to-add"], worktree.path, check=False)
+        patterns = tuple(p for p in JUNK_PATTERNS if not (keep_lockfiles and p in LOCKFILE_PATTERNS))
         proc = _git(
-            ["diff", "--name-only", worktree.base_commit, "--", ".", *junk_pathspecs()],
+            ["diff", "--name-only", "--no-renames", worktree.base_commit, "--", ".", *junk_pathspecs(patterns)],
             worktree.path,
             check=False,
         )

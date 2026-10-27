@@ -266,9 +266,9 @@ landing_gate:
 
 Before a run finishes `done` -- after its final pass, or as a budget-landed
 stop -- Alloy lists the paths the bead's diff touches relative to the run's
-base, selects every entry with a matching glob (`**` spans directories, `*`
-stays within one) and runs those checks, each command once, on the final
-tree. Only this run's check cache, keyed on the unchanged tree, can answer one
+base -- a moved file under its old and its new path, and lockfiles too --
+selects every entry with a matching glob (`**` spans directories, `*` stays
+within one) and runs those checks, each command once, on the final tree. Only this run's check cache, keyed on the unchanged tree, can answer one
 without running it. A red gate check sends the run back to `implement` with
 the failing output as its instructions (a new iteration; fast-track's worker
 sees it as a failed check); when a limit is already spent -- a budget-landed

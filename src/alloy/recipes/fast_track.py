@@ -90,7 +90,9 @@ def escalation_reason(ctx: RunContext, state: FastTrackState) -> str | None:
                 f"{rounds} implement round(s) ended without done (escalate.after_iterations: {spec.after_iterations})"
             )
     if spec.when_packages_touched_over is not None:
-        roots = package_roots_touched(ctx.worktrees.changed_files(ctx.worktree), spec.package_roots)
+        roots = package_roots_touched(
+            ctx.worktrees.changed_files(ctx.worktree, keep_lockfiles=True), spec.package_roots
+        )
         if len(roots) > spec.when_packages_touched_over:
             return (
                 f"the diff touches {len(roots)} package roots ({', '.join(roots)}), over "

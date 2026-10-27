@@ -190,3 +190,70 @@ async def test_budget_landing_also_needs_the_gate(project, alloy_home, fake_harn
     assert "__interrupt__" in final, "a red gate must keep a budget stop from landing"
     assert final.get("budget_landed") is None
     assert GATE_CMD in final["__interrupt__"][0].value["reason"]
+
+
+# -- which paths count --------------------------------------------------------
+
+
+def _commit(project, files):
+    import subprocess
+
+    for path, content in files.items():
+        (project / path).parent.mkdir(parents=True, exist_ok=True)
+        (project / path).write_text(content)
+    subprocess.run(["git", "add", "-A"], cwd=project, check=True)
+    subprocess.run(["git", "commit", "-qm", "seed"], cwd=project, check=True)
+
+
+def _worktree(project):
+    from alloy.worktree import Worktree, WorktreeManager
+
+    manager = WorktreeManager(repo=project, root=project.parent / "wt")
+    return manager, Worktree("t-1", project, "", manager.head(project))
+
+
+@pytest.mark.parametrize("staged", [False, True])
+def test_a_moved_file_counts_under_its_old_and_new_path(project, staged):
+    import subprocess
+
+    _commit(project, {"packages/server/lib/x.dart": "class X {}\n" * 20})
+    manager, worktree = _worktree(project)
+    (project / "packages/shared").mkdir(parents=True)
+    if staged:
+        subprocess.run(["git", "mv", "packages/server/lib/x.dart", "packages/shared/x.dart"], cwd=project, check=True)
+    else:
+        (project / "packages/server/lib/x.dart").rename(project / "packages/shared/x.dart")
+
+    changed = manager.changed_files(worktree)
+    assert "packages/server/lib/x.dart" in changed and "packages/shared/x.dart" in changed
+
+
+def test_lockfiles_count_for_gate_selection_but_stay_out_of_the_default_list(project):
+    _commit(project, {"packages/web/pnpm-lock.yaml": "lockfileVersion: 1\n"})
+    manager, worktree = _worktree(project)
+    (project / "packages/web/pnpm-lock.yaml").write_text("lockfileVersion: 2\n")
+
+    assert manager.changed_files(worktree) == []
+    assert manager.changed_files(worktree, keep_lockfiles=True) == ["packages/web/pnpm-lock.yaml"]
+
+
+async def test_moving_a_file_out_of_a_gated_package_still_runs_its_gate(project, alloy_home, fake_harnesses):
+    _commit(project, {"mypkg/old.py": "OLD = 1\n" * 20})
+    move = {"write": [{"path": "other/old.py", "content": "OLD = 1\n" * 20}], "delete": ["mypkg/old.py"]}
+    fake_harnesses.configure(
+        {
+            "implement": [
+                {**run_check_entry("test -f other/old.py"), **move},
+                done_entry(reason="verified"),
+                run_check_entry("test -f other/old.py", reason="final pass check"),
+                done_entry(reason="final pass verified"),
+            ]
+        }
+    )
+    config = fast_track(["mypkg/**"])
+    config = replace(config, landing_gate=gate(["mypkg/**"], cmd="test -f other/old.py"))
+    harness = harness_for(project, alloy_home, config, "fast-track")
+    final = await harness.start()
+
+    assert final["outcome"] == "done"
+    assert any(c["purpose"] == "package suite" for c in final["checks"]), "the mypkg gate must have run"
