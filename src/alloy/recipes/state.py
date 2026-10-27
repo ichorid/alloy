@@ -68,6 +68,7 @@ class TddState(TypedDict, total=False):
     instruction -- the bead is self-contained and may take several such
     cycles, since anything a later check finds is a direct result of its own
     diff."""
+    landing_gate_route: str | None  # where the landing gate sent the run (alloy.recipes.landing_gate)
     final_pass: bool
     """True once the normal verify loop said done and Alloy sent the run back
     through the verify loop one more time asking for the broadest check
@@ -137,6 +138,7 @@ class FastTrackState(TypedDict, total=False):
     budget_extensions: int
     journal: Annotated[list[str], operator.add]
     final_pass: bool
+    landing_gate_route: str | None
 
     stage: str
     outcome: str | None

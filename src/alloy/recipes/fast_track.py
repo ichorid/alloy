@@ -30,6 +30,7 @@ from alloy.models import (
     ProjectMemory,
     is_unavailable,
 )
+from alloy.recipes.landing_gate import _make_node_landing_gate, route_after_landing_gate
 from alloy.recipes.role_prompts import fast_track_prompt
 from alloy.recipes.shared_verification import (
     _checks_of,
@@ -250,7 +251,8 @@ def build_graph(ctx: RunContext):
     start_final_pass = _make_node_start_final_pass(ctx)
     guard = _make_node_guard(ctx)
     _dispatch_critics = _make_node__dispatch_critics(ctx)
-    route = _make_node_route(_dispatch_critics)
+    gated = bool(ctx.recipe.landing_gate)
+    route = _make_node_route(_dispatch_critics, gated=gated)
     human_gate = _make_node_human_gate(ctx)
     route_after_human = _make_node_route_after_human()
     remember_check_hints = _make_node_remember_check_hints(ctx)
@@ -267,6 +269,11 @@ def build_graph(ctx: RunContext):
     graph.add_node("human_gate", human_gate)
     graph.add_node("finish", finish)
     graph.add_node("harvest", harvest)
+    if gated:
+        # A red gate check goes back to the worker as a failed check, as a
+        # new iteration; see alloy.recipes.landing_gate.
+        graph.add_node("landing_gate", _make_node_landing_gate(ctx))
+        graph.add_conditional_edges("landing_gate", route_after_landing_gate, ["finish", "implement", "human_gate"])
 
     graph.add_edge(START, "implement")
     graph.add_conditional_edges("implement", route_after_fast_implement, ["run_check", "guard", "human_gate"])
@@ -278,7 +285,11 @@ def build_graph(ctx: RunContext):
     graph.add_edge("start_final_pass", "implement")
     # `route`'s "critic"/"consilium" branch is unreachable here: this recipe
     # has no consilium.critics, so _dispatch_critics always returns "implement".
-    graph.add_conditional_edges("guard", route, ["implement", "human_gate", "finish", "start_final_pass"])
+    graph.add_conditional_edges(
+        "guard",
+        route,
+        ["implement", "human_gate", "finish", "start_final_pass", *(["landing_gate"] if gated else [])],
+    )
     graph.add_conditional_edges("human_gate", route_after_human, ["implement"])
     graph.add_edge("finish", "harvest")
     graph.add_edge("harvest", END)

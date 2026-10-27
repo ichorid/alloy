@@ -250,6 +250,31 @@ green run finishes `done` and is committed like any other bead.
 script or a night at the human gate does not spend it. A string entry is
 shorthand for `{cmd: ...}`.
 
+### `landing_gate:` -- checks the final tree must pass, by changed path
+
+A verifier may skip the suite of a package the diff touched, or a gate may
+have passed only on an earlier iteration's tree. A recipe's `landing_gate:`
+closes both holes for the tdd-loop family and fast-track:
+
+```yaml
+landing_gate:
+  - paths: ["packages/client/**"]
+    checks: [{cmd: "./scripts/run_tests.sh client-gates", purpose: "client gates", timeout_minutes: 15}]
+  - paths: ["packages/server/**", "packages/*/pubspec.yaml"]
+    checks: [{cmd: "./scripts/run_tests.sh server", purpose: "server suite", timeout_minutes: 30}]
+```
+
+Before a run finishes `done` -- after its final pass, or as a budget-landed
+stop -- Alloy lists the paths the bead's diff touches relative to the run's
+base, selects every entry with a matching glob (`**` spans directories, `*`
+stays within one) and runs those checks, each command once, on the final
+tree. Only this run's check cache, keyed on the unchanged tree, can answer one
+without running it. A red gate check sends the run back to `implement` with
+the failing output as its instructions (a new iteration; fast-track's worker
+sees it as a failed check); when a limit is already spent -- a budget-landed
+stop included -- the run parks at the human gate instead. Without
+`landing_gate` the graph is unchanged.
+
 The codex runner's own `workspace-write` sandbox has the network on by default
 (test runners bind localhost; pg suites and package managers need it); extra
 directories it may write, such as SDK and tool caches, are per recipe:

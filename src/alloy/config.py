@@ -333,6 +333,39 @@ def _parse_commands(raw: Any, *, where: str) -> tuple[CommandSpec, ...]:
     return tuple(CommandSpec.parse(item, where=where) for item in raw)
 
 
+@dataclass(frozen=True)
+class LandingGateEntry:
+    """One `landing_gate:` entry: when the bead's diff touches a path matching
+    any of `paths` (globs relative to the repository; `**` spans directories,
+    `*` stays within one), every one of `checks` must pass on the final tree
+    before the bead may finish done."""
+
+    paths: tuple[str, ...]
+    checks: tuple[CommandSpec, ...]
+
+    @classmethod
+    def parse(cls, raw: Any) -> "LandingGateEntry":
+        if not isinstance(raw, dict):
+            raise ConfigError(f"landing_gate entries must be mappings with 'paths' and 'checks': {raw!r}")
+        paths = raw.get("paths")
+        if isinstance(paths, str):
+            paths = [paths]
+        if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and p.strip() for p in paths):
+            raise ConfigError(f"landing_gate entry needs a non-empty 'paths' list of globs: {raw!r}")
+        checks = _parse_commands(raw.get("checks"), where="landing_gate checks")
+        if not checks:
+            raise ConfigError(f"landing_gate entry needs at least one entry in 'checks': {raw!r}")
+        return cls(paths=tuple(p.strip() for p in paths), checks=checks)
+
+
+def _parse_landing_gate(raw: Any) -> tuple[LandingGateEntry, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ConfigError(f"recipe 'landing_gate' must be a list of {{paths, checks}} entries, got {raw!r}")
+    return tuple(LandingGateEntry.parse(item) for item in raw)
+
+
 SCRIPT_GRAPH = "script"
 """The registered graph that runs `prepare:` and `checks:` with no agent."""
 
@@ -366,6 +399,10 @@ class RecipeConfig:
     """`script` graph only: commands run once, in order, before the checks."""
     checks: tuple[CommandSpec, ...] = ()
     """`script` graph only: checks run one by one, in order, never chained."""
+    landing_gate: tuple[LandingGateEntry, ...] = ()
+    """Checks a bead must pass on its final tree before it finishes done,
+    selected by the paths its diff touches (alloy.recipes.landing_gate).
+    Empty: no gate, the run finishes as before."""
 
     def role(self, name: str) -> RoleSpec:
         try:
@@ -413,6 +450,7 @@ class RecipeConfig:
             name=name,
             prepare=prepare,
             checks=checks,
+            landing_gate=_parse_landing_gate(raw.get("landing_gate")),
             graph=graph.strip() if graph else None,
             branch_from_tests=bool(sessions.get("branch_from_tests", True)),
             roles=roles,

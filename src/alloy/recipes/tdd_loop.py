@@ -89,6 +89,8 @@ from alloy.recipes.bug_triage import scope_gate as scope_gate
 from alloy.recipes.bug_triage import scope_merge_gate as scope_merge_gate
 from alloy.recipes.bug_triage import triage_reports as triage_reports
 from alloy.recipes.bug_triage import untriaged as untriaged
+from alloy.recipes.landing_gate import _make_node_landing_gate as _make_node_landing_gate
+from alloy.recipes.landing_gate import route_after_landing_gate as route_after_landing_gate
 from alloy.recipes.role_prompts import _TREE_SKIP_DIRS as _TREE_SKIP_DIRS
 from alloy.recipes.role_prompts import ACCEPTANCE_STATIC as ACCEPTANCE_STATIC
 from alloy.recipes.role_prompts import BEAD_DESIGN_OUTRANKS_MEMORY as BEAD_DESIGN_OUTRANKS_MEMORY
@@ -285,7 +287,8 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
     remember_lesson = _make_node_remember_lesson(ctx)
     gather_context = _make_node_gather_context(ctx, _capture_bugs, record_memory_contradictions)
     review_tests = _make_node_review_tests(ctx, _first_available)
-    route = _make_node_route(_dispatch_critics)
+    gated = bool(ctx.recipe.landing_gate)
+    route = _make_node_route(_dispatch_critics, gated=gated)
     finish = _make_node_finish(ctx, remember_check_hints, remember_calibration)
     harvest = _make_node_harvest(ctx, remember_lesson)
 
@@ -311,6 +314,9 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
     graph.add_node("human_gate", human_gate)
     graph.add_node("finish", finish)
     graph.add_node("harvest", harvest)
+    if gated:
+        graph.add_node("landing_gate", _make_node_landing_gate(ctx))
+        graph.add_conditional_edges("landing_gate", route_after_landing_gate, ["finish", "implement", "human_gate"])
 
     if skip_context:
         graph.add_edge(START, "estimate")
@@ -348,7 +354,11 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         ["guard", "verifier_step", "judge"],
     )
     graph.add_edge("judge", "guard")
-    graph.add_conditional_edges("guard", route, ["implement", "critic", "human_gate", "finish", "start_final_pass"])
+    graph.add_conditional_edges(
+        "guard",
+        route,
+        ["implement", "critic", "human_gate", "finish", "start_final_pass", *(["landing_gate"] if gated else [])],
+    )
     graph.add_edge("critic", "synthesize")
     graph.add_edge("synthesize", "implement")
     graph.add_conditional_edges("human_gate", route_after_human, ["implement", "tests"])

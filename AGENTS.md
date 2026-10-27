@@ -117,6 +117,12 @@ rerun; green on the rerun is noted as flaky) parks the bead at the human gate.
 Use it for ship/version-bump beads instead of an agent recipe -- see README
 "`graph: script`".
 
+A recipe's `landing_gate:` (`[{paths: [glob...], checks: [{cmd, purpose,
+timeout_minutes}]}]`) runs, on the final tree, every check whose globs match a
+path the bead's diff touches, before the bead may finish `done` (budget-landed
+included). A red gate check is one more implement iteration, or a human gate
+when a limit is spent.
+
 Ctrl-C or SIGTERM on `alloy run` stops the harness with it and leaves the run
 resumable (`alloy run <bead-id>` again picks it up). The detached scheduler
 logs to `<repo>/.alloy/scheduler.log`.
