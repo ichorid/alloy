@@ -295,6 +295,21 @@ cancelled, the checkout's edits kept and the bead left ready for the
 scheduler. A note on the bead and an `escalated` event say why. Without
 `escalate:` nothing changes.
 
+### Bead brief lint
+
+Alloy commits a finished bead itself, and a sandboxed agent's `.git` is
+read-only, so a bead line such as `Commit: fix(client): ...`, `git push
+origin main` or `Push to main` only makes an agent try and park. When a run
+builds the bead text its agents see (description, design, acceptance
+criteria), whole lines that *start* with such an instruction are dropped; the
+patterns live in `alloy.brief_lint.GIT_WRITE_LINE_PATTERNS`. Lines that merely
+mention commits ("the commit message includes the bead id", "do not run git
+push") and anything inside fenced code blocks are kept, and the bd text is
+never modified. A fresh run start emits one `brief-lint` event listing the
+dropped lines; for a ship bead (a `script` or `ship` recipe, or a title or
+label saying ship, release or version bump) it also lists hard-coded version
+numbers as a warning -- they stay in the brief.
+
 The codex runner's own `workspace-write` sandbox has the network on by default
 (test runners bind localhost; pg suites and package managers need it); extra
 directories it may write, such as SDK and tool caches, are per recipe:

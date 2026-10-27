@@ -39,6 +39,11 @@ EVENT_ESCALATED = "escalated"
 """A fast-track run outgrew its recipe (`escalate:`): the bead was rerouted to
 the target recipe, its run cancelled, its edits kept (informational)."""
 
+EVENT_BRIEF_LINT = "brief-lint"
+"""A run start dropped git-write instruction lines from the bead text agents
+see (`dropped`), or found hard-coded versions in a ship bead (`version_pins`);
+the bd text itself is unchanged (warning)."""
+
 # Events that mean "somebody has to look"; the rest are informational.
 ATTENTION_EVENTS = frozenset({EVENT_NEEDS_HUMAN, EVENT_FAILED, EVENT_STALLED})
 

@@ -68,7 +68,10 @@ Never hand a whole feature to Alloy as one bead. Decompose first:
                         --acceptance "<one concrete, testable criterion>"
    ```
    Write acceptance criteria as something a test can check, not a paraphrase
-   of the spec section. The `judge`/`guard` step in the recipe only accepts
+   of the spec section. Never tell the agent to commit or push ("Commit:
+   fix(...)", "git push", "push to main"): Alloy commits, and such lines are
+   dropped from the agents' brief with a `brief-lint` event. In a ship bead,
+   let the bump script pick the version instead of hard-coding one. The `judge`/`guard` step in the recipe only accepts
    `done` when verification is objectively green — vague acceptance text just
    burns iterations against the bead's limits.
 5. Optionally suggest a check hint. Alloy never runs it by itself; the

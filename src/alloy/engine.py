@@ -23,9 +23,10 @@ from langgraph.types import Command
 from alloy import beads as bd
 from alloy import recipes
 from alloy.beads import Bead, BeadsClient
+from alloy.brief_lint import is_ship_context, lint_bead
 from alloy.checkpoints import has_pending_interrupt, open_checkpointer, read_checkpoint
 from alloy.config import ConfigError, RecipeConfig, load_recipe
-from alloy.events import EVENT_BUDGET_LANDED, EVENT_ESCALATED
+from alloy.events import EVENT_BRIEF_LINT, EVENT_BUDGET_LANDED, EVENT_ESCALATED
 from alloy.models import Outcome
 from alloy.outbox import deliver_pending
 from alloy.paths import AlloyPaths
@@ -550,6 +551,7 @@ class Engine:
                 )
         log_dir = self.paths.run_logs(run_id)
         log_dir.mkdir(parents=True, exist_ok=True)
+        bead = self._linted_bead(bead, recipe_name, config, run_id=run_id, announce=fresh)
         branch = worktrees.current_branch() or "HEAD"
         checkout_note = (
             f"This run works in place: directly in the primary checkout, on branch `{branch}`, "
@@ -573,6 +575,30 @@ class Engine:
             limit_state=self.limit_state_reader(),
         )
         return ctx
+
+    def _linted_bead(self, bead: Bead, recipe_name: str, config: RecipeConfig, *, run_id: str, announce: bool) -> Bead:
+        """The bead as this run's agents see it (alloy.brief_lint): git-write
+        instruction lines dropped; bd keeps the original. A fresh run start
+        announces what was dropped (and, for a ship bead, its hard-coded
+        version numbers) in one `brief-lint` event."""
+        result = lint_bead(bead, ship_context=is_ship_context(bead, recipe_name=recipe_name, graph=config.graph))
+        if announce and (result.dropped or result.version_pins):
+            parts = []
+            if result.dropped:
+                parts.append(f"dropped {len(result.dropped)} git-write instruction line(s) from the agents' brief")
+            if result.version_pins:
+                parts.append("hard-coded version(s) in a ship bead: " + ", ".join(result.version_pins))
+            reason = "; ".join(parts)
+            log.warning("%s: brief lint: %s", bead.id, reason)
+            self.store.events.emit(
+                EVENT_BRIEF_LINT,
+                bead=bead.id,
+                run=run_id,
+                reason=reason,
+                dropped=result.dropped,
+                version_pins=result.version_pins,
+            )
+        return result.bead
 
     def limit_state_reader(self):
         """harness -> its rate-limit state from local files, for the runner
