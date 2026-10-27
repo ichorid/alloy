@@ -296,7 +296,10 @@ out). When one fires, the run ends and the bead is rerouted exactly as
 `alloy reroute <bead> <to>` does: the target recipe is pinned, the run booked
 cancelled, the checkout's edits kept and the bead left ready for the
 scheduler. A note on the bead and an `escalated` event say why. Without
-`escalate:` nothing changes.
+`escalate:` nothing changes. `to` must name a known recipe other than the
+recipe itself (checked when the recipe loads), and a target that has its own
+`escalate:` block is refused at reroute time -- the run fails with the reason
+instead of passing the bead back and forth.
 
 ### Bead brief lint
 

@@ -502,12 +502,15 @@ class RecipeConfig:
                 f"recipe '{name}' runs the script graph, which has no landing gate: "
                 "put those commands in its 'checks' instead of 'landing_gate'"
             )
+        escalate = EscalateSpec.parse(raw.get("escalate"))
+        if escalate is not None and escalate.to == name:
+            raise ConfigError(f"recipe '{name}' cannot escalate to itself")
         return cls(
             name=name,
             prepare=prepare,
             checks=checks,
             landing_gate=landing_gate,
-            escalate=EscalateSpec.parse(raw.get("escalate")),
+            escalate=escalate,
             graph=graph.strip() if graph else None,
             branch_from_tests=bool(sessions.get("branch_from_tests", True)),
             roles=roles,
@@ -556,4 +559,8 @@ def load_recipe(name: str, *, alloy_root: Path | None = None, project: Path | No
     if not isinstance(raw, dict):
         raise ConfigError(f"recipe file {path} must contain a mapping")
     raw.setdefault("name", name)
-    return RecipeConfig.parse(raw, source=path)
+    config = RecipeConfig.parse(raw, source=path)
+    if config.escalate is not None and config.escalate.to not in available:
+        known = ", ".join(sorted(available))
+        raise ConfigError(f"recipe '{name}' escalates to unknown recipe '{config.escalate.to}'; available: {known}")
+    return config

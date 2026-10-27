@@ -164,3 +164,46 @@ async def test_escalation_reroutes_like_alloy_reroute(beads_project, alloy_home,
     assert len(escalated) == 1 and escalated[0]["to"] == TARGET and escalated[0]["from"] == "fast-track"
     notes = json.dumps(engine.beads._show_rows(bead_id))
     assert f"escalated from fast-track to {TARGET}" in notes
+
+
+# -- no reroute loops ---------------------------------------------------------
+
+
+def test_escalating_to_itself_is_a_config_error():
+    with pytest.raises(ConfigError, match="itself"):
+        RecipeConfig.parse({"name": "fast-track", "escalate": {"after_iterations": 1, "to": "fast-track"}})
+
+
+def test_the_escalation_target_must_be_a_known_recipe_at_load_time(tmp_path):
+    recipes_dir = tmp_path / ".alloy" / "recipes"
+    recipes_dir.mkdir(parents=True)
+    (recipes_dir / "ft-unknown.yaml").write_text(
+        "graph: fast-track\nescalate: {after_iterations: 1, to: no-such-recipe}\n", encoding="utf-8"
+    )
+    (recipes_dir / "ft-known.yaml").write_text(
+        f"graph: fast-track\nescalate: {{after_iterations: 1, to: {TARGET}}}\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match="no-such-recipe"):
+        load_recipe("ft-unknown", project=tmp_path)
+    assert load_recipe("ft-known", project=tmp_path).escalate.to == TARGET
+
+
+async def test_a_target_that_escalates_itself_fails_the_run_instead_of_cycling(
+    beads_project, alloy_home, fake_harnesses, monkeypatch
+):
+    config = escalating(after_iterations=1)
+    target = replace(
+        load_config(),
+        escalate=RecipeConfig.parse({"name": TARGET, "escalate": {"after_iterations": 1, "to": "fast-track"}}).escalate,
+    )
+    engine = Engine.open(beads_project, alloy_home)
+    monkeypatch.setattr(engine, "load_config", lambda name: config if name == "fast-track" else target)
+    fake_harnesses.configure({"implement": [retry_entry(1), retry_entry(2)]})
+    bead_id = bd_create(beads_project, "one-line fix", alloy_recipe="fast-track")
+
+    result = await engine.run(bead_id)
+
+    assert result.outcome == "failed"
+    assert "escalate" in result.reason and TARGET in result.reason
+    bead = engine.beads.show(bead_id)
+    assert bead.recipe == "fast-track", "nothing was rerouted"

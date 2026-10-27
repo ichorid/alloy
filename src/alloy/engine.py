@@ -1025,7 +1025,10 @@ class Engine:
         target = str(reroute.get("recipe") or "")
         why = str(reroute.get("reason") or "")
         try:
-            self.validate_recipe(target)
+            if self.validate_recipe(target).escalate is not None:
+                # A target that escalates in turn could hand the bead back
+                # and forth forever; stop here instead.
+                raise EngineError(f"recipe '{target}' has its own `escalate` block")
         except EngineError as exc:
             reason = f"escalation to {target!r} refused: {exc}"
             if not self.store.finish_run(
