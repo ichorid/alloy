@@ -635,13 +635,15 @@ class RunContext:
 
     # -- deterministic work -----------------------------------------------
 
-    async def run_check(self, request: CheckRequest) -> CheckResult:
+    async def run_check(self, request: CheckRequest, *, timeout_s: float | None = None) -> CheckResult:
         """Run one check -- or, when this run already saw the exact same
         command pass against the same worktree fingerprint, return that
         passing result again (`cached=True`) without spending wall time.
 
         Only passes are reused, and only when the check itself left the tree
-        as it found it; a failure always re-runs."""
+        as it found it; a failure always re-runs. `timeout_s` overrides
+        `verification.max_command_timeout_minutes` for an operator-declared
+        command (a `script` recipe's own `timeout_minutes`)."""
         index = len(list(self.log_dir.glob("check-*.log"))) if self.log_dir.is_dir() else 0
         path = getattr(self.worktree, "path", None)
         before = await asyncio.to_thread(tree_fingerprint, path) if path is not None else ""
@@ -652,7 +654,7 @@ class RunContext:
         result = await run_check(
             request,
             self.worktree.path,
-            timeout_s=self.recipe.verification.max_command_timeout_minutes * 60,
+            timeout_s=self.recipe.verification.max_command_timeout_minutes * 60 if timeout_s is None else timeout_s,
             log_dir=self.log_dir,
             index=index,
         )

@@ -31,6 +31,10 @@ EVENT_BUDGET_LANDED = "budget-landed"
 """A budget-stopped run landed as done on all-green checks (informational;
 the bead carries the `budget-landed` label for a later audit)."""
 
+EVENT_FLAKY_CHECK = "flaky-check"
+"""A `script` recipe check was red once and green on its isolated rerun
+(informational; the bead carries a note naming both logs)."""
+
 # Events that mean "somebody has to look"; the rest are informational.
 ATTENTION_EVENTS = frozenset({EVENT_NEEDS_HUMAN, EVENT_FAILED, EVENT_STALLED})
 

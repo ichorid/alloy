@@ -10,7 +10,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Any, Callable, NamedTuple
 
-from alloy.recipes import fast_track, tdd_loop
+from alloy.recipes import fast_track, script, tdd_loop
 
 
 class Recipe(NamedTuple):
@@ -70,6 +70,13 @@ REGISTRY: dict[str, Recipe] = {
         description="Single-role autonomous loop: one agent implements, proposes and runs its "
         "own real verification commands, and self-judges done/retry -- for simple beads or "
         "beads TDD fits poorly",
+    ),
+    "script": Recipe(
+        name="script",
+        build_graph=script.build_graph,
+        initial_state=script.initial_state,
+        description="No agent: the recipe's prepare commands, then each of its checks on its own "
+        "(one isolated rerun marks a flaky check); for ship/version-bump beads",
     ),
 }
 

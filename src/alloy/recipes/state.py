@@ -149,6 +149,38 @@ class FastTrackState(TypedDict, total=False):
     decision: dict[str, Any] | None
 
 
+class ScriptState(TypedDict, total=False):
+    """State for the `script` graph: no agent, just the recipe's `prepare:`
+    commands and `checks:` run in order. The indices are the resume points --
+    each command is its own graph step, so a crash or a human resume never
+    runs a finished prepare command (a version bump) a second time."""
+
+    bead_id: str
+    run_id: str
+    title: str
+
+    iteration: int
+    prepare_index: int  # the next `prepare:` command to run
+    check_index: int  # the next `checks:` entry to run
+    prepared: Annotated[list[dict[str, Any]], operator.add]  # CheckResult dicts of prepare commands
+    checks: Annotated[list[dict[str, Any]], operator.add]  # CheckResult dicts, reruns included
+    last_check: dict[str, Any] | None
+    flaky: Annotated[list[str], operator.add]  # commands red once, green on the isolated rerun
+
+    instructions: str
+    human_note: str
+    budget_extensions: int
+    retries_on_tier: int
+    stage: str
+    decision: dict[str, Any] | None
+    outcome: str | None
+    outcome_reason: str
+    limit_hit: str | None
+    limit_breach: str | None
+    resume_to: str | None
+    resume_target: str | None
+
+
 class CriticInput(TypedDict):
     """Each critic sees the same evidence and nothing from its peers."""
 

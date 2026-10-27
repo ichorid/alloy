@@ -110,6 +110,13 @@ that vanishes with the run. `alloy status --json` shows it under `sandbox`;
 `ALLOY_SANDBOX=off` turns it off everywhere. A docker container cannot see
 files under the private /tmp: list such paths in `sandbox.share`.
 
+A recipe with `graph: script` calls no agent: it runs its `prepare:` commands,
+then each `checks:` entry (`{cmd, purpose, timeout_minutes}`) on its own, and
+finishes `done` when all are green. A check red twice (it gets one isolated
+rerun; green on the rerun is noted as flaky) parks the bead at the human gate.
+Use it for ship/version-bump beads instead of an agent recipe -- see README
+"`graph: script`".
+
 Ctrl-C or SIGTERM on `alloy run` stops the harness with it and leaves the run
 resumable (`alloy run <bead-id>` again picks it up). The detached scheduler
 logs to `<repo>/.alloy/scheduler.log`.

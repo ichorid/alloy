@@ -221,6 +221,35 @@ name: tdd-loop-complex-codex
 graph: tdd-loop-complex-no-context
 ```
 
+### `graph: script` -- no agent at all
+
+Work that needs no judgement (a "ship" bead: bump the version, run the full
+regression) runs on the `script` graph. The recipe declares the commands;
+Alloy runs them and no agent is ever called:
+
+```yaml
+name: ship
+graph: script
+prepare: [{cmd: "bash scripts/bump_client_version.sh", purpose: "bump client patch version"}]
+checks:
+  - {cmd: "./scripts/run_tests.sh client-gates", purpose: "client gates", timeout_minutes: 15}
+  - {cmd: "./scripts/run_tests.sh server", purpose: "server suite", timeout_minutes: 30}
+limits: {max_wall_time_minutes: 60}
+```
+
+`prepare:` commands run once, in order; a red one parks the run at the human
+gate with its output (a resume runs it again, never an earlier one). Each
+`checks:` entry then runs on its own -- never chained -- through the same
+check runner, sandbox and `check-N-*.log` files as the agent recipes, with its
+own `timeout_minutes` (default `verification.max_command_timeout_minutes`). A
+red check is rerun once in isolation: green there is recorded as flaky (a bead
+note naming both logs and a `flaky-check` event) and the run goes on; red again
+parks the run naming the check and its log, and a resume reruns that check. A
+green run finishes `done` and is committed like any other bead.
+`max_wall_time_minutes` counts check time only, so a queue wait in a wrapper
+script or a night at the human gate does not spend it. A string entry is
+shorthand for `{cmd: ...}`.
+
 The codex runner's own `workspace-write` sandbox has the network on by default
 (test runners bind localhost; pg suites and package managers need it); extra
 directories it may write, such as SDK and tool caches, are per recipe:

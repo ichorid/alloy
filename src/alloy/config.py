@@ -299,6 +299,45 @@ class MemorySpec:
 
 
 @dataclass(frozen=True)
+class CommandSpec:
+    """One operator-declared shell command (a `script` recipe's `prepare:` or
+    `checks:` entry). Alloy runs it as written; no agent ever chooses it."""
+
+    cmd: str
+    purpose: str = ""
+    timeout_minutes: float | None = None
+    """None: `verification.max_command_timeout_minutes`."""
+
+    @classmethod
+    def parse(cls, raw: Any, *, where: str) -> "CommandSpec":
+        if isinstance(raw, str):
+            raw = {"cmd": raw}
+        if not isinstance(raw, dict):
+            raise ConfigError(f"{where} entries must be a command string or a mapping with 'cmd': {raw!r}")
+        cmd = raw.get("cmd")
+        if not isinstance(cmd, str) or not cmd.strip():
+            raise ConfigError(f"{where} entry needs a non-empty 'cmd': {raw!r}")
+        timeout = raw.get("timeout_minutes")
+        try:
+            timeout = float(timeout) if timeout is not None else None
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"{where} entry has an invalid timeout_minutes: {timeout!r}") from exc
+        return cls(cmd=cmd.strip(), purpose=str(raw.get("purpose") or ""), timeout_minutes=timeout)
+
+
+def _parse_commands(raw: Any, *, where: str) -> tuple[CommandSpec, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ConfigError(f"recipe '{where}' must be a list of commands, got {raw!r}")
+    return tuple(CommandSpec.parse(item, where=where) for item in raw)
+
+
+SCRIPT_GRAPH = "script"
+"""The registered graph that runs `prepare:` and `checks:` with no agent."""
+
+
+@dataclass(frozen=True)
 class RecipeConfig:
     name: str
     roles: dict[str, RoleSpec]
@@ -323,6 +362,10 @@ class RecipeConfig:
     the graph is looked up by the recipe's own (file) name. Lets a project add
     a recipe under a new name (`graph: tdd-loop-complex-no-context`) instead of
     shadowing a built-in file."""
+    prepare: tuple[CommandSpec, ...] = ()
+    """`script` graph only: commands run once, in order, before the checks."""
+    checks: tuple[CommandSpec, ...] = ()
+    """`script` graph only: checks run one by one, in order, never chained."""
 
     def role(self, name: str) -> RoleSpec:
         try:
@@ -361,8 +404,15 @@ class RecipeConfig:
         sessions = raw.get("sessions") or {}
         if not isinstance(sessions, dict):
             raise ConfigError(f"recipe 'sessions' must be a mapping, got {sessions!r}")
+        name = raw.get("name") or (source.stem if source else "unnamed")
+        prepare = _parse_commands(raw.get("prepare"), where="prepare")
+        checks = _parse_commands(raw.get("checks"), where="checks")
+        if (graph.strip() if graph else name) == SCRIPT_GRAPH and not checks:
+            raise ConfigError(f"recipe '{name}' runs the script graph but declares no 'checks'")
         return cls(
-            name=raw.get("name") or (source.stem if source else "unnamed"),
+            name=name,
+            prepare=prepare,
+            checks=checks,
             graph=graph.strip() if graph else None,
             branch_from_tests=bool(sessions.get("branch_from_tests", True)),
             roles=roles,
