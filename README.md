@@ -301,8 +301,11 @@ Alloy commits a finished bead itself, and a sandboxed agent's `.git` is
 read-only, so a bead line such as `Commit: fix(client): ...`, `git push
 origin main` or `Push to main` only makes an agent try and park. When a run
 builds the bead text its agents see (description, design, acceptance
-criteria), whole lines that *start* with such an instruction are dropped; the
-patterns live in `alloy.brief_lint.GIT_WRITE_LINE_PATTERNS`. Lines that merely
+criteria), whole lines that *start* with such an instruction are dropped, and
+a `Commit:`/`Commit message:` clause with a conventional-commit prefix after a
+sentence boundary is cut out of its line (up to a `(Part of #N)` group, a `;`
+or the end of the sentence; the rest of the line stays). The patterns live in
+`alloy.brief_lint.GIT_WRITE_LINE_PATTERNS`. Lines that merely
 mention commits ("the commit message includes the bead id", "do not run git
 push") and anything inside fenced code blocks are kept, and the bd text is
 never modified. A fresh run start emits one `brief-lint` event listing the

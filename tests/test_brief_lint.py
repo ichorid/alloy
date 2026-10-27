@@ -119,3 +119,49 @@ async def test_agents_never_see_the_dropped_line_and_one_event_names_it(
     lint = [e for e in events if e["event"] == "brief-lint"]
     assert len(lint) == 1
     assert lint[0]["dropped"] == ["Commit: fix(mypkg): add slugify"]
+
+
+# -- a commit clause in the middle of a line ----------------------------------
+
+MID_LINE = [
+    (
+        "Spec and audit: docs/plans/qa-backlog-2026-10-24.md. Commit: fix(qa): tidy the backlog (Part of #666). "
+        "Do not close the GitHub issue.",
+        "Spec and audit: docs/plans/qa-backlog-2026-10-24.md. Do not close the GitHub issue.",
+        "Commit: fix(qa): tidy the backlog (Part of #666).",
+    ),
+    (
+        "Fold the check into the loader instead of bolting it on. Commit: fix(client): load once (Part of #763).",
+        "Fold the check into the loader instead of bolting it on.",
+        "Commit: fix(client): load once (Part of #763).",
+    ),
+    (
+        "Bump the version and raise kDefaultMinClientVersion. "
+        "Commit: chore: release <version>; raise the client floor.",
+        "Bump the version and raise kDefaultMinClientVersion. raise the client floor.",
+        "Commit: chore: release <version>;",
+    ),
+]
+
+
+@pytest.mark.parametrize(("line", "expected", "clause"), MID_LINE)
+def test_a_mid_line_commit_clause_is_dropped_and_the_rest_kept(line, expected, clause):
+    text, dropped = lint_text(f"Intro.\n{line}\nOutro.")
+    assert text == f"Intro.\n{expected}\nOutro."
+    assert dropped == [clause]
+
+
+def test_a_sentence_about_the_commit_message_stays_untouched():
+    line = "The commit message includes the bead id."
+    assert lint_text(f"Do it.\n{line}") == (f"Do it.\n{line}", [])
+
+
+def test_a_lowercase_word_after_a_period_does_not_end_the_clause():
+    text, dropped = lint_text("Do it. Commit: fix(x): handle e.g. empty rows (Part of #9). Then stop.")
+    assert text == "Do it. Then stop."
+    assert dropped == ["Commit: fix(x): handle e.g. empty rows (Part of #9)."]
+
+
+def test_a_commit_clause_after_a_plain_word_is_not_a_sentence_boundary():
+    line = "Check the hook Commit: fix(x): y handling stays as is."
+    assert lint_text(line) == (line, [])
