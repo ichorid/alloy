@@ -250,3 +250,43 @@ async def test_a_script_bead_commits_with_its_id_like_any_other_recipe(
     ).stdout.strip()
     assert subject.startswith(f"{bead_id}:")
     assert engine.store.agent_calls(result.run_id) == []
+
+
+async def test_a_prepare_step_started_but_never_recorded_parks_instead_of_running_again(
+    project, alloy_home, fake_harnesses
+):
+    """A crash after a prepare command finished but before its result was
+    checkpointed must not bump the version a second time on its own."""
+    config = script_config(prepare=[{"cmd": "echo x >> BUMPS", "purpose": "bump"}])
+    harness = make_harness(
+        project,
+        alloy_home,
+        bead=make_bead(metadata={"alloy_recipe": "ship"}),
+        config=config,
+        recipe_name="script",
+        initial_state_overrides={"prepare_started": 0},
+    )
+    first = await harness.start()
+
+    assert "__interrupt__" in first
+    reason = first["__interrupt__"][0].value["reason"]
+    assert "bump" in reason and "never recorded" in reason
+    assert not (project / "BUMPS").exists()
+
+    from langgraph.types import Command
+
+    final = await harness.resume(Command(resume={"instructions": "it had not run; go"}))
+    assert final["outcome"] == "done"
+    assert (project / "BUMPS").read_text().count("x") == 1
+
+
+def test_a_script_recipe_rejects_a_landing_gate():
+    with pytest.raises(ConfigError, match="landing_gate"):
+        RecipeConfig.parse(
+            {
+                "name": "ship",
+                "graph": "script",
+                "checks": ["test -f README.md"],
+                "landing_gate": [{"paths": ["**"], "checks": ["true-ish"]}],
+            }
+        )

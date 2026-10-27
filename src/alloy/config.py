@@ -496,11 +496,17 @@ class RecipeConfig:
         checks = _parse_commands(raw.get("checks"), where="checks")
         if (graph.strip() if graph else name) == SCRIPT_GRAPH and not checks:
             raise ConfigError(f"recipe '{name}' runs the script graph but declares no 'checks'")
+        landing_gate = _parse_landing_gate(raw.get("landing_gate"))
+        if (graph.strip() if graph else name) == SCRIPT_GRAPH and landing_gate:
+            raise ConfigError(
+                f"recipe '{name}' runs the script graph, which has no landing gate: "
+                "put those commands in its 'checks' instead of 'landing_gate'"
+            )
         return cls(
             name=name,
             prepare=prepare,
             checks=checks,
-            landing_gate=_parse_landing_gate(raw.get("landing_gate")),
+            landing_gate=landing_gate,
             escalate=EscalateSpec.parse(raw.get("escalate")),
             graph=graph.strip() if graph else None,
             branch_from_tests=bool(sessions.get("branch_from_tests", True)),

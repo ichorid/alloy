@@ -238,7 +238,9 @@ limits: {max_wall_time_minutes: 60}
 ```
 
 `prepare:` commands run once, in order; a red one parks the run at the human
-gate with its output (a resume runs it again, never an earlier one). Each
+gate with its output (a resume runs it again, never an earlier one). Each is
+checkpointed as started before it runs, so a run that stopped while one ran
+parks for a human instead of bumping the version twice. Each
 `checks:` entry then runs on its own -- never chained -- through the same
 check runner, sandbox and `check-N-*.log` files as the agent recipes, with its
 own `timeout_minutes` (default `verification.max_command_timeout_minutes`). A
@@ -248,7 +250,8 @@ parks the run naming the check and its log, and a resume reruns that check. A
 green run finishes `done` and is committed like any other bead.
 `max_wall_time_minutes` counts check time only, so a queue wait in a wrapper
 script or a night at the human gate does not spend it. A string entry is
-shorthand for `{cmd: ...}`.
+shorthand for `{cmd: ...}`. A script recipe has no `landing_gate:` (it is
+refused); its `checks:` are the gate.
 
 ### `landing_gate:` -- checks the final tree must pass, by changed path
 

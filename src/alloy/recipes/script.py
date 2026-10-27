@@ -1,6 +1,6 @@
 """The `script` graph: a deterministic recipe with no agent calls.
 
-    prepare (one step per command) -> check (one step per entry) -> finish
+    prepare_start -> prepare (one pair per command) -> check (one step per entry) -> finish
           \\-> human_gate (red)            \\-> human_gate (red twice, or wall time)
 
 For work that needs no judgement -- a "ship" bead that bumps the version and
@@ -49,10 +49,12 @@ def _label(spec: CommandSpec) -> str:
     return f"{spec.purpose} (`{spec.cmd}`)" if spec.purpose else f"`{spec.cmd}`"
 
 
-def _park(stage: str, reason: str, question: str, *, limit_hit: str | None = None) -> dict[str, Any]:
+def _park(
+    stage: str, reason: str, question: str, *, limit_hit: str | None = None, resume_to: str | None = None
+) -> dict[str, Any]:
     return {
         "stage": stage,
-        "resume_to": stage,
+        "resume_to": resume_to or stage,
         "limit_hit": limit_hit,
         "decision": JudgeDecision(decision="human", reason=reason, next_instructions=question).model_dump(),
     }
@@ -75,6 +77,28 @@ def check_seconds(state: ScriptState) -> float:
     return sum(float(item.get("duration_s") or 0.0) for item in state.get("checks") or [])
 
 
+def _make_node_prepare_start(ctx: RunContext):
+    def prepare_start(state: ScriptState) -> dict[str, Any]:
+        """Checkpoint "this prepare command is about to run" before it runs.
+        Finding the marker already set means the command started but its
+        result was never recorded (a crash in between): it may have run, so
+        a human decides instead of a second version bump happening silently."""
+        index = int(state.get("prepare_index", 0) or 0)
+        spec = ctx.recipe.prepare[index]
+        if state.get("prepare_started") == index:
+            return _park(
+                "prepare",
+                f"prepare step {_label(spec)} started but its result was never recorded "
+                "(the run stopped while it ran); it may have run already",
+                "Check the tree. If the step had not run (or you undid it), resume and it runs once; "
+                "if it had run, finish its effect by hand, then resume.",
+                resume_to="prepare",
+            )
+        return {"prepare_started": index, "stage": "prepare", "decision": None}
+
+    return prepare_start
+
+
 def _make_node_prepare(ctx: RunContext):
     async def prepare(state: ScriptState) -> dict[str, Any]:
         index = int(state.get("prepare_index", 0) or 0)
@@ -86,13 +110,21 @@ def _make_node_prepare(ctx: RunContext):
             return {
                 "prepared": [record],
                 "last_check": record,
+                "prepare_started": None,
                 **_park(
                     "prepare",
                     f"prepare step {_label(spec)} failed: {_failure(result)}",
                     "Fix what the prepare step needs, then resume; it runs again.",
+                    resume_to="prepare_start",
                 ),
             }
-        return {"prepared": [record], "last_check": record, "prepare_index": index + 1, **_passed("prepare")}
+        return {
+            "prepared": [record],
+            "last_check": record,
+            "prepare_index": index + 1,
+            "prepare_started": None,
+            **_passed("prepare"),
+        }
 
     return prepare
 
@@ -184,7 +216,7 @@ def build_graph(ctx: RunContext):
         if (state.get("decision") or {}).get("decision") == "human":
             return "human_gate"
         if int(state.get("prepare_index", 0) or 0) < prepare_count:
-            return "prepare"
+            return "prepare_start"
         if int(state.get("check_index", 0) or 0) < check_count:
             return "check"
         return "finish"
@@ -193,16 +225,21 @@ def build_graph(ctx: RunContext):
         return state.get("resume_target") or "check"
 
     graph = StateGraph(ScriptState)
+    graph.add_node("prepare_start", _make_node_prepare_start(ctx))
     graph.add_node("prepare", _make_node_prepare(ctx))
     graph.add_node("check", _make_node_check(ctx))
     graph.add_node("human_gate", _make_node_human_gate(ctx))
     graph.add_node("finish", _make_node_finish(ctx))
 
-    steps = ["prepare", "check", "finish", "human_gate"]
+    def after_prepare_start(state: ScriptState) -> str:
+        return "human_gate" if (state.get("decision") or {}).get("decision") == "human" else "prepare"
+
+    steps = ["prepare_start", "check", "finish", "human_gate"]
     graph.add_conditional_edges(START, next_step, steps)
+    graph.add_conditional_edges("prepare_start", after_prepare_start, ["prepare", "human_gate"])
     graph.add_conditional_edges("prepare", next_step, steps)
     graph.add_conditional_edges("check", next_step, steps)
-    graph.add_conditional_edges("human_gate", after_human, ["prepare", "check"])
+    graph.add_conditional_edges("human_gate", after_human, ["prepare_start", "prepare", "check"])
     graph.add_edge("finish", END)
     return graph.compile(checkpointer=ctx.checkpointer)
 
@@ -214,6 +251,7 @@ def initial_state(ctx: RunContext) -> ScriptState:
         title=ctx.bead.title,
         iteration=1,
         prepare_index=0,
+        prepare_started=None,
         check_index=0,
         prepared=[],
         checks=[],

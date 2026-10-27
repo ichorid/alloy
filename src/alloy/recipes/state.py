@@ -164,6 +164,7 @@ class ScriptState(TypedDict, total=False):
 
     iteration: int
     prepare_index: int  # the next `prepare:` command to run
+    prepare_started: int | None  # index of a prepare command checkpointed as started, not yet recorded
     check_index: int  # the next `checks:` entry to run
     prepared: Annotated[list[dict[str, Any]], operator.add]  # CheckResult dicts of prepare commands
     checks: Annotated[list[dict[str, Any]], operator.add]  # CheckResult dicts, reruns included
