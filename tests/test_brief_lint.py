@@ -39,6 +39,21 @@ KEPT = [
     "Commits are recorded with the bead id by Alloy.",
     "A push to main triggers the deploy job (behaviour under test).",
     "Add slugify() to mypkg.",
+    "- `git merge-base --is-ancestor` returns 0 for the recorded base",
+    "- git stash list stays empty after the run",
+    "Run git tag -l to see the tags; git tag --list works too.",
+    "- git stash show prints nothing",
+    "- Commit the changes in a single DB transaction; no partial rows",
+    "- Push to remote subscribers only when the flag is on",
+]
+
+# Acceptance criteria the old patterns dropped: acceptance is never linted.
+REVIEW_ACCEPTANCE = [
+    "- `git merge-base --is-ancestor` returns 0 for the recorded base",
+    "- git tag v7.3.2 exists after the bump script runs",
+    "- git stash list stays empty after the run",
+    "- Commit the changes in a single DB transaction; no partial rows",
+    "- Push to remote subscribers only when the flag is on",
 ]
 
 
@@ -165,3 +180,16 @@ def test_a_lowercase_word_after_a_period_does_not_end_the_clause():
 def test_a_commit_clause_after_a_plain_word_is_not_a_sentence_boundary():
     line = "Check the hook Commit: fix(x): y handling stays as is."
     assert lint_text(line) == (line, [])
+
+
+def test_acceptance_criteria_are_never_linted_only_reported():
+    acceptance = "\n".join([*REVIEW_ACCEPTANCE, "Commit: fix(x): y", "git push origin main"])
+    bead = make_bead(acceptance_criteria=acceptance)
+    result = lint_bead(bead, ship_context=False)
+    assert result.bead.acceptance_criteria == acceptance
+    assert result.dropped == []
+    assert result.suspicious == [
+        "- git tag v7.3.2 exists after the bump script runs",
+        "Commit: fix(x): y",
+        "git push origin main",
+    ]

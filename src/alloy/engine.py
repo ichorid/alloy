@@ -582,10 +582,12 @@ class Engine:
         announces what was dropped (and, for a ship bead, its hard-coded
         version numbers) in one `brief-lint` event."""
         result = lint_bead(bead, ship_context=is_ship_context(bead, recipe_name=recipe_name, graph=config.graph))
-        if announce and (result.dropped or result.version_pins):
+        if announce and (result.dropped or result.version_pins or result.suspicious):
             parts = []
             if result.dropped:
                 parts.append(f"dropped {len(result.dropped)} git-write instruction line(s) from the agents' brief")
+            if result.suspicious:
+                parts.append(f"{len(result.suspicious)} acceptance line(s) read like git-write instructions (kept)")
             if result.version_pins:
                 parts.append("hard-coded version(s) in a ship bead: " + ", ".join(result.version_pins))
             reason = "; ".join(parts)
@@ -596,6 +598,7 @@ class Engine:
                 run=run_id,
                 reason=reason,
                 dropped=result.dropped,
+                suspicious=result.suspicious,
                 version_pins=result.version_pins,
             )
         return result.bead
