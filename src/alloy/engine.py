@@ -25,7 +25,7 @@ from alloy import recipes
 from alloy.beads import Bead, BeadsClient
 from alloy.checkpoints import has_pending_interrupt, open_checkpointer, read_checkpoint
 from alloy.config import ConfigError, RecipeConfig, load_recipe
-from alloy.events import EVENT_BUDGET_LANDED
+from alloy.events import EVENT_BUDGET_LANDED, EVENT_ESCALATED
 from alloy.models import Outcome
 from alloy.outbox import deliver_pending
 from alloy.paths import AlloyPaths
@@ -874,6 +874,9 @@ class Engine:
                 worktree=str(ctx.worktree.path),
             )
 
+        if final.get("reroute"):
+            return self._settle_reroute(ctx, bead, recipe_name, run_id, final["reroute"])
+
         outcome = final.get("outcome") or Outcome.FAILED.value
         reason = final.get("outcome_reason", "")
 
@@ -981,6 +984,62 @@ class Engine:
             raise self._lost_settle(bead.id, run_id, outcome)
         deliver_pending(self.store, self.beads, bead_id=bead.id)
         return RunResult(bead.id, run_id, outcome, reason=reason, worktree=str(ctx.worktree.path))
+
+    def _settle_reroute(
+        self, ctx: RunContext, bead: Bead, recipe_name: str, run_id: str, reroute: dict[str, Any]
+    ) -> RunResult:
+        """The run escalated (fast-track `escalate:`): what `alloy reroute`
+        does, from inside the run -- pin the target recipe, book the run
+        cancelled, hand the bead back ready with the checkout's edits kept.
+        The recipe is pinned (first outbox row) before the status write, so a
+        polling scheduler never redispatches the bead on the old recipe."""
+        target = str(reroute.get("recipe") or "")
+        why = str(reroute.get("reason") or "")
+        try:
+            self.validate_recipe(target)
+        except EngineError as exc:
+            reason = f"escalation to {target!r} refused: {exc}"
+            if not self.store.finish_run(
+                run_id,
+                expect=self._owned(),
+                status=RUN_FAILED,
+                outcome=Outcome.FAILED.value,
+                reason=reason,
+                bead_id=bead.id,
+                outbox=[
+                    ("status", {"status": bd.STATUS_FAILED, "if_status": bd.STATUS_IMPLEMENTING}),
+                    ("note", {"text": f"alloy: {recipe_name} {reason}. Worktree kept at {ctx.worktree.path}"}),
+                ],
+            ):
+                raise self._lost_settle(bead.id, run_id, Outcome.FAILED.value)
+            deliver_pending(self.store, self.beads, bead_id=bead.id)
+            return RunResult(bead.id, run_id, Outcome.FAILED.value, reason=reason, worktree=str(ctx.worktree.path))
+        reason = f"escalated from {recipe_name} to {target}: {why}"
+        if not self.store.finish_run(
+            run_id,
+            expect=self._owned(),
+            status=RUN_CANCELLED,
+            outcome=Outcome.CANCELLED.value,
+            reason=reason,
+            bead_id=bead.id,
+            outbox=[
+                ("metadata", {"values": {bd.META_RECIPE: target, bd.META_STAGE: "escalated"}}),
+                ("status", {"status": bd.STATUS_READY, "if_status": bd.STATUS_IMPLEMENTING}),
+                (
+                    "note",
+                    {
+                        "text": f"alloy: run {run_id} {reason}. The checkout's edits are kept; the bead is "
+                        f"ready again and pinned to {target}."
+                    },
+                ),
+            ],
+        ):
+            raise self._lost_settle(bead.id, run_id, Outcome.CANCELLED.value)
+        self.store.events.emit(
+            EVENT_ESCALATED, bead=bead.id, run=run_id, reason=why, **{"from": recipe_name, "to": target}
+        )
+        deliver_pending(self.store, self.beads, bead_id=bead.id)
+        return RunResult(bead.id, run_id, Outcome.CANCELLED.value, reason=reason, worktree=str(ctx.worktree.path))
 
     def _log_lost_settle(self, bead_id: str, run_id: str, outcome: str) -> None:
         current = self.store.get_run(run_id) or {}

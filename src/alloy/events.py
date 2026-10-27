@@ -35,6 +35,10 @@ EVENT_FLAKY_CHECK = "flaky-check"
 """A `script` recipe check was red once and green on its isolated rerun
 (informational; the bead carries a note naming both logs)."""
 
+EVENT_ESCALATED = "escalated"
+"""A fast-track run outgrew its recipe (`escalate:`): the bead was rerouted to
+the target recipe, its run cancelled, its edits kept (informational)."""
+
 # Events that mean "somebody has to look"; the rest are informational.
 ATTENTION_EVENTS = frozenset({EVENT_NEEDS_HUMAN, EVENT_FAILED, EVENT_STALLED})
 

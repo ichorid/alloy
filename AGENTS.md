@@ -123,6 +123,12 @@ path the bead's diff touches, before the bead may finish `done` (budget-landed
 included). A red gate check is one more implement iteration, or a human gate
 when a limit is spent.
 
+A fast-track recipe with `escalate: {after_iterations: N,
+when_packages_touched_over: M, package_roots: [glob...], to: <recipe>}`
+reroutes a bead that ran N implement rounds without done, or touched more
+than M package roots, to `<recipe>` -- like `alloy reroute`, with a bead note
+and an `escalated` event.
+
 Ctrl-C or SIGTERM on `alloy run` stops the harness with it and leaves the run
 resumable (`alloy run <bead-id>` again picks it up). The detached scheduler
 logs to `<repo>/.alloy/scheduler.log`.

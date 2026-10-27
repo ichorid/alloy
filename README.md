@@ -275,6 +275,26 @@ sees it as a failed check); when a limit is already spent -- a budget-landed
 stop included -- the run parks at the human gate instead. Without
 `landing_gate` the graph is unchanged.
 
+### fast-track `escalate:` -- reroute a mis-sized bead
+
+A bead sized wrong for fast-track spins until `max_iterations` and parks. A
+fast-track recipe can hand it over instead:
+
+```yaml
+escalate:
+  after_iterations: 2              # implement rounds that ended in a retry
+  when_packages_touched_over: 1    # distinct package roots the diff touches
+  package_roots: ["packages/*"]
+  to: tdd-loop-medium-no-context
+```
+
+Before each implement call Alloy checks both triggers (either may be left
+out). When one fires, the run ends and the bead is rerouted exactly as
+`alloy reroute <bead> <to>` does: the target recipe is pinned, the run booked
+cancelled, the checkout's edits kept and the bead left ready for the
+scheduler. A note on the bead and an `escalated` event say why. Without
+`escalate:` nothing changes.
+
 The codex runner's own `workspace-write` sandbox has the network on by default
 (test runners bind localhost; pg suites and package managers need it); extra
 directories it may write, such as SDK and tool caches, are per recipe:

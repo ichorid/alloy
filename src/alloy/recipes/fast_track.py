@@ -27,11 +27,12 @@ from alloy.models import (
     CheckRequest,
     FastTrackVerdict,
     JudgeDecision,
+    Outcome,
     ProjectMemory,
     is_unavailable,
 )
-from alloy.recipes.landing_gate import _make_node_landing_gate, route_after_landing_gate
-from alloy.recipes.role_prompts import fast_track_prompt
+from alloy.recipes.landing_gate import _make_node_landing_gate, path_matches, route_after_landing_gate
+from alloy.recipes.role_prompts import fast_track_prompt, log
 from alloy.recipes.shared_verification import (
     _checks_of,
     _unavailable_decision,
@@ -62,10 +63,66 @@ from alloy.recipes.workflow_nodes import (
 from alloy.runtime import RunContext
 
 
+def package_roots_touched(changed_paths: list[str], roots: tuple[str, ...]) -> list[str]:
+    """The distinct package roots (directories matching one of the `roots`
+    globs) that hold at least one of `changed_paths`."""
+    touched: set[str] = set()
+    for path in changed_paths:
+        parts = path.strip("/").split("/")
+        for glob in roots:
+            depth = len(glob.split("/"))
+            prefix = "/".join(parts[:depth])
+            if len(parts) > depth and path_matches(prefix, glob):
+                touched.add(prefix)
+                break
+    return sorted(touched)
+
+
+def escalation_reason(ctx: RunContext, state: FastTrackState) -> str | None:
+    """Why this bead outgrew fast-track (`escalate:`), else None."""
+    spec = ctx.recipe.escalate
+    if spec is None:
+        return None
+    if spec.after_iterations is not None:
+        rounds = sum(1 for row in state.get("attempts") or [] if row.get("decision") == "retry")
+        if rounds >= spec.after_iterations:
+            return (
+                f"{rounds} implement round(s) ended without done (escalate.after_iterations: {spec.after_iterations})"
+            )
+    if spec.when_packages_touched_over is not None:
+        roots = package_roots_touched(ctx.worktrees.changed_files(ctx.worktree), spec.package_roots)
+        if len(roots) > spec.when_packages_touched_over:
+            return (
+                f"the diff touches {len(roots)} package roots ({', '.join(roots)}), over "
+                f"escalate.when_packages_touched_over: {spec.when_packages_touched_over}"
+            )
+    return None
+
+
+def _escalate(ctx: RunContext, reason: str) -> dict[str, Any]:
+    """End the run for a reroute; the engine pins the target recipe, books
+    the run cancelled and hands the bead back ready, edits kept."""
+    target = ctx.recipe.escalate.to
+    log.warning("%s: escalating from %s to %s: %s", ctx.bead.id, ctx.recipe.name, target, reason)
+    ctx.set_stage("escalate")
+    return {
+        "stage": "escalate",
+        "verify_route": "escalate",
+        "reroute": {"recipe": target, "reason": reason},
+        "outcome": Outcome.CANCELLED.value,
+        "outcome_reason": f"escalated to {target}: {reason}",
+    }
+
+
 def _make_node_fast_implement(ctx: RunContext, _capture_bugs):
     async def implement(state: FastTrackState) -> dict[str, Any]:
         previous_iteration = state.get("iteration", 0)
         iteration = previous_iteration + 1
+        # Escalation outranks the limits: a bead that outgrew fast-track is
+        # rerouted rather than parked at max_iterations.
+        reason = escalation_reason(ctx, state)
+        if reason:
+            return _escalate(ctx, reason)
         # implement <-> run_check loops without guard, so the limits are
         # checked before every implement call. Coming straight back from a
         # green run_check the worker is still verifying the same change (its
@@ -276,7 +333,11 @@ def build_graph(ctx: RunContext):
         graph.add_conditional_edges("landing_gate", route_after_landing_gate, ["finish", "implement", "human_gate"])
 
     graph.add_edge(START, "implement")
-    graph.add_conditional_edges("implement", route_after_fast_implement, ["run_check", "guard", "human_gate"])
+    graph.add_conditional_edges(
+        "implement",
+        route_after_fast_implement,
+        {"run_check": "run_check", "guard": "guard", "human_gate": "human_gate", "escalate": END},
+    )
     graph.add_conditional_edges("run_check", route_after_fast_check, ["implement", "guard", "human_gate"])
     # start_final_pass only sets `instructions`; it never proposes a check
     # itself (unlike tdd_loop's verifier_step, there is no separate role to ask

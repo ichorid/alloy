@@ -139,6 +139,7 @@ class FastTrackState(TypedDict, total=False):
     journal: Annotated[list[str], operator.add]
     final_pass: bool
     landing_gate_route: str | None
+    reroute: dict[str, Any] | None  # {recipe, reason} once `escalate:` fired; the engine reroutes
 
     stage: str
     outcome: str | None

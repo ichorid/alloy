@@ -366,6 +366,54 @@ def _parse_landing_gate(raw: Any) -> tuple[LandingGateEntry, ...]:
     return tuple(LandingGateEntry.parse(item) for item in raw)
 
 
+@dataclass(frozen=True)
+class EscalateSpec:
+    """fast-track's `escalate:` block: when to hand a mis-sized bead to a
+    fuller recipe, exactly as `alloy reroute <bead> <to>` would."""
+
+    to: str
+    after_iterations: int | None = None
+    """Reroute once this many implement rounds ended without done (retry)."""
+    when_packages_touched_over: int | None = None
+    """Reroute once the diff touches more distinct `package_roots` than this."""
+    package_roots: tuple[str, ...] = ()
+    """Globs naming one package root each (`packages/*`): a changed path inside
+    a matching directory counts toward that root."""
+
+    @classmethod
+    def parse(cls, raw: Any) -> "EscalateSpec | None":
+        if raw is None:
+            return None
+        if not isinstance(raw, dict):
+            raise ConfigError(f"recipe 'escalate' must be a mapping, got {raw!r}")
+        unknown = raw.keys() - {"to", "after_iterations", "when_packages_touched_over", "package_roots"}
+        if unknown:
+            raise ConfigError(f"unknown escalate keys: {', '.join(sorted(map(repr, unknown)))}")
+        to = raw.get("to")
+        if not isinstance(to, str) or not to.strip():
+            raise ConfigError(f"escalate needs 'to': the recipe to reroute the bead to, got {to!r}")
+        try:
+            after = int(raw["after_iterations"]) if raw.get("after_iterations") is not None else None
+            over = int(raw["when_packages_touched_over"]) if raw.get("when_packages_touched_over") is not None else None
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"escalate thresholds must be integers: {raw!r}") from exc
+        if after is None and over is None:
+            raise ConfigError("escalate needs a trigger: after_iterations and/or when_packages_touched_over")
+        roots = raw.get("package_roots") or []
+        if isinstance(roots, str):
+            roots = [roots]
+        if not isinstance(roots, list) or not all(isinstance(root, str) and root.strip() for root in roots):
+            raise ConfigError(f"escalate package_roots must be a list of globs, got {roots!r}")
+        if over is not None and not roots:
+            raise ConfigError("escalate when_packages_touched_over needs package_roots (e.g. ['packages/*'])")
+        return cls(
+            to=to.strip(),
+            after_iterations=after,
+            when_packages_touched_over=over,
+            package_roots=tuple(root.strip().strip("/") for root in roots),
+        )
+
+
 SCRIPT_GRAPH = "script"
 """The registered graph that runs `prepare:` and `checks:` with no agent."""
 
@@ -403,6 +451,8 @@ class RecipeConfig:
     """Checks a bead must pass on its final tree before it finishes done,
     selected by the paths its diff touches (alloy.recipes.landing_gate).
     Empty: no gate, the run finishes as before."""
+    escalate: EscalateSpec | None = None
+    """fast-track only: reroute a mis-sized bead to a fuller recipe. None: off."""
 
     def role(self, name: str) -> RoleSpec:
         try:
@@ -451,6 +501,7 @@ class RecipeConfig:
             prepare=prepare,
             checks=checks,
             landing_gate=_parse_landing_gate(raw.get("landing_gate")),
+            escalate=EscalateSpec.parse(raw.get("escalate")),
             graph=graph.strip() if graph else None,
             branch_from_tests=bool(sessions.get("branch_from_tests", True)),
             roles=roles,
