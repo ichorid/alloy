@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Callable
 
 from alloy import beads as bd
-from alloy.config import ConfigError, MemorySpec
+from alloy.config import ConfigError, MemorySpec, discover_recipes
 from alloy.engine import Engine, EngineError, RunResult
 from alloy.events import EVENT_STALLED
 from alloy.memory_schedule import (
@@ -99,6 +99,7 @@ class Scheduler:
     _hold_since: datetime | None = field(default=None, init=False)
     _hold_announced: datetime | None = field(default=None, init=False)
     _pinned_reported: bool = field(default=False, init=False)
+    _unknown_recipe_noted: set[tuple[str, str]] = field(default_factory=set, init=False)
 
     def __post_init__(self) -> None:
         if self.recipe_filter is not None:
@@ -451,7 +452,11 @@ class Scheduler:
         """Highest-priority ready bead with a known assigned or default recipe."""
         from alloy import recipes
 
-        known = set(recipes.names())
+        # Built-ins plus every recipe file the engine can load for this repo
+        # (project-local names with their own `graph:` included).
+        known = set(recipes.names()) | set(
+            discover_recipes(alloy_root=self.engine.paths.shared_root, project=self.engine.repo)
+        )
         if self.recipe_filter is not None:
             # Validated in __post_init__; it stands in for the memory
             # default this session and wins over it, but still yields to a
@@ -486,6 +491,7 @@ class Scheduler:
             if bead.issue_type == "epic":
                 continue  # tracking only: epics close via _completed_epics, never a run
             if (bead.recipe or self._default_recipe) not in known:
+                self._note_unknown_recipe(bead)
                 continue
             holder = self._dispatch_holder(bead.id)
             if holder is not None:
@@ -497,6 +503,15 @@ class Scheduler:
             return bead
         self._note_hold(held_by)
         return None
+
+    def _note_unknown_recipe(self, bead: bd.Bead) -> None:
+        """Say once per bead and recipe that a ready bead is skipped because
+        no recipe of that name exists -- otherwise it waits silently forever."""
+        key = (bead.id, bead.recipe or self._default_recipe or "")
+        if key in self._unknown_recipe_noted:
+            return
+        self._unknown_recipe_noted.add(key)
+        log.warning("%s: skipped -- recipe %r is not a known recipe for this repo", bead.id, key[1])
 
     def _report_pinned_recipes(self, ready: list[bd.Bead]) -> None:
         """Once per scheduler: say how many ready beads pin their own recipe

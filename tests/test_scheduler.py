@@ -73,6 +73,32 @@ def test_an_unassigned_bead_is_picked_up_via_the_fast_track_fallback(scheduler, 
     assert picked is not None and picked.id == unassigned
 
 
+def test_a_project_recipe_with_its_own_name_is_dispatchable(scheduler, beads_project):
+    """A project-local recipe under a new name (with `graph:`) is as known as
+    a built-in: the engine loads it, so the scheduler must pick its beads."""
+    recipes_dir = beads_project / ".alloy" / "recipes"
+    recipes_dir.mkdir(parents=True, exist_ok=True)
+    (recipes_dir / "ship.yaml").write_text(
+        "name: ship\ngraph: script\nchecks:\n  - {cmd: 'true', purpose: noop}\n", encoding="utf-8"
+    )
+    ship = bd_create(beads_project, "ship it", alloy_recipe="ship")
+
+    picked = scheduler.next_task()
+
+    assert picked is not None and picked.id == ship
+
+
+def test_a_ready_bead_with_an_unknown_recipe_is_reported_once(scheduler, beads_project, caplog):
+    bogus = bd_create(beads_project, "bogus recipe", alloy_recipe="does-not-exist")
+
+    with caplog.at_level(logging.WARNING, logger="alloy.scheduler"):
+        assert scheduler.next_task() is None
+        assert scheduler.next_task() is None
+
+    warnings = [r for r in caplog.records if bogus in r.getMessage() and "does-not-exist" in r.getMessage()]
+    assert len(warnings) == 1
+
+
 def test_selection_makes_no_agent_calls(scheduler, beads_project, fake_harnesses):
     bd_create(beads_project, "task", alloy_recipe="tdd-loop")
 
