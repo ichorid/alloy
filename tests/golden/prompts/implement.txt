@@ -16,6 +16,10 @@ Rules:
 - Check outside data where it enters and trust it inside; a write you add must end in the same state
   when it is retried or rerun after a crash.
 - Alloy owns task tracking, verification and git: do not run `bd`, do not commit, and do not run the whole test suite -- run the tests relevant to your change; Alloy runs the full suite when you finish.
+- Start any command that may run longer than 5 minutes (a test suite, a build, anything that may
+  wait in a queue) with `alloy job start -- <command>`, then repeat `alloy job wait` until it prints the command's
+  exit code (3 means still running: run the next command it prints). Never block on one command longer than one
+  wait; each return keeps your session's cache warm. (`$ALLOY_BIN` is `alloy` if it is not on PATH.)
 
 Finish with one paragraph inside <summary> and </summary> tags describing what you changed and why, including 'tests edited: <paths or none>'.
 

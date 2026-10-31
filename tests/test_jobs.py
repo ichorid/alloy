@@ -17,6 +17,13 @@ from support import load_config, make_bead
 from alloy import jobs
 from alloy.config import ConfigError, Limits, RoleSpec
 from alloy.procs import pid_alive
+from alloy.prompts import LAYER_SEPARATOR
+from alloy.recipes.role_prompts import (
+    JOBS_RULE,
+    fast_track_prompt,
+    implement_prompt,
+    tests_prompt,
+)
 from alloy.runners import RunnerRegistry
 from alloy.runtime import RunContext
 from alloy.store import Store
@@ -254,3 +261,26 @@ def test_job_limits_have_documented_defaults_and_must_leave_room_between_waits()
     assert Limits.parse({"job_wait_minutes": 10, "job_abandon_minutes": 15}).job_wait_minutes == 10
     with pytest.raises(ConfigError):
         Limits.parse({"job_wait_minutes": 50})
+
+
+def _static(prompt: str) -> str:
+    return prompt.split(LAYER_SEPARATOR, 1)[0]
+
+
+CONTEXT = {"summary": "s", "relevant_files": [], "conventions": [], "risks": []}
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda brief: tests_prompt(brief, "acceptance", CONTEXT),
+        lambda brief: implement_prompt(brief, "acceptance", CONTEXT, "fix it", []),
+        lambda brief: fast_track_prompt(brief, "acceptance", "", []),
+    ],
+    ids=["tests", "implement", "fast_track"],
+)
+def test_roles_that_run_commands_carry_the_job_rule_in_an_unchanging_static_layer(build):
+    first, second = build("# bead-a\n\nAdd slugify()."), build("# bead-b\n\nAdd titlecase().")
+    assert _static(first) == _static(second)
+    assert JOBS_RULE in _static(first)
+    assert "alloy job start -- " in JOBS_RULE and "alloy job wait" in JOBS_RULE

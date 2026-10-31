@@ -151,6 +151,14 @@ ROOT_CAUSE_RULE = """Fix the cause, not the symptom: a guard, catch, retry or lo
 NO_SILENCING_RULE = """Do not silence the compiler, analyzer or linters to get through a gate: no casts, ignore
   comments or non-null assertions just to quiet a diagnostic, and never raise an analyzer or lint baseline."""
 
+JOBS_RULE = """Start any command that may run longer than 5 minutes (a test suite, a build, anything that may
+  wait in a queue) with `alloy job start -- <command>`, then repeat `alloy job wait` until it prints the command's
+  exit code (3 means still running: run the next command it prints). Never block on one command longer than one
+  wait; each return keeps your session's cache warm. (`$ALLOY_BIN` is `alloy` if it is not on PATH.)"""
+"""Detached long commands (alloy.jobs), for every role that runs shell commands.
+Static text: the wait's length comes from `limits.job_wait_minutes` via the
+environment, so the rule stays byte-identical across beads, runs and recipes."""
+
 TESTS_STATIC = f"""Write failing tests for this task. Do not implement the behavior itself.
 
 Requirements:
@@ -171,6 +179,7 @@ Requirements:
   avoidance and carries no other meaning -- it does not belong in the test description itself.)
 - Alloy owns task tracking, verification and git: do not run `bd`, do not commit,
   and do not run the whole test suite -- run only the tests you wrote.
+- {JOBS_RULE}
 
 When you are done, answer with the structured output: `summary` (one paragraph naming which
 test files you added or changed and what each asserts) and `baseline_checks`, the exact
@@ -292,6 +301,7 @@ criteria -- and say so explicitly if you do.
   when it is retried or rerun after a crash.
 - Alloy owns task tracking, verification and git: do not run `bd`, do not commit, and do not run the whole \
 test suite -- run the tests relevant to your change; Alloy runs the full suite when you finish.
+- {JOBS_RULE}
 
 Finish with one paragraph inside <summary> and </summary> tags describing what you changed and why, including \
 'tests edited: <paths or none>'.
@@ -371,6 +381,7 @@ Rules:
 - {ROOT_CAUSE_RULE}
 - {NO_SILENCING_RULE}
 - Alloy owns task tracking and git: do not run `bd`, do not commit.
+- {JOBS_RULE}
 
 Answer with the structured output:
 - action: "run_check" to propose checks and keep going, "done" once verified, "retry" if you
