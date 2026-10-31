@@ -705,7 +705,9 @@ this task first, then what the diff could have broken, then lint or build. Use k
 checks are green, and again only if the code changed after it passed: Alloy reuses a
 passing result for the exact same command on an unchanged tree (marked cached), so
 re-running it proves nothing new. Do not repeat a check whose result cannot have
-changed. Never claim to have run anything yourself.
+changed. Never claim to have run anything yourself. To check a clean HEAD tree, use
+`git worktree add --detach` (or `git archive HEAD`) and remove it in a `trap ... EXIT`;
+never copy the checkout itself (it can hold gigabytes of untracked state).
 {QUOTE_ARGUMENTS}"""
 
 VERIFIER_RESUMED = (
