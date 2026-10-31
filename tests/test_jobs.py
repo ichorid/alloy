@@ -1,17 +1,25 @@
-"""`alloy job`: detached commands an agent polls in bounded waits."""
+"""`alloy job`: detached commands an agent polls in bounded waits, and the
+per-call wiring that stops whatever an agent left running."""
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from support import load_config, make_bead
 
 from alloy import jobs
+from alloy.config import ConfigError, Limits, RoleSpec
 from alloy.procs import pid_alive
+from alloy.runners import RunnerRegistry
+from alloy.runtime import RunContext
+from alloy.store import Store
 
 
 @pytest.fixture
@@ -138,3 +146,111 @@ def test_reap_stops_every_running_job_and_publishes_its_exit_code(tmp_path: Path
     assert not pid_alive(child)
     assert sleeper.rc() not in (None, 0)
     assert jobs.REASON_CALL_ENDED in sleeper.log.read_text()
+
+
+# -- one agent call ------------------------------------------------------------
+
+FAKE_AGENT = """#!/bin/sh
+env > "$(dirname "$0")/env-$1.txt"
+alloy job start -- sleep 60 > "$(dirname "$0")/job-$1.txt"
+[ "$1" = slow ] && sleep 30
+echo finished
+"""
+
+
+def _agent_context(tmp_path: Path, **limits) -> RunContext:
+    script = tmp_path / "agent" / "fake-agent"
+    script.parent.mkdir()
+    script.write_text(FAKE_AGENT)
+    script.chmod(0o755)
+    config = load_config()
+    recipe = replace(config, limits=replace(config.limits, **limits))
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    return RunContext(
+        bead=make_bead("t-jobs"),
+        recipe=recipe,
+        run_id="run-jobs",
+        worktree=SimpleNamespace(path=tmp_path),
+        worktrees=None,
+        registry=RunnerRegistry({"fakeagent": {"binary": str(script), "args": ["{prompt}"]}}, log_dir=log_dir),
+        store=Store(tmp_path / "alloy.db"),
+        checkpointer=None,
+        log_dir=log_dir,
+    )
+
+
+def _job_of(tmp_path: Path, mode: str, env: dict[str, str]) -> jobs.Job:
+    job_id = (tmp_path / "agent" / f"job-{mode}.txt").read_text().strip()
+    return jobs.Job(Path(env[jobs.ENV_DIR]) / job_id)
+
+
+def _env_of(tmp_path: Path, mode: str) -> dict[str, str]:
+    lines = (tmp_path / "agent" / f"env-{mode}.txt").read_text().splitlines()
+    return dict(line.split("=", 1) for line in lines if "=" in line)
+
+
+@pytest.mark.parametrize(
+    "mode,timeout_minutes",
+    [("fast", 1.0), ("slow", 0.1)],
+    ids=["call-ends", "call-times-out"],
+)
+async def test_a_job_the_agent_left_running_is_stopped_when_the_call_ends(tmp_path, mode, timeout_minutes):
+    ctx = _agent_context(tmp_path)
+    spec = RoleSpec(runner="fakeagent", timeout_minutes=timeout_minutes)
+    result = await ctx.call("implement", spec, mode)
+    assert result.ok is (mode == "fast")
+
+    job = _job_of(tmp_path, mode, _env_of(tmp_path, mode))
+    assert job.rc() is not None
+    assert job.supervisor() is None
+    assert job.child() is None
+    assert jobs.REASON_CALL_ENDED in job.log.read_text()
+
+
+async def test_a_job_is_stopped_when_its_call_is_cancelled(tmp_path):
+    ctx = _agent_context(tmp_path)
+    task = asyncio.ensure_future(ctx.call("implement", RoleSpec(runner="fakeagent", timeout_minutes=1), "slow"))
+    job_file = tmp_path / "agent" / "job-slow.txt"
+    deadline = time.monotonic() + 20
+    while not (job_file.exists() and job_file.read_text().strip()) and time.monotonic() < deadline:
+        await asyncio.sleep(0.1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    job = _job_of(tmp_path, "slow", _env_of(tmp_path, "slow"))
+    assert job.rc() is not None
+    assert job.child() is None and job.supervisor() is None
+
+
+async def test_each_call_gets_its_own_jobs_dir_alloy_on_path_and_the_job_limits(tmp_path):
+    ctx = _agent_context(tmp_path, job_wait_minutes=12, job_abandon_minutes=30)
+    spec = RoleSpec(runner="fakeagent", timeout_minutes=1)
+    await ctx.call("implement", spec, "fast")
+    env = _env_of(tmp_path, "fast")
+
+    jobs_dir = Path(env[jobs.ENV_DIR])
+    assert jobs_dir.parent == ctx.log_dir / "jobs"
+    assert env[jobs.ENV_WAIT] == "12m"
+    assert env[jobs.ENV_ABANDON] == "30m"
+    assert env[jobs.ENV_PIDNS] == os.readlink("/proc/self/ns/pid")
+    shim_dir = env["PATH"].split(os.pathsep)[0]
+    # Only `alloy` goes on the agent's PATH, never the venv's python or pip.
+    assert sorted(os.listdir(shim_dir)) == ["alloy"]
+    assert env[jobs.ENV_BIN] == str(Path(shim_dir) / "alloy")
+    assert int(env["BASH_DEFAULT_TIMEOUT_MS"]) > 12 * 60_000
+
+    await ctx.call("implement", spec, "fast")
+    assert Path(_env_of(tmp_path, "fast")[jobs.ENV_DIR]) != jobs_dir
+
+
+# -- configuration and prompts -------------------------------------------------
+
+
+def test_job_limits_have_documented_defaults_and_must_leave_room_between_waits():
+    limits = Limits.parse({})
+    assert (limits.job_wait_minutes, limits.job_abandon_minutes) == (20.0, 45.0)
+    assert Limits.parse({"job_wait_minutes": 10, "job_abandon_minutes": 15}).job_wait_minutes == 10
+    with pytest.raises(ConfigError):
+        Limits.parse({"job_wait_minutes": 50})

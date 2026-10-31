@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -17,8 +18,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from alloy import jobs
 from alloy.beads import META_COMPLEXITY_ESTIMATED, META_STAGE, Bead, BeadsClient
-from alloy.config import RecipeConfig, RoleSpec, resolve_max_agent_calls, resolve_max_cheap_agent_calls
+from alloy.config import Limits, RecipeConfig, RoleSpec, resolve_max_agent_calls, resolve_max_cheap_agent_calls
 from alloy.limits import breaker, harness_for_runner, parse_retry_at
 from alloy.limits.retry import parse_limit
 from alloy.models import (
@@ -513,25 +515,22 @@ class RunContext:
         try:
             try:
                 runner = self.registry.get(spec.runner)
-                extra: dict[str, Any] = {}
-                if _accepts_on_spawn(runner):
-                    # journal 9: the row exists before the harness does; the
-                    # pid lands on it as soon as the spawn succeeds.
-                    extra["on_spawn"] = lambda pid: self.store.set_call_pid(call_id, pid)
-                if spec.effort is not None and _accepts_kwarg(runner, "effort"):
-                    extra["effort"] = spec.effort
-                if resume_session is not None and _accepts_kwarg(runner, "resume_session"):
-                    extra["resume_session"] = resume_session
-                if fork_session is not None and _accepts_kwarg(runner, "fork_session"):
-                    extra["fork_session"] = fork_session
-                result = await runner.run(
-                    prompt,
-                    self.worktree.path,
-                    model=spec.model,
-                    timeout=spec.timeout,
-                    structured_schema=schema,
-                    **extra,
-                )
+                jobs_dir = self.log_dir / "jobs" / call_id
+                extra = self._run_kwargs(runner, spec, call_id, resume_session, fork_session, jobs_dir)
+                try:
+                    result = await runner.run(
+                        prompt,
+                        self.worktree.path,
+                        model=spec.model,
+                        timeout=spec.timeout,
+                        structured_schema=schema,
+                        **extra,
+                    )
+                finally:
+                    # Success, failure, time limit or cancellation: a job the
+                    # agent started detached (setsid) escaped the harness's
+                    # process-tree kill, so stop it here.
+                    self._reap_jobs(role, jobs_dir)
             except RunnerUnavailable as exc:
                 now = utcnow()
                 result = AgentResult(
@@ -578,6 +577,55 @@ class RunContext:
             f" -- {result.error[:200]}" if result.error else "",
         )
         return result
+
+    def _run_kwargs(
+        self,
+        runner: Any,
+        spec: RoleSpec,
+        call_id: str,
+        resume_session: str | None,
+        fork_session: str | None,
+        jobs_dir: Path,
+    ) -> dict[str, Any]:
+        """The optional `run` keywords this runner declares."""
+        extra: dict[str, Any] = {}
+        if _accepts_on_spawn(runner):
+            # journal 9: the row exists before the harness does; the
+            # pid lands on it as soon as the spawn succeeds.
+            extra["on_spawn"] = lambda pid: self.store.set_call_pid(call_id, pid)
+        if spec.effort is not None and _accepts_kwarg(runner, "effort"):
+            extra["effort"] = spec.effort
+        if resume_session is not None and _accepts_kwarg(runner, "resume_session"):
+            extra["resume_session"] = resume_session
+        if fork_session is not None and _accepts_kwarg(runner, "fork_session"):
+            extra["fork_session"] = fork_session
+        if _accepts_kwarg(runner, "env"):
+            extra["env"] = self._jobs_env(runner, jobs_dir)
+        return extra
+
+    def _jobs_env(self, runner: Any, jobs_dir: Path) -> dict[str, str]:
+        """The call's own `ALLOY_JOBS_DIR` (one per call: a job never outlives
+        the call that started it, so nothing in it is ever another call's),
+        the recipe's job limits, and `alloy` on PATH."""
+        limits = getattr(self.recipe, "limits", None) or Limits()
+        return jobs.agent_env(
+            jobs_dir,
+            jobs.write_shim(self.log_dir / "bin"),
+            wait_minutes=limits.job_wait_minutes,
+            abandon_minutes=limits.job_abandon_minutes,
+            base_env={**os.environ, **(getattr(runner, "env_overrides", None) or {})},
+        )
+
+    def _reap_jobs(self, role: str, jobs_dir: Path) -> None:
+        if not jobs_dir.is_dir():
+            return
+        try:
+            stopped = jobs.reap(jobs_dir)
+        except Exception:
+            log.warning("%s: could not stop the jobs in %s", role, jobs_dir, exc_info=True)
+            return
+        if stopped:
+            log.info("%s: stopped %d job(s) the agent left running: %s", role, len(stopped), ", ".join(stopped))
 
     # -- project memory ---------------------------------------------------
 

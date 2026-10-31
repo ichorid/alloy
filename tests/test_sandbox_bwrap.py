@@ -256,3 +256,19 @@ def test_real_codex_exec_runs_inside_the_sandbox(box, tmp_path):
     proc = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
     assert proc.returncode == 0, (proc.stdout[-2000:], proc.stderr[-2000:])
     assert '"agent_message"' in proc.stdout and "ok" in proc.stdout.lower()
+
+
+async def test_a_job_an_agent_starts_in_the_sandbox_reaches_alloy_and_is_stopped_with_its_call(box, tmp_path):
+    from test_jobs import _agent_context, _env_of, _job_of
+
+    from alloy.config import RoleSpec
+
+    ctx = _agent_context(tmp_path)
+    with sb.activate(box):
+        result = await ctx.call("implement", RoleSpec(runner="fakeagent", timeout_minutes=1), "fast")
+    assert result.ok, result.error
+    env = _env_of(tmp_path, "fast")
+    assert env["ALLOY_SANDBOX_ACTIVE"] == "bwrap"
+    job = _job_of(tmp_path, "fast", env)  # `alloy job start` ran inside and printed an id
+    assert job.rc() is not None
+    assert job.child() is None and job.supervisor() is None

@@ -153,6 +153,13 @@ class Limits:
     """How many times a call stopped at its role's time limit continues its
     own session (warm prompt cache, its edits still in the tree) before the
     chain moves on to the fallback. 0 = fall back at once, as before."""
+    job_wait_minutes: float = 20.0
+    """Longest single `alloy job wait` of an agent (and, for Claude Code,
+    its shell-tool timeout): short enough that each return from a wait finds
+    the agent's prompt cache (about 30 min) still warm. See alloy.jobs."""
+    job_abandon_minutes: float = 45.0
+    """A job nobody has waited on for this long is killed as abandoned --
+    the backstop for an agent call whose end Alloy never saw."""
 
     @classmethod
     def parse(cls, raw: dict[str, Any] | None) -> "Limits":
@@ -161,6 +168,13 @@ class Limits:
         cheap_roles = raw.get("cheap_roles", defaults.cheap_roles)
         if isinstance(cheap_roles, str) or not all(isinstance(role, str) for role in cheap_roles or ()):
             raise ConfigError(f"limits.cheap_roles must be a list of role names: {cheap_roles!r}")
+        job_wait = float(raw.get("job_wait_minutes", defaults.job_wait_minutes))
+        job_abandon = float(raw.get("job_abandon_minutes", defaults.job_abandon_minutes))
+        if not 0 < job_wait < job_abandon:
+            raise ConfigError(
+                f"limits: need 0 < job_wait_minutes ({job_wait:g}) < job_abandon_minutes ({job_abandon:g}), "
+                "or a job is killed as abandoned between two waits"
+            )
         return cls(
             max_iterations=int(raw.get("max_iterations", defaults.max_iterations)),
             max_consiliums=int(raw.get("max_consiliums", defaults.max_consiliums)),
@@ -171,6 +185,8 @@ class Limits:
             max_cheap_agent_calls_by_tier=_tier_map(raw, "max_cheap_agent_calls_by_tier"),
             cheap_roles=tuple(cheap_roles or ()),
             timeout_resumes=max(0, int(raw.get("timeout_resumes", defaults.timeout_resumes))),
+            job_wait_minutes=job_wait,
+            job_abandon_minutes=job_abandon,
         )
 
     def is_cheap_role(self, role: str) -> bool:

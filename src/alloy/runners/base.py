@@ -42,6 +42,7 @@ class AgentRunner(Protocol):
         structured_schema: dict | None = None,
         on_spawn: Callable[[int], None] | None = None,
         resume_session: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> AgentResult: ...
 
 
@@ -299,6 +300,7 @@ class CLIRunner:
         on_spawn: Callable[[int], None] | None = None,
         resume_session: str | None = None,
         fork_session: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> AgentResult:
         """`on_spawn(pid)` fires once the harness exists (journal 9): the
         caller records the pid so the process group can still be killed if
@@ -310,7 +312,9 @@ class CLIRunner:
 
         `fork_session` starts a new session branched from an earlier one: it
         has everything that session saw (warm cache) but the original stays
-        as it was. The result's `session_id` is the new branch."""
+        as it was. The result's `session_id` is the new branch.
+
+        `env` is set for this call only, over the runner's own `env`."""
         if fork_session is not None and not self.can_fork():
             raise RunnerUnavailable(f"{self.name}: cannot fork a session")
         binary_path = self.resolve_binary()
@@ -327,7 +331,7 @@ class CLIRunner:
         started = utcnow()
         clock = time.monotonic()
 
-        env = {**os.environ, **self.env_overrides}
+        env = {**os.environ, **self.env_overrides, **(env or {})}
         limit_s = (timeout or DEFAULT_TIMEOUT).total_seconds()
 
         timed_out = False
