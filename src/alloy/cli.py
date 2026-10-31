@@ -19,6 +19,7 @@ from rich.table import Table
 from typer.core import TyperCommand
 
 from alloy import beads as bd
+from alloy import jobs
 from alloy.cli_common import T as T
 from alloy.cli_common import _emit as _emit
 from alloy.cli_common import _engine as _engine
@@ -782,6 +783,65 @@ def recipes_command(
     recipe: Optional[str] = typer.Option(None, "--recipe", help="Limit to one recipe"),
 ) -> None:
     return recipes_command_impl(repo, root, json, probe, recipe)
+
+
+job_app = typer.Typer(
+    help="Detached commands polled in bounded waits (see alloy.jobs). Jobs dir: $ALLOY_JOBS_DIR.",
+    no_args_is_help=True,
+)
+app.add_typer(job_app, name="job")
+
+
+@job_app.command(name="start", context_settings={"ignore_unknown_options": True, "allow_interspersed_args": False})
+def job_start(command: list[str] = typer.Argument(..., help="The command, after --")) -> None:
+    """Start COMMAND detached; prints the job id."""
+    raise typer.Exit(jobs.start(command))
+
+
+@job_app.command(name="wait")
+def job_wait(
+    job_id: Optional[str] = typer.Argument(None, metavar="[ID]", help="Default: the newest job"),
+    max_wait: Optional[str] = typer.Option(None, "--max", help="e.g. 20m (default $ALLOY_JOB_WAIT or 20m)"),
+) -> None:
+    """The command's exit code once it ends; 3 while it still runs after --max; 70 if its supervisor died."""
+    job = jobs.resolve(jobs.jobs_dir(), job_id)
+    if job is None:
+        raise typer.Exit(jobs.USAGE)
+    try:
+        max_s = jobs.parse_duration(max_wait) if max_wait else None
+    except ValueError as exc:
+        _fail(str(exc))
+    raise typer.Exit(jobs.wait(job, max_s))
+
+
+@job_app.command(name="status")
+def job_status() -> None:
+    """One line per job, newest first."""
+    raise typer.Exit(jobs.status(jobs.jobs_dir()))
+
+
+@job_app.command(name="log")
+def job_log(
+    job_id: Optional[str] = typer.Argument(None, metavar="[ID]"),
+    lines: Optional[int] = typer.Argument(None, metavar="[LINES]", help="Default 100"),
+) -> None:
+    """The last LINES lines of a job's log."""
+    base = jobs.jobs_dir()
+    if job_id is not None and lines is None and job_id.isdigit() and not (base / job_id).exists():
+        job_id, lines = None, int(job_id)  # `alloy job log 30`: lines of the newest job
+    job = jobs.resolve(base, job_id)
+    if job is None:
+        raise typer.Exit(jobs.USAGE)
+    print(job.tail(100 if lines is None else lines))
+
+
+@job_app.command(name="kill")
+def job_kill(job_id: Optional[str] = typer.Argument(None, metavar="[ID]")) -> None:
+    """Stop a job; it still publishes an exit code (see `wait`)."""
+    job = jobs.resolve(jobs.jobs_dir(), job_id)
+    if job is None:
+        raise typer.Exit(jobs.USAGE)
+    raise typer.Exit(jobs.kill(job))
 
 
 # --------------------------------------------------------------------------
