@@ -319,3 +319,18 @@ def test_processes_left_in_a_worktree_are_stopped(tmp_path, project):
             server.kill()
 
 
+
+
+def test_a_check_wrapped_in_alloy_job_start_runs_the_command_itself(tmp_path: Path) -> None:
+    # tentura-m8cx.13: the check shell has no `alloy` on PATH, so the wrapped
+    # check was exit 127 twice and the run stopped on unrunnable checks.
+    from alloy.verify import CheckRequest, unwrap_job
+
+    assert unwrap_job("alloy job start -- scripts/run_tests.sh client-gates") == ("scripts/run_tests.sh client-gates", "")
+    assert unwrap_job('"$ALLOY_BIN" job start -- make test') == ("make test", "")
+    assert unwrap_job("alloy job wait 3")[1]
+    assert unwrap_job("pytest -q") == ("pytest -q", "")
+    result = asyncio.run(run_check(CheckRequest(command="alloy job start -- sh -c 'exit 7'", purpose="p", kind="custom"), tmp_path))
+    assert result.exit_code == 7
+    refused = asyncio.run(run_check(CheckRequest(command="alloy job wait 1", purpose="p", kind="custom"), tmp_path))
+    assert refused.refused

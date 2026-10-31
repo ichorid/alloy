@@ -210,6 +210,25 @@ def normalize_command(command: str) -> str:
     return command.replace("python", replacement, 1)
 
 
+_ALLOY_JOB = re.compile(r"""^\s*(?:alloy|"?\$\{?ALLOY_BIN\}?"?)\s+job\s+(\S+)\s*(?:--\s+)?""")
+
+
+def unwrap_job(command: str) -> tuple[str, str]:
+    """The command a check should run, and why it cannot run ("" when it can).
+
+    Alloy runs a check to the end itself, so `alloy job start -- CMD` there
+    just means CMD (agents carry the jobs rule over from their own shell into
+    the checks they propose; the check shell has no `alloy` on PATH, so it was
+    exit 127, tentura-m8cx.13). Any other `alloy job ...` waits on or reads a
+    job no check started: nothing to run."""
+    match = _ALLOY_JOB.match(command)
+    if not match:
+        return command, ""
+    if match.group(1) == "start":
+        return command[match.end():], ""
+    return command, "Alloy runs each check to the end itself; give the command, not `alloy job`"
+
+
 async def run_check(
     request: CheckRequest,
     worktree: Path,
@@ -219,7 +238,8 @@ async def run_check(
     index: int = 0,
 ) -> CheckResult:
     """Run one shell command, capture what happened, persist the evidence."""
-    refused = noop_reason(request.command)
+    command, refused = unwrap_job(request.command)
+    refused = refused or noop_reason(command)
     if refused:
         return CheckResult(
             command=request.command,
@@ -233,7 +253,7 @@ async def run_check(
     sandbox = current_sandbox()
     if sandbox is not None and sandbox.kind != "off":
         # The run's sandbox: same shell, joined to the run's namespace.
-        argv, env = sandbox.wrap([_CHECK_SHELL or "/bin/sh", "-c", request.command], worktree, command_env(worktree))
+        argv, env = sandbox.wrap([_CHECK_SHELL or "/bin/sh", "-c", command], worktree, command_env(worktree))
         process = await asyncio.create_subprocess_exec(
             *argv,
             cwd=str(worktree),
@@ -245,7 +265,7 @@ async def run_check(
         )
     else:
         process = await asyncio.create_subprocess_shell(
-            request.command,
+            command,
             executable=_CHECK_SHELL,
             cwd=str(worktree),
             stdin=asyncio.subprocess.DEVNULL,
@@ -275,7 +295,7 @@ async def run_check(
     if log_dir is not None:
         log_dir.mkdir(parents=True, exist_ok=True)
         path = log_dir / f"check-{index}-{request.kind}-{int(time.time() * 1000)}.log"
-        header = f"$ {request.command}\npurpose={request.purpose}\nkind={request.kind}\nexit={exit_code}\n\n"
+        header = f"$ {command}\npurpose={request.purpose}\nkind={request.kind}\nexit={exit_code}\n\n"
         path.write_text(header + output, encoding="utf-8")
         log_path = str(path)
 

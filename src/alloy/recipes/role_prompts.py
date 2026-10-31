@@ -160,7 +160,8 @@ REFACTOR_RULE = """To restructure code, pin what it does with a test first, then
 JOBS_RULE = """Start any command that may run longer than 5 minutes (a test suite, a build, anything that may
   wait in a queue) with `alloy job start -- <command>`, then repeat `alloy job wait` until it prints the command's
   exit code (3 means still running: run the next command it prints). Never block on one command longer than one
-  wait; each return keeps your session's cache warm. (`$ALLOY_BIN` is `alloy` if it is not on PATH.)"""
+  wait; each return keeps your session's cache warm. (`$ALLOY_BIN` is `alloy` if it is not on PATH.) This is
+  for commands you run yourself: a check you hand to Alloy is run to the end by Alloy, so give it the plain command."""
 """Detached long commands (alloy.jobs), for every role that runs shell commands.
 Static text: the wait's length comes from `limits.job_wait_minutes` via the
 environment, so the rule stays byte-identical across beads, runs and recipes."""
