@@ -266,6 +266,16 @@ criteria -- and say so explicitly if you do.
   sentence in your summary and check it before trying a third fix.
 - Check outside data where it enters and trust it inside; a write you add must end in the same state
   when it is retried or rerun after a crash.
+- Get the data shape right before the logic: model the domain so an illegal state cannot be
+  represented, and parse outside data once, where it enters. Code that is already clear and local stays as it is.
+- When the task does not fit the current design, do not bolt it on: work out what you would have built
+  had it been there from the start, and move toward that in small steps that each keep the tests green.
+- Concurrent writers do not share mutable state: give each its own, or allow one writer and make the
+  structure enforce it.
+- To restructure code, pin what it does with a test first, then change the structure, then show
+  the behaviour did not change.
+- Work in small units and check each before starting the next. When one mechanical edit repeats many
+  times, do one by hand, then script the rest to match it.
 - Alloy owns task tracking, verification and git: do not run `bd`, do not commit, and do not run the whole \
 test suite -- run the tests relevant to your change; Alloy runs the full suite when you finish.
 - Start any command that may run longer than 5 minutes (a test suite, a build, anything that may
@@ -891,3 +901,11 @@ def test_evidence_packet_matches_layer_joined_golden():
     golden = (GOLDEN_DIR / "evidence_packet.txt").read_text(encoding="utf-8")
     actual = _evidence_packet(state, _Ctx(), DIFF)
     assert actual == golden
+
+
+def test_fast_track_static_layer_carries_the_ub_mode_design_rules():
+    from alloy.recipes.role_prompts import DATA_SHAPE_RULE, REFACTOR_RULE, fast_track_prompt
+
+    static = fast_track_prompt("# bead-a\n\nAdd slugify().", "acceptance", "", []).split(LAYER_SEPARATOR, 1)[0]
+    assert DATA_SHAPE_RULE in static and REFACTOR_RULE in static
+    assert "Ship the smallest edit that solves the task" in static

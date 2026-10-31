@@ -151,6 +151,12 @@ ROOT_CAUSE_RULE = """Fix the cause, not the symptom: a guard, catch, retry or lo
 NO_SILENCING_RULE = """Do not silence the compiler, analyzer or linters to get through a gate: no casts, ignore
   comments or non-null assertions just to quiet a diagnostic, and never raise an analyzer or lint baseline."""
 
+DATA_SHAPE_RULE = """Get the data shape right before the logic: model the domain so an illegal state cannot be
+  represented, and parse outside data once, where it enters. Code that is already clear and local stays as it is."""
+
+REFACTOR_RULE = """To restructure code, pin what it does with a test first, then change the structure, then show
+  the behaviour did not change."""
+
 JOBS_RULE = """Start any command that may run longer than 5 minutes (a test suite, a build, anything that may
   wait in a queue) with `alloy job start -- <command>`, then repeat `alloy job wait` until it prints the command's
   exit code (3 means still running: run the next command it prints). Never block on one command longer than one
@@ -299,6 +305,14 @@ criteria -- and say so explicitly if you do.
   sentence in your summary and check it before trying a third fix.
 - Check outside data where it enters and trust it inside; a write you add must end in the same state
   when it is retried or rerun after a crash.
+- {DATA_SHAPE_RULE}
+- When the task does not fit the current design, do not bolt it on: work out what you would have built
+  had it been there from the start, and move toward that in small steps that each keep the tests green.
+- Concurrent writers do not share mutable state: give each its own, or allow one writer and make the
+  structure enforce it.
+- {REFACTOR_RULE}
+- Work in small units and check each before starting the next. When one mechanical edit repeats many
+  times, do one by hand, then script the rest to match it.
 - Alloy owns task tracking, verification and git: do not run `bd`, do not commit, and do not run the whole \
 test suite -- run the tests relevant to your change; Alloy runs the full suite when you finish.
 - {JOBS_RULE}
@@ -380,6 +394,9 @@ Rules:
   or run check is enough -- do not write a test that asserts nothing.
 - {ROOT_CAUSE_RULE}
 - {NO_SILENCING_RULE}
+- Ship the smallest edit that solves the task, and keep each decision in one place.
+- {DATA_SHAPE_RULE}
+- {REFACTOR_RULE}
 - Alloy owns task tracking and git: do not run `bd`, do not commit.
 - {JOBS_RULE}
 
