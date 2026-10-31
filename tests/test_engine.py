@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -73,6 +74,89 @@ async def test_in_place_run_refuses_to_start_on_a_dirty_primary_checkout(engine,
 
     with pytest.raises(EngineError, match="uncommitted tracked changes"):
         await engine.run(bead_id)
+
+
+async def test_in_place_run_refuses_to_start_beside_untracked_files(engine, beads_project, fake_harnesses):
+    """commit_wip's `git add -A` would sweep another session's untracked file
+    into the bead's commit (tentura-m8cx.11), so a fresh start refuses too."""
+    for index in range(12):
+        (beads_project / "docs" / "plans").mkdir(parents=True, exist_ok=True)
+        (beads_project / "docs" / "plans" / f"draft-{index:02}.md").write_text("wip\n", encoding="utf-8")
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+
+    with pytest.raises(EngineError, match="untracked files") as refused:
+        await engine.run(bead_id)
+
+    message = str(refused.value)
+    assert "docs/plans/draft-00.md" in message
+    assert "docs/plans/draft-09.md" in message
+    assert "docs/plans/draft-10.md" not in message
+    assert "+2 more" in message
+    assert "gitignore" in message
+    assert fake_harnesses.calls == []
+
+
+async def test_ignored_files_do_not_block_an_in_place_start(engine, beads_project, fake_harnesses):
+    (beads_project / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".gitignore"], cwd=beads_project, check=True)
+    subprocess.run(["git", "commit", "-qm", "ignore logs"], cwd=beads_project, check=True)
+    (beads_project / "build.log").write_text("noise\n", encoding="utf-8")
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+
+    assert (await engine.run(bead_id)).outcome == "done"
+
+
+@pytest.mark.parametrize("state_dir", [".alloy", "alloy-state"])
+async def test_alloys_own_state_dir_in_the_checkout_does_not_block_a_start(
+    beads_project, alloy_home, monkeypatch, fake_harnesses, state_dir
+):
+    """Not gitignored here on purpose: Alloy's own files never count as
+    someone's work. (Only the start is asserted: an un-ignored state dir
+    inside the checkout is not a supported layout past that.)"""
+    engine = Engine.open(beads_project, beads_project / state_dir)
+    monkeypatch.setattr(engine, "load_config", lambda name: load_config())
+    (beads_project / state_dir / "scheduler.log").write_text("started\n", encoding="utf-8")
+    fake_harnesses.configure(script())
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+
+    await engine.run(bead_id)
+
+    assert fake_harnesses.calls_for("context")
+
+
+async def test_a_resume_of_the_beads_own_work_ignores_untracked_files(engine, beads_project, fake_harnesses):
+    """Untracked files left by the bead's own earlier attempt are its work."""
+    fake_harnesses.configure(
+        script(
+            implement=[implement_entry(succeed=False), implement_entry(succeed=True)],
+            judge=[judge_entry("human", "need a decision"), judge_entry("done")],
+        )
+    )
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    paused = await engine.run(bead_id)
+    assert paused.outcome == "waiting-human"
+    (beads_project / "mypkg" / "helper.py").write_text("HELPER = 1\n", encoding="utf-8")
+
+    assert (await engine.resume(bead_id, "go on")).outcome == "done"
+
+
+async def test_a_rerun_of_the_beads_own_work_ignores_untracked_files(engine, beads_project, fake_harnesses):
+    fake_harnesses.configure(
+        script(implement=[implement_entry(succeed=False)], judge=[judge_entry("human", "need a decision")])
+    )
+    bead_id = bd_create(beads_project, "add slugify", alloy_recipe="tdd-loop")
+    abandoned = await engine.run(bead_id)
+    engine.cancel(bead_id)
+    (beads_project / "mypkg" / "helper.py").write_text("HELPER = 1\n", encoding="utf-8")
+    fake_harnesses.reset_calls()
+    fake_harnesses.configure(script())
+
+    rerun = await engine.run(bead_id)
+
+    assert rerun.run_id != abandoned.run_id
+    assert rerun.outcome == "done"
 
 
 async def test_the_bead_is_claimed_before_any_agent_runs(engine, beads_project, fake_harnesses):

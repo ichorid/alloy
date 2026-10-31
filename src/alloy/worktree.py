@@ -202,6 +202,20 @@ class WorktreeManager:
         proc = _git(["status", "--porcelain", "--untracked-files=no"], path, check=False)
         return bool(proc.stdout.strip())
 
+    def untracked_files(self, path: Path, *, exclude: tuple[str, ...] = ()) -> list[str]:
+        """Every untracked, not-ignored file in `path` (`git ls-files --others
+        --exclude-standard`), minus `.alloy/`, `.beads/`, bd's
+        `.beads.gate.lock` beside it and the directories in `exclude` (paths
+        relative to `path`): Alloy's own state and the bead database are
+        never someone's in-progress work."""
+        excludes = [
+            *junk_pathspecs(FINGERPRINT_EXCLUDES),
+            ":(exclude,glob)**/.beads.gate.lock*",
+            *(f":(exclude,literal){d}" for d in exclude),
+        ]
+        proc = _git(["ls-files", "--others", "--exclude-standard", "-z", "--", ".", *excludes], path, check=False)
+        return [name for name in proc.stdout.split("\0") if name]
+
     def head(self, path: Path) -> str:
         """The worktree's current HEAD commit."""
         return self._head(path)

@@ -50,6 +50,9 @@ from alloy.worktree import Worktree, WorktreeError, WorktreeManager
 
 RECURSION_LIMIT = 200
 
+_UNTRACKED_SHOWN = 10
+"""How many untracked files the in-place start refusal names."""
+
 log = logging.getLogger("alloy.engine")
 
 
@@ -537,18 +540,27 @@ class Engine:
             # on record) both mean dirty state here is this bead's own work,
             # not something foreign to refuse on.
             retrying_own_work = not fresh or any(r["run_id"] != run_id for r in self.store.runs_for_bead(bead.id))
-            if not base_commit and not retrying_own_work and worktrees.has_uncommitted_tracked_changes(self.repo):
+            if not base_commit and not retrying_own_work:
                 # commit_wip does `git add -A`: on a truly fresh in-place
                 # start (never run before, not a resume/retry of this
                 # bead's own prior attempt) a pre-existing modified/staged
-                # tracked file would be silently swept into this bead's
-                # diff and commit. Refuse instead of mixing it in.
-                # Untracked clutter (e.g. `.beads/`) is left alone -- it's
-                # normal checkout noise, not someone's in-progress edit.
-                raise WorktreeError(
-                    f"primary checkout {self.repo} has uncommitted tracked changes; "
-                    f"commit or stash them before running {bead.id}"
-                )
+                # tracked file, or an untracked one (another session's draft,
+                # tentura-m8cx.11), would be silently swept into this bead's
+                # diff and commit. Refuse instead of mixing it in. Ignored
+                # files and Alloy's own state dirs never count.
+                if worktrees.has_uncommitted_tracked_changes(self.repo):
+                    raise WorktreeError(
+                        f"primary checkout {self.repo} has uncommitted tracked changes; "
+                        f"commit or stash them before running {bead.id}"
+                    )
+                untracked = worktrees.untracked_files(self.repo, exclude=self._own_dirs_in_repo())
+                if untracked:
+                    shown = ", ".join(untracked[:_UNTRACKED_SHOWN])
+                    more = f" +{len(untracked) - _UNTRACKED_SHOWN} more" if len(untracked) > _UNTRACKED_SHOWN else ""
+                    raise WorktreeError(
+                        f"primary checkout {self.repo} has untracked files: {shown}{more}; "
+                        f"commit, stash, delete or gitignore them before running {bead.id}"
+                    )
         log_dir = self.paths.run_logs(run_id)
         log_dir.mkdir(parents=True, exist_ok=True)
         bead = self._linted_bead(bead, recipe_name, config, run_id=run_id, announce=fresh)
@@ -575,6 +587,15 @@ class Engine:
             limit_state=self.limit_state_reader(),
         )
         return ctx
+
+    def _own_dirs_in_repo(self) -> tuple[str, ...]:
+        """Alloy's state root, relative to the repo, when it lives inside it
+        under a name other than `.alloy/` (`ALLOY_ROOT`, `Engine.open(root=)`)."""
+        try:
+            relative = self.paths.root.relative_to(self.repo).as_posix()
+        except ValueError:
+            return ()
+        return (relative,) if relative != "." else ()
 
     def _linted_bead(self, bead: Bead, recipe_name: str, config: RecipeConfig, *, run_id: str, announce: bool) -> Bead:
         """The bead this run's agents see -- unchanged. The brief lint

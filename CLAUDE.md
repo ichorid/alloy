@@ -112,8 +112,9 @@ concurrency-safe: two beads cannot run in place at once, and Alloy commits WIP
 there with a plain `git add -A`, which cannot tell its own bead's changes
 apart from anyone else's. To avoid silently sweeping unrelated work into a
 bead's diff/commit, a fresh (non-resume, non-retry) in-place start refuses to
-begin while the primary checkout has uncommitted changes to *tracked* files
-(untracked clutter such as `.beads/` is ignored). Beads that need real
+begin while the primary checkout has uncommitted changes to tracked files or
+untracked, not-ignored files (gitignored files and Alloy's own `.alloy/`,
+`.beads/` state never count). Beads that need real
 concurrency or run alongside manual edits to the repo should set
 `alloy_use_worktree`.
 

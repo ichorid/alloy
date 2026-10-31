@@ -80,7 +80,7 @@ A bead runs directly on the primary checkout and finishes `done` on its own once
 
 ## Doing work by hand
 - Beads run in place on the primary checkout, always. Don't edit the checkout while a bead runs; stop first (`alloy stop`, then wait).
-- Commit before letting Alloy start again: an in-place start refuses while tracked files are uncommitted.
+- Commit before letting Alloy start again: an in-place start refuses while tracked files are uncommitted or untracked, not-ignored files sit in the checkout (commit, stash, delete or gitignore them).
 - Finishing a bead yourself: run the quality gates (tests, lint, build), commit (no push), `bd close <bead>`, then `alloy reconcile <bead> --apply` to clear stale run state.
 - Epics close once all their children are closed. Don't run epics.
 - Checklists and gates: label them `manual`, complete them yourself, then close them.
