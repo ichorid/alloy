@@ -118,11 +118,17 @@ Two optional refinements, both worth doing rather than leaving to chance:
   ```bash
   bd update <bead-id> --set-metadata alloy_test_cmd='pytest -q tests/oauth'
   ```
+  A long suite is fine as a hint or a check. Agents start long commands as
+  `alloy job`s and poll them, so the bead text needs no instructions on how
+  to run them.
 - **Override recipe limits** for a bead you know is legitimately larger than
   the default budget (5 iterations / 90 minutes / 20 agent calls) can
   reasonably cover, rather than letting it discover that the hard way. Drop an
   override file under `<repo>/.alloy/recipes/` and point the bead at it with
   `--recipe`, instead of inflating the shared default for every other bead.
+  If the override names a Cursor model, it must be an explicit non-fast id
+  (`composer-2.5`, `grok-4.7-high`), never `*-fast`, a bare family name or
+  `auto`: Cursor defaults to its fast variants.
 
 ### 6. Sanity-check the shape before handing off
 

@@ -212,6 +212,14 @@ roles:
   judge:     {runner: claude, model: sonnet}
 ```
 
+Cursor roles (`cursor`, `cursor-plan`) take the CLI's model ids, and every
+id must be an explicit **non-fast** variant: `composer-2.5`, `grok-4.7-high`.
+Never use `*-fast`, a bare family name or `auto`. Cursor defaults to its fast
+variants, which bill at several times the price (in the cloud API,
+`composer-2.5` defaults to fast=true and `grok-4.7` to High Fast in MAX mode).
+`agent --list-models` lists the ids. Cursor's usage feed names the variant
+each call actually used.
+
 Drop a file in `~/.alloy/recipes/` or `<repo>/.alloy/recipes/` to override the
 built-in of the same file name. The graph is looked up by the recipe's name, so
 a recipe under a new name says which registered graph it runs:
