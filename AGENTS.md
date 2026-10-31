@@ -100,6 +100,7 @@ alloy start [--poll SECS] [--recipe N]  # scheduler: poll Beads, run READY work,
 alloy stop [--now]                    # stop the scheduler after the current task (--now: cancel it too)
 alloy monitor [--once [--json]]       # live htop-style view of every active run; --once prints one snapshot
 alloy limits [--json]                 # probe installed harness usage limits; refresh limits.json
+alloy job start -- <cmd> | wait [id] | status | log | kill   # detached long commands (agents use these)
 ```
 
 Beads labelled `manual` or `merge-gate` (or with `alloy_manual=true`) are
@@ -132,6 +133,14 @@ when_packages_touched_over: M, package_roots: [glob...], to: <recipe>}`
 reroutes a bead that ran N implement rounds without done, or touched more
 than M package roots, to `<recipe>` -- like `alloy reroute`, with a bead note
 and an `escalated` event.
+
+Agents start long commands (suites, builds, anything that may queue) with
+`alloy job start -- <cmd>` and poll with `alloy job wait`, which returns
+within `limits.job_wait_minutes` (default 20) so their prompt cache stays
+warm; a job nobody polls for `limits.job_abandon_minutes` (default 45) is
+killed. Each agent call has its own jobs dir, and Alloy stops every job still
+running there when the call ends. Project scripts need no change -- see
+README "Long commands: `alloy job`".
 
 Ctrl-C or SIGTERM on `alloy run` stops the harness with it and leaves the run
 resumable (`alloy run <bead-id>` again picks it up). The detached scheduler

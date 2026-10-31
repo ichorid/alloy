@@ -402,6 +402,55 @@ setuid tools (sudo) do not work inside. The scheduler logs the probe result
 and the resolved cap at start; `alloy status --json` shows them under
 `sandbox.host` and each active run's sandbox under `sandbox.runs`.
 
+### Long commands: `alloy job`
+
+An agent's prompt cache lives about 30 minutes. An agent that blocks inside
+one long command -- a test suite, often queued behind other suites on the
+same machine -- comes back to a cold cache and re-reads its whole context at
+full price. So every role that runs shell commands (tests, implement,
+fast-track) is told in its static prompt layer to start anything that may run
+longer than 5 minutes detached and poll it:
+
+```bash
+alloy job start -- ./scripts/run_tests.sh all   # prints the job id
+alloy job wait [id] [--max 20m]   # the command's exit code; 3 = still running, 70 = supervisor died
+alloy job status | log [id] [lines] | kill [id]
+```
+
+Each `wait` returns within `limits.job_wait_minutes`, printing the log tail
+and the exact next command, so every return is a new turn on a warm cache. A
+finished wait prints the tail and the full log path and exits with the
+command's own code (a command that itself exits 3 or 70 is told apart by the
+last line, `finished rc=N`). `id` defaults to the newest job.
+
+```yaml
+limits:
+  job_wait_minutes: 20      # longest single `alloy job wait`
+  job_abandon_minutes: 45   # a job nobody waited on this long is killed
+```
+
+Every agent call gets its own jobs dir, `<log_dir>/jobs/<call-id>`
+(`ALLOY_JOBS_DIR`), and `alloy` on its PATH (a one-file shim that runs this
+Alloy installation, also `$ALLOY_BIN`; the venv's own `python` is never put
+on the agent's PATH), inside the bubblewrap sandbox too. When the call ends
+-- success, failure, time limit or cancellation -- Alloy stops every job
+still running there (TERM to the command's tree, KILL after 5 s); a job is
+started in its own session, so the harness's process-tree kill would miss it.
+A job therefore never outlives its call, and a resumed session starts with an
+empty jobs dir. If Alloy itself dies, the abandonment timeout is the
+backstop. Job logs stay with the run's logs.
+
+A project's own long check scripts need no change: an agent wraps whatever
+it would have run, and the checks Alloy runs itself (verifier checks,
+`landing_gate`, `graph: script`) involve no agent cache at all. Two harness
+details: Claude Code's shell-tool timeouts (`BASH_DEFAULT_TIMEOUT_MS`,
+`BASH_MAX_TIMEOUT_MS`) are raised for the call to just over the wait unless
+already set higher; and a shell in a separate pid namespace (Codex's own
+`workspace-write` sandbox) kills everything it started when the tool call
+returns, so there `alloy job start` runs the command in the foreground and
+says so. Outside Alloy, `alloy job` works by hand with jobs under
+`$XDG_STATE_HOME/alloy/jobs`.
+
 ## Project memory
 
 Alloy keeps what it learns about a repository in Beads memories (`bd remember`,
@@ -499,6 +548,7 @@ src/alloy/
   engine.py      start, resume, settle
   scheduler.py   poll, claim, run — no LLM
   procs.py       process-tree control: a stopped run takes its harness with it
+  jobs.py        `alloy job`: detached commands agents poll in bounded waits
   usage.py       one shape for every harness's token report
   events.py      the attention feed (events.jsonl) behind `alloy events`
   store.py       runs, agent calls, in-flight calls — the ledger
