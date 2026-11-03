@@ -121,7 +121,7 @@ async def test_tiered_tests_role_uses_the_complexity_tier_chain(project, alloy_h
 
     assert final["outcome"] == "done"
     row = rows(harness, "tests")[0]
-    assert (row["runner"], row["model"]) == ("cursor", "kimi-k3-high")
+    assert (row["runner"], row["model"]) == ("cursor", "glm-5.2-high")
 
 
 def config_with_panel(*, fallback: bool = True):

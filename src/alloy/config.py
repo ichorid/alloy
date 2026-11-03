@@ -27,7 +27,7 @@ DEFAULT_ROLE_TIMEOUT_MIN = 20.0
 
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 
-# Cursor has no effort knob: the effort lives in the model id (kimi-k3-high).
+# Cursor has no effort knob: the effort lives in the model id (glm-5.2-high).
 _RUNNERS_WITHOUT_EFFORT = ("cursor", "cursor-plan")
 
 

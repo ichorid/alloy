@@ -37,7 +37,7 @@ EXPECTED_PROBE_KEYS = {
     ("claude-write", "haiku", "low"),
     ("codex", "gpt-6.1-sol", "high"),
     ("claude-write", "sonnet", "high"),
-    ("cursor", "kimi-k3-high", None),
+    ("cursor", "glm-5.2-high", None),
     ("claude-write", "claude-sonnet-5-5", None),
     ("codex", "gpt-6.1-sol", None),
 }
@@ -110,7 +110,7 @@ def test_recipes_json_exports_complexity_tiers(project, alloy_home, fake_harness
     complex_tier = complexity["tiers"]["complex"]
     assert complex_tier[0] == {
         "runner": "cursor",
-        "model": "kimi-k3-high",
+        "model": "glm-5.2-high",
         "effort": None,
         "available": fake_harnesses.bindir.joinpath("cursor-agent").exists(),
     }
@@ -128,7 +128,7 @@ def test_recipes_table_lists_routing_tiers_models_and_effort(project, alloy_home
         "medium",
         "complex",
         "composer-2.5",
-        "kimi-k3-high",
+        "glm-5.2-high",
         "@low",
     ):
         assert needle in output

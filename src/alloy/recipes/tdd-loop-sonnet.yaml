@@ -1,7 +1,7 @@
 name: tdd-loop-sonnet
 
 # Same as tdd-loop, except the medium tier implements with Claude Sonnet first
-# and falls back to Codex (gpt-6.1-sol). The complex tier goes Opus 5.5, Codex gpt-6.1-sol (max), then Kimi.
+# and falls back to Codex (gpt-6.1-sol). The complex tier goes Opus 5.5, Codex gpt-6.1-sol (max), then GLM.
 # The tests role is tiered too, and tests_review adds an independent read-only
 # check of the tests before implementation. The verifier stays on cursor.
 
@@ -11,7 +11,7 @@ complexity:
   escalate_after_retries: 2
   # A tier is a priority-ordered runner list: the first is primary, the rest fallbacks.
   # `effort` is per entry (claude --effort, codex model_reasoning_effort); cursor has
-  # no effort knob and encodes it in the model id (kimi-k3-high).
+  # no effort knob and encodes it in the model id (glm-5.2-high).
   tiers:
     simple:
       - {runner: cursor, model: composer-2.5}
@@ -23,7 +23,7 @@ complexity:
     complex:
       - {runner: claude-write, model: claude-sonnet-5-5}
       - {runner: codex, model: gpt-6.1-sol, effort: max}
-      - {runner: cursor, model: kimi-k3-high}
+      - {runner: cursor, model: glm-5.2-high}
 
 roles:
   harvest:

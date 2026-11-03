@@ -61,7 +61,7 @@ REGISTRY: dict[str, Recipe] = {
         name="tdd-loop-complex-no-context",
         build_graph=partial(tdd_loop.build_graph, skip_context=True),
         initial_state=tdd_loop.initial_state,
-        description="Fixed complex-tier tdd-loop (no live complexity routing): Sonnet primary, Codex gpt-6.1-sol then Cursor kimi-k3-high fallback",
+        description="Fixed complex-tier tdd-loop (no live complexity routing): Sonnet primary, Codex gpt-6.1-sol then Cursor glm-5.2-high fallback",
     ),
     "fast-track": Recipe(
         name="fast-track",

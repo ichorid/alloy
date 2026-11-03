@@ -5,9 +5,9 @@ roles:
   estimate: {runner: jev, model: jev-latest, timeout_minutes: 5, fallback: {runner: cursor, model: composer-2.5, timeout_minutes: 5}}
   triage: {runner: jev, model: jev-latest, timeout_minutes: 5, fallback: {runner: cursor, model: composer-2.5, timeout_minutes: 5}}
   scope: {runner: jev, model: jev-latest, timeout_minutes: 5, fallback: {runner: cursor, model: composer-2.5, timeout_minutes: 5}}
-  tests: {runner: claude-write, model: claude-sonnet-5-5, timeout_minutes: 20, fallback: {runner: codex, model: gpt-6.1-sol, effort: max, timeout_minutes: 20, fallback: {runner: cursor, model: kimi-k3-high, timeout_minutes: 20}}}
+  tests: {runner: claude-write, model: claude-sonnet-5-5, timeout_minutes: 20, fallback: {runner: codex, model: gpt-6.1-sol, effort: max, timeout_minutes: 20, fallback: {runner: cursor, model: glm-5.2-high, timeout_minutes: 20}}}
   tests_review: {panel: [{runner: cursor-plan, model: composer-2.5, timeout_minutes: 10}, {runner: codex-readonly, model: gpt-6-luna, timeout_minutes: 10}], fallback: {runner: claude, model: sonnet, effort: low, timeout_minutes: 10}}
-  implement: {runner: claude-write, model: claude-sonnet-5-5, timeout_minutes: 25, fallback: {runner: codex, model: gpt-6.1-sol, effort: max, timeout_minutes: 25, fallback: {runner: cursor, model: kimi-k3-high, timeout_minutes: 25}}}
+  implement: {runner: claude-write, model: claude-sonnet-5-5, timeout_minutes: 25, fallback: {runner: codex, model: gpt-6.1-sol, effort: max, timeout_minutes: 25, fallback: {runner: cursor, model: glm-5.2-high, timeout_minutes: 25}}}
   verifier: {runner: cursor, model: composer-2.5, timeout_minutes: 10, fallback: {runner: claude-write, model: sonnet, timeout_minutes: 10}}
   acceptance: {runner: jev, model: jev-latest, timeout_minutes: 5, fallback: {runner: claude, model: sonnet, timeout_minutes: 5}}
   judge: {runner: claude, model: sonnet, timeout_minutes: 10}
