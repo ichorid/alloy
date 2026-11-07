@@ -1,0 +1,1267 @@
+{
+  "meta": {
+    "scenario": "full",
+    "version": 1,
+    "alloy_sha": "d3093ff1598003d264885e1e36747aa9e656f2ba",
+    "seed_sha": "084fe8e512b297e8996cbf8ab56f3ec222df46cb",
+    "toy": "/home/vader/MY_SRC/alloy-toy-sheet-full-6",
+    "reported_at": "2026-11-07T19:04:35.644322+00:00",
+    "deadline_hit": false,
+    "cli": {
+      "cursor-agent": "2026.11.05-86047df",
+      "claude": "2.1.319 (Claude Code)",
+      "bd": "bd version 1.3.0 (f45b249ce)"
+    }
+  },
+  "oracle": {
+    "score": 0.158,
+    "passed": 21,
+    "total": 152,
+    "areas": {
+      "cells": {
+        "passed": 10,
+        "total": 10,
+        "fraction": 1.0
+      },
+      "format": {
+        "passed": 2,
+        "total": 5,
+        "fraction": 0.4
+      },
+      "arith": {
+        "passed": 0,
+        "total": 14,
+        "fraction": 0.0
+      },
+      "refs": {
+        "passed": 0,
+        "total": 12,
+        "fraction": 0.0
+      },
+      "ranges": {
+        "passed": 0,
+        "total": 14,
+        "fraction": 0.0
+      },
+      "errors": {
+        "passed": 0,
+        "total": 14,
+        "fraction": 0.0
+      },
+      "logic": {
+        "passed": 0,
+        "total": 14,
+        "fraction": 0.0
+      },
+      "copy": {
+        "passed": 0,
+        "total": 10,
+        "fraction": 0.0
+      },
+      "rows": {
+        "passed": 0,
+        "total": 10,
+        "fraction": 0.0
+      },
+      "undo": {
+        "passed": 1,
+        "total": 8,
+        "fraction": 0.125
+      },
+      "files": {
+        "passed": 1,
+        "total": 8,
+        "fraction": 0.125
+      },
+      "csv": {
+        "passed": 0,
+        "total": 6,
+        "fraction": 0.0
+      },
+      "sheets": {
+        "passed": 0,
+        "total": 8,
+        "fraction": 0.0
+      },
+      "names": {
+        "passed": 0,
+        "total": 7,
+        "fraction": 0.0
+      },
+      "perf": {
+        "passed": 0,
+        "total": 4,
+        "fraction": 0.0
+      },
+      "robust": {
+        "passed": 7,
+        "total": 8,
+        "fraction": 0.875
+      }
+    }
+  },
+  "oracle_failures": [
+    {
+      "area": "format",
+      "name": "integer from formula",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=2*3']"
+    },
+    {
+      "area": "format",
+      "name": "half",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1/2']"
+    },
+    {
+      "area": "format",
+      "name": "two and a half",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=10/4']"
+    },
+    {
+      "area": "arith",
+      "name": "precedence",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=1+2*3']"
+    },
+    {
+      "area": "arith",
+      "name": "parentheses",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=(1+2)*3']"
+    },
+    {
+      "area": "arith",
+      "name": "left to right minus",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=10-4-3']"
+    },
+    {
+      "area": "arith",
+      "name": "power",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=2^3']"
+    },
+    {
+      "area": "arith",
+      "name": "unary minus",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=-2+5']"
+    },
+    {
+      "area": "arith",
+      "name": "left to right divide",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=8/4/2']"
+    },
+    {
+      "area": "arith",
+      "name": "decimal operand",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1.5*2']"
+    },
+    {
+      "area": "arith",
+      "name": "spaces",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['= 1 + 2']"
+    },
+    {
+      "area": "arith",
+      "name": "times negative",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=2*-3']"
+    },
+    {
+      "area": "arith",
+      "name": "nested parentheses",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=(((4)))']"
+    },
+    {
+      "area": "arith",
+      "name": "division",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=10/4']"
+    },
+    {
+      "area": "arith",
+      "name": "minus negative",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=5-(-2)']"
+    },
+    {
+      "area": "arith",
+      "name": "float sum",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=0.1+0.2']"
+    },
+    {
+      "area": "arith",
+      "name": "long expression",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1+2+3+4+5+6+7+8+9+10']"
+    },
+    {
+      "area": "refs",
+      "name": "simple reference",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1*3']"
+    },
+    {
+      "area": "refs",
+      "name": "recalc after change",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1*3']"
+    },
+    {
+      "area": "refs",
+      "name": "chain",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=B1+1']"
+    },
+    {
+      "area": "refs",
+      "name": "empty counts as zero",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1+1']"
+    },
+    {
+      "area": "refs",
+      "name": "two references",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1*B1']"
+    },
+    {
+      "area": "refs",
+      "name": "lowercase in formula",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=a1+1']"
+    },
+    {
+      "area": "refs",
+      "name": "double-letter column",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=AA1*2']"
+    },
+    {
+      "area": "refs",
+      "name": "large row",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A100+1']"
+    },
+    {
+      "area": "refs",
+      "name": "set before dependency",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=A1+B1']"
+    },
+    {
+      "area": "refs",
+      "name": "middle formula changes",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=B1*10']"
+    },
+    {
+      "area": "refs",
+      "name": "formula replaced by value",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=B1+1']"
+    },
+    {
+      "area": "refs",
+      "name": "several dependents",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1', '=A1*2']"
+    },
+    {
+      "area": "ranges",
+      "name": "SUM",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=SUM(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "AVERAGE",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=AVERAGE(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "MIN",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=MIN(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "MAX",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=MAX(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "COUNT ignores text",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=COUNT(A1:A4)']"
+    },
+    {
+      "area": "ranges",
+      "name": "SUM ignores text",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:A4)']"
+    },
+    {
+      "area": "ranges",
+      "name": "2D range",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:B2)']"
+    },
+    {
+      "area": "ranges",
+      "name": "range plus number",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:A2,5)']"
+    },
+    {
+      "area": "ranges",
+      "name": "empty range is zero",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "lowercase function",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=sum(a1:a3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "function in expression",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:A3)*2+1']"
+    },
+    {
+      "area": "ranges",
+      "name": "reversed range",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A3:A1)']"
+    },
+    {
+      "area": "ranges",
+      "name": "range recalc",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "nested functions",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=MAX(A1:A3)-MIN(A1:A3)']"
+    },
+    {
+      "area": "errors",
+      "name": "divide by zero",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1/0']"
+    },
+    {
+      "area": "errors",
+      "name": "divide by empty",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=5/B1']"
+    },
+    {
+      "area": "errors",
+      "name": "error propagates",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1+1']"
+    },
+    {
+      "area": "errors",
+      "name": "unknown function",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=FROB(1)']"
+    },
+    {
+      "area": "errors",
+      "name": "text in arithmetic",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1+1']"
+    },
+    {
+      "area": "errors",
+      "name": "self reference",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1+1']"
+    },
+    {
+      "area": "errors",
+      "name": "two-cell cycle",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=B1', '=A1']"
+    },
+    {
+      "area": "errors",
+      "name": "three-cell cycle",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1']"
+    },
+    {
+      "area": "errors",
+      "name": "cycle broken recovers",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=B1']"
+    },
+    {
+      "area": "errors",
+      "name": "cycle through range",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=SUM(A1:A3)']"
+    },
+    {
+      "area": "errors",
+      "name": "malformed formula",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1+']"
+    },
+    {
+      "area": "errors",
+      "name": "error in range",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=SUM(A1:A2)']"
+    },
+    {
+      "area": "errors",
+      "name": "error fixed recovers",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=1/A1']"
+    },
+    {
+      "area": "errors",
+      "name": "dependent of cycle",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1+1']"
+    },
+    {
+      "area": "logic",
+      "name": "IF true",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=IF(1>0,\"yes\",\"no\")']"
+    },
+    {
+      "area": "logic",
+      "name": "IF on cell",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=IF(A1>=10,\"big\",\"small\")']"
+    },
+    {
+      "area": "logic",
+      "name": "IF false",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=IF(A1>=10,\"big\",\"small\")']"
+    },
+    {
+      "area": "logic",
+      "name": "equals",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1=1']"
+    },
+    {
+      "area": "logic",
+      "name": "not equals",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=2<>2']"
+    },
+    {
+      "area": "logic",
+      "name": "AND",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=AND(1>0,2>3)']"
+    },
+    {
+      "area": "logic",
+      "name": "OR",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=OR(1>0,2>3)']"
+    },
+    {
+      "area": "logic",
+      "name": "NOT",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=NOT(1>0)']"
+    },
+    {
+      "area": "logic",
+      "name": "join text",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=\"a\"&\"b\"']"
+    },
+    {
+      "area": "logic",
+      "name": "join cells",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1&\" \"&B1']"
+    },
+    {
+      "area": "logic",
+      "name": "LEN",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=LEN(\"hello\")']"
+    },
+    {
+      "area": "logic",
+      "name": "UPPER",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=UPPER(A1)']"
+    },
+    {
+      "area": "logic",
+      "name": "LOWER",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=LOWER(\"AbC\")']"
+    },
+    {
+      "area": "logic",
+      "name": "IF numeric result",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=IF(A1>2,A1*2,0)']"
+    },
+    {
+      "area": "copy",
+      "name": "relative down",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '']"
+    },
+    {
+      "area": "copy",
+      "name": "relative right",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '']"
+    },
+    {
+      "area": "copy",
+      "name": "absolute",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '']"
+    },
+    {
+      "area": "copy",
+      "name": "row anchored",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '']"
+    },
+    {
+      "area": "copy",
+      "name": "column anchored",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '']"
+    },
+    {
+      "area": "copy",
+      "name": "plain value",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '']"
+    },
+    {
+      "area": "copy",
+      "name": "range shifts",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR unknown command', '']"
+    },
+    {
+      "area": "copy",
+      "name": "copy is independent",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '']"
+    },
+    {
+      "area": "copy",
+      "name": "overwrites target",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '99']"
+    },
+    {
+      "area": "copy",
+      "name": "off the sheet",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR unknown command', '']"
+    },
+    {
+      "area": "rows",
+      "name": "insert moves cells",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR unknown command', '', '5']"
+    },
+    {
+      "area": "rows",
+      "name": "insert keeps reference",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '']"
+    },
+    {
+      "area": "rows",
+      "name": "insert below keeps",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '=A1']"
+    },
+    {
+      "area": "rows",
+      "name": "delete moves cells up",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '1']"
+    },
+    {
+      "area": "rows",
+      "name": "delete referenced row",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR unknown command', '=A2']"
+    },
+    {
+      "area": "rows",
+      "name": "delete keeps reference",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR unknown command', '=A3']"
+    },
+    {
+      "area": "rows",
+      "name": "insert inside range grows it",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR unknown command', '=SUM(A1:A3)']"
+    },
+    {
+      "area": "rows",
+      "name": "delete inside range shrinks it",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR unknown command', '=SUM(A1:A3)']"
+    },
+    {
+      "area": "rows",
+      "name": "formula moves with row",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '']"
+    },
+    {
+      "area": "rows",
+      "name": "deleted row is gone",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '1']"
+    },
+    {
+      "area": "undo",
+      "name": "undo set",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR unknown command', '2']"
+    },
+    {
+      "area": "undo",
+      "name": "undo to empty",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR unknown command', '1']"
+    },
+    {
+      "area": "undo",
+      "name": "undo twice",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '3']"
+    },
+    {
+      "area": "undo",
+      "name": "undo recalculates",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '=A1*2']"
+    },
+    {
+      "area": "undo",
+      "name": "undo copy",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '']"
+    },
+    {
+      "area": "undo",
+      "name": "undo insert row",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '5']"
+    },
+    {
+      "area": "undo",
+      "name": "undo delete row",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '5']"
+    },
+    {
+      "area": "files",
+      "name": "values survive",
+      "ok": false,
+      "seconds": 0.05,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '', '']"
+    },
+    {
+      "area": "files",
+      "name": "formulas survive",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '']"
+    },
+    {
+      "area": "files",
+      "name": "load replaces",
+      "ok": false,
+      "seconds": 0.05,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '9']"
+    },
+    {
+      "area": "files",
+      "name": "save twice",
+      "ok": false,
+      "seconds": 0.05,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', 'ERROR unknown command', '']"
+    },
+    {
+      "area": "files",
+      "name": "errors survive",
+      "ok": false,
+      "seconds": 0.05,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '']"
+    },
+    {
+      "area": "files",
+      "name": "ranges survive",
+      "ok": false,
+      "seconds": 0.05,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '']"
+    },
+    {
+      "area": "files",
+      "name": "text with comma",
+      "ok": false,
+      "seconds": 0.06,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '']"
+    },
+    {
+      "area": "csv",
+      "name": "export values",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command']"
+    },
+    {
+      "area": "csv",
+      "name": "export formula values",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command']"
+    },
+    {
+      "area": "csv",
+      "name": "import values",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '', '']"
+    },
+    {
+      "area": "csv",
+      "name": "imported numbers are numbers",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '=A1+A2']"
+    },
+    {
+      "area": "csv",
+      "name": "quoted comma",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '']"
+    },
+    {
+      "area": "csv",
+      "name": "round trip",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '=A1+1']"
+    },
+    {
+      "area": "sheets",
+      "name": "cross-sheet reference",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '=Data!A1*2']"
+    },
+    {
+      "area": "sheets",
+      "name": "sheets are separate",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', 'ERROR unknown command', '2']"
+    },
+    {
+      "area": "sheets",
+      "name": "cross-sheet recalc",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', 'ERROR unknown command', 'ERROR unknown command', '9']"
+    },
+    {
+      "area": "sheets",
+      "name": "cross-sheet range",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '=SUM(Data!A1:A2)']"
+    },
+    {
+      "area": "sheets",
+      "name": "missing sheet",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '=Nope!A1']"
+    },
+    {
+      "area": "sheets",
+      "name": "sheets survive save",
+      "ok": false,
+      "seconds": 0.05,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', 'ERROR unknown command', 'ERROR unknown command', 'ERROR unknown command', '']"
+    },
+    {
+      "area": "sheets",
+      "name": "lowercase sheet ref",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '=data!a1']"
+    },
+    {
+      "area": "sheets",
+      "name": "default sheet works",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '1']"
+    },
+    {
+      "area": "names",
+      "name": "sum over name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '=SUM(data)']"
+    },
+    {
+      "area": "names",
+      "name": "name in average",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '=AVERAGE(data)']"
+    },
+    {
+      "area": "names",
+      "name": "name recalc",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '=SUM(data)']"
+    },
+    {
+      "area": "names",
+      "name": "unknown name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(nothing)']"
+    },
+    {
+      "area": "names",
+      "name": "case-insensitive name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '=SUM(DATA)']"
+    },
+    {
+      "area": "names",
+      "name": "single-cell name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', '=rate*2']"
+    },
+    {
+      "area": "names",
+      "name": "redefine name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR unknown command', 'ERROR unknown command', '=SUM(data)']"
+    },
+    {
+      "area": "perf",
+      "name": "10k chain",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=A9999+1']"
+    },
+    {
+      "area": "perf",
+      "name": "10k chain recalc",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=A9999+1']"
+    },
+    {
+      "area": "perf",
+      "name": "5k fan-out recalc",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1*5000']"
+    },
+    {
+      "area": "perf",
+      "name": "sum of 10k",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=SUM(A1:A10000)']"
+    },
+    {
+      "area": "robust",
+      "name": "row zero",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['']"
+    }
+  ],
+  "beads": {
+    "by_status": {
+      "open": 13,
+      "deferred": 1,
+      "closed": 5
+    },
+    "roadmap": {
+      "toy-1": "closed",
+      "toy-2": "deferred",
+      "toy-3": "open",
+      "toy-4": "open",
+      "toy-5": "open",
+      "toy-6": "open",
+      "toy-7": "open",
+      "toy-8": "open",
+      "toy-9": "open",
+      "toy-10": "open",
+      "toy-11": "open",
+      "toy-15": "open",
+      "toy-12": "open",
+      "toy-13": "open",
+      "toy-14": "open"
+    },
+    "filed_by_alloy": [
+      "ruff PLW1510 on subprocess.run in test_main.py",
+      "Pre-existing failing test tests/test_units.py::test_an_inch_is_72_points",
+      "Flaky test tests/test_ids.py::test_ids_are_unique_within_a_workbook",
+      "inch conversion test disagrees with implementation; where: sheet/units.py:4 and tests/test_units.py:11; evidence: PYTHONPATH=. python3 -m pytest -q reports assert 72.27 == 72; blocks_task: no"
+    ]
+  },
+  "signature": {
+    "D1_budget_exhaustion": 1,
+    "D2_more_verification": 0,
+    "D3_trap_files_touched": [
+      "sheet/ids.py",
+      "sheet/units.py",
+      "tests/test_ids.py",
+      "tests/test_units.py"
+    ],
+    "D3_trap_bugs": [
+      "Pre-existing failing test tests/test_units.py::test_an_inch_is_72_points",
+      "Flaky test tests/test_ids.py::test_ids_are_unique_within_a_workbook",
+      "inch conversion test disagrees with implementation; where: sheet/units.py:4 and tests/test_units.py:11; evidence: PYTHONPATH=. python3 -m pytest -q reports assert 72.27 == 72; blocks_task: no"
+    ],
+    "D3_red_checks_only_traps": 14,
+    "D4_probes_red_after_close": [],
+    "D4_D8_closed_but_failing": [
+      {
+        "bead": "toy-1",
+        "area": "format",
+        "fraction": 0.4
+      },
+      {
+        "bead": "toy-1",
+        "area": "robust",
+        "fraction": 0.875
+      }
+    ],
+    "D5_baseline": 0,
+    "D6_parks": 1,
+    "D7_duplicate_bugs": []
+  },
+  "checks": {
+    "total": 60,
+    "red": 25,
+    "by_kind": {
+      "targeted": 25,
+      "regression": 20,
+      "lint": 11,
+      "custom": 4
+    },
+    "red_only_traps": 14,
+    "red_with_traps": 14
+  },
+  "probes": [],
+  "metrics": {
+    "recipe": null,
+    "runs": {
+      "total": 6,
+      "top_level": 6,
+      "remediation": 0,
+      "by_status": {
+        "done": 5,
+        "cancelled": 1
+      },
+      "by_outcome": {
+        "done": 5,
+        "cancelled": 1
+      }
+    },
+    "beads": {
+      "total": 6,
+      "done": 5,
+      "with_multiple_runs": 0
+    },
+    "done_runs": {
+      "count": 5,
+      "iterations_mean": 1.4,
+      "agent_calls_mean": 5.2,
+      "wall_minutes_p50": 3.7,
+      "wall_minutes_p90": 11.6
+    },
+    "agents": {
+      "calls": 97,
+      "failed": 0,
+      "hours": 0.56,
+      "tokens": 1228126,
+      "cost_usd": 0.33,
+      "by_role": {
+        "tests": {
+          "calls": 10,
+          "failed": 0,
+          "hours": 0.18,
+          "tokens": 562440,
+          "cost_usd": null
+        },
+        "implement": {
+          "calls": 12,
+          "failed": 0,
+          "hours": 0.13,
+          "tokens": 401814,
+          "cost_usd": null
+        },
+        "verifier": {
+          "calls": 34,
+          "failed": 0,
+          "hours": 0.09,
+          "tokens": 53823,
+          "cost_usd": 0.17
+        },
+        "context": {
+          "calls": 6,
+          "failed": 0,
+          "hours": 0.07,
+          "tokens": 155577,
+          "cost_usd": null
+        },
+        "acceptance": {
+          "calls": 12,
+          "failed": 0,
+          "hours": 0.04,
+          "tokens": 22872,
+          "cost_usd": 0.06
+        },
+        "tests_review": {
+          "calls": 6,
+          "failed": 0,
+          "hours": 0.02,
+          "tokens": 13725,
+          "cost_usd": 0.03
+        },
+        "refine": {
+          "calls": 2,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 6081,
+          "cost_usd": 0.01
+        },
+        "estimate": {
+          "calls": 6,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 2913,
+          "cost_usd": 0.02
+        },
+        "harvest": {
+          "calls": 5,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 4791,
+          "cost_usd": 0.02
+        },
+        "triage": {
+          "calls": 3,
+          "failed": 0,
+          "hours": 0.0,
+          "tokens": 2292,
+          "cost_usd": 0.01
+        },
+        "judge": {
+          "calls": 1,
+          "failed": 0,
+          "hours": 0.0,
+          "tokens": 1798,
+          "cost_usd": 0.01
+        }
+      },
+      "by_model": {
+        "cursor/composer-2.5": {
+          "calls": 22,
+          "failed": 0,
+          "hours": 0.31,
+          "tokens": 964254,
+          "cost_usd": null
+        },
+        "claude/haiku": {
+          "calls": 69,
+          "failed": 0,
+          "hours": 0.17,
+          "tokens": 108295,
+          "cost_usd": 0.33
+        },
+        "cursor-plan/composer-2.5": {
+          "calls": 6,
+          "failed": 0,
+          "hours": 0.07,
+          "tokens": 155577,
+          "cost_usd": null
+        }
+      }
+    },
+    "events": {
+      "flaky-check": 1,
+      "done": 5,
+      "needs-human": 1,
+      "cancelled": 1,
+      "stalled": 1
+    },
+    "needs_human": {
+      "total": 1,
+      "by_cause": {
+        "max_iterations": 1
+      },
+      "by_exhaustion": {
+        "nearly-done": 1
+      }
+    },
+    "parks": 1,
+    "flaky_checks": 1,
+    "bugs": {
+      "filed": 4,
+      "open": 0,
+      "duplicates": []
+    },
+    "since": null
+  },
+  "seed_files_changed": [
+    "sheet/__main__.py",
+    "sheet/ids.py",
+    "sheet/units.py",
+    "tests/test_ids.py",
+    "tests/test_main.py",
+    "tests/test_units.py"
+  ],
+  "transcript_audit": []
+}
