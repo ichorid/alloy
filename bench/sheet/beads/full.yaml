@@ -1,0 +1,151 @@
+# The frozen roadmap of the `full` scenario. Wording is deliberately loose, the
+# way real tickets often are: the bench measures whether Alloy keeps cheap
+# models on track anyway. Do not sharpen these to make runs pass -- a change
+# here invalidates every earlier result (bump `version`).
+version: 1
+prefix: toy
+default_recipe: toy-cheap
+beads:
+  - id: toy-e1
+    type: epic
+    title: Core engine
+    description: The spreadsheet itself — cells, formulas, functions. See docs/SPEC.md.
+
+  - id: toy-1
+    areas: [cells, format, robust]   # oracle areas (bench only; not given to agents)
+    parent: toy-e1
+    title: Cells and the command loop
+    description: >-
+      Make `python3 -m sheet` read commands and keep cell values. SET and GET for
+      plain values (numbers and text). Anything it can't do yet should answer
+      ERROR instead of crashing.
+    acceptance: SET A1 5 then GET A1 prints 5; SET B2 hello then GET B2 prints hello; numbers print the way a person writes them.
+
+  - id: toy-2
+    areas: [arith]   # oracle areas (bench only; not given to agents)
+    parent: toy-e1
+    deps: [toy-1]
+    title: Arithmetic formulas
+    description: Formulas starting with = and the usual arithmetic.
+    acceptance: SET A1 =1+2*3 then GET A1 prints 7.
+
+  - id: toy-3
+    areas: [refs]   # oracle areas (bench only; not given to agents)
+    parent: toy-e1
+    deps: [toy-2]
+    title: References and recalculation
+    description: >-
+      Formulas can use other cells, and results stay up to date when the cells
+      they use change.
+    acceptance: A formula that uses another cell shows the new result after that cell changes.
+
+  - id: toy-4
+    areas: [ranges]   # oracle areas (bench only; not given to agents)
+    parent: toy-e1
+    deps: [toy-3]
+    title: Ranges and everyday functions
+    description: Ranges like A1:B3 and the functions everybody uses on them (sums, averages and so on).
+    acceptance: SUM over a range of numbers shows their total.
+
+  - id: toy-5
+    areas: [errors]   # oracle areas (bench only; not given to agents)
+    parent: toy-e1
+    deps: [toy-3]
+    title: Errors and circular references
+    description: >-
+      Mistakes in formulas should show up the way spreadsheets show them.
+      Circular formulas must not hang the program.
+    acceptance: Dividing by zero shows a spreadsheet error; a cell that refers to itself does not hang.
+
+  - id: toy-6
+    areas: [logic]   # oracle areas (bench only; not given to agents)
+    parent: toy-e1
+    deps: [toy-4]
+    title: Conditions and text
+    description: IF, comparisons, AND/OR/NOT, joining text, and a few text functions.
+    acceptance: IF with a comparison picks the right branch.
+
+  - id: toy-e2
+    type: epic
+    title: Editing
+    description: Changing a sheet the way people do in a spreadsheet.
+
+  - id: toy-7
+    areas: [copy]   # oracle areas (bench only; not given to agents)
+    parent: toy-e2
+    deps: [toy-3]
+    title: Copy with reference shifting
+    description: COPY moves formulas like a spreadsheet does, $ anchors included.
+    acceptance: Copying =A1 from B1 to B2 gives =A2.
+
+  - id: toy-8
+    areas: [rows]   # oracle areas (bench only; not given to agents)
+    parent: toy-e2
+    deps: [toy-3]
+    title: Insert and delete rows
+    description: INSERTROW and DELETEROW; formulas should keep pointing at the right things.
+    acceptance: Inserting a row above a referenced cell keeps the formula's result.
+
+  - id: toy-9
+    areas: [undo]   # oracle areas (bench only; not given to agents)
+    parent: toy-e2
+    deps: [toy-7, toy-8]
+    title: Undo
+    description: UNDO takes back the last change.
+    acceptance: UNDO after a SET restores the old value.
+
+  - id: toy-e3
+    type: epic
+    title: Files
+    description: Keeping work.
+
+  - id: toy-10
+    areas: [files]   # oracle areas (bench only; not given to agents)
+    parent: toy-e3
+    deps: [toy-3]
+    title: Save and load workbooks
+    description: SAVE and LOAD. Pick a sensible format.
+    acceptance: A workbook saved and loaded again shows the same values and keeps its formulas working.
+
+  - id: toy-11
+    areas: [csv]   # oracle areas (bench only; not given to agents)
+    parent: toy-e3
+    deps: [toy-10]
+    title: CSV export and import
+    description: EXPORT writes the values as CSV, IMPORT reads a CSV into the sheet.
+    acceptance: Exported values can be imported back.
+
+  - id: toy-15
+    parent: toy-e3
+    labels: [manual]
+    title: Agree the file format with the product owner
+    description: A human checklist item, not an Alloy task. Never run it.
+
+  - id: toy-e4
+    type: epic
+    title: Bigger workbooks
+    description: Several sheets, names, and speed.
+
+  - id: toy-12
+    areas: [sheets]   # oracle areas (bench only; not given to agents)
+    parent: toy-e4
+    deps: [toy-4, toy-10]
+    title: Several sheets
+    description: SHEET switches sheets; formulas can refer to other sheets like Sheet2!A1. Saved files keep every sheet.
+    acceptance: A formula on one sheet can use a cell on another sheet.
+
+  - id: toy-13
+    areas: [names]   # oracle areas (bench only; not given to agents)
+    parent: toy-e4
+    deps: [toy-12]
+    title: Named ranges
+    description: NAME gives a range a name that works in formulas.
+    acceptance: SUM over a named range works.
+
+  - id: toy-14
+    areas: [perf]   # oracle areas (bench only; not given to agents)
+    parent: toy-e4
+    deps: [toy-4]
+    title: Make big sheets fast
+    description: Tens of thousands of cells should still feel instant, including after a change.
+    acceptance: Changing one cell in a sheet with 10,000 formulas updates quickly.

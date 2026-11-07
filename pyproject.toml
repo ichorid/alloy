@@ -44,6 +44,11 @@ pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 120
+# The bench toy project (seed, oracle, reference) is not Alloy code.
+extend-exclude = ["bench/sheet"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "C901"]
+
+[tool.ruff.lint.per-file-ignores]
+"bench/run.py" = ["C901"]

@@ -1,0 +1,112 @@
+name: toy-cheap
+graph: tdd-loop
+# Bench recipe (bench/sheet): the cheapest models only, so Alloy's harness --
+# not model strength -- has to carry the work. composer-2.5 (non-fast) writes,
+# claude haiku at low effort judges; each falls back only to the other.
+
+complexity:
+  routing: shadow                # estimate and record; never change runners
+  escalate_after_retries: 2
+  tiers:
+    simple: [{runner: cursor, model: composer-2.5}]
+    medium: [{runner: cursor, model: composer-2.5}]
+    complex: [{runner: cursor, model: composer-2.5}]
+
+roles:
+  context:
+    runner: cursor-plan
+    model: composer-2.5
+    timeout_minutes: 10
+    fallback: {runner: claude, model: haiku, effort: low, timeout_minutes: 10}
+  estimate:
+    runner: claude
+    model: haiku
+    effort: low
+    timeout_minutes: 5
+    fallback: {runner: cursor-plan, model: composer-2.5, timeout_minutes: 5}
+  triage:
+    runner: claude
+    model: haiku
+    effort: low
+    timeout_minutes: 5
+    fallback: {runner: cursor-plan, model: composer-2.5, timeout_minutes: 5}
+  scope:
+    runner: claude
+    model: haiku
+    effort: low
+    timeout_minutes: 5
+    fallback: {runner: cursor-plan, model: composer-2.5, timeout_minutes: 5}
+  tests:
+    runner: cursor
+    model: composer-2.5
+    timeout_minutes: 20
+    fallback: {runner: claude-write, model: haiku, effort: low, timeout_minutes: 20}
+  tests_review:
+    runner: claude
+    model: haiku
+    effort: low
+    timeout_minutes: 10
+    fallback: {runner: cursor-plan, model: composer-2.5, timeout_minutes: 10}
+  implement:
+    runner: cursor
+    model: composer-2.5
+    timeout_minutes: 25
+    fallback: {runner: claude-write, model: haiku, effort: low, timeout_minutes: 25}
+  verifier:
+    runner: claude
+    model: haiku
+    effort: low
+    timeout_minutes: 10
+    fallback: {runner: cursor-plan, model: composer-2.5, timeout_minutes: 10}
+  acceptance:
+    runner: claude
+    model: haiku
+    effort: low
+    timeout_minutes: 5
+    fallback: {runner: cursor-plan, model: composer-2.5, timeout_minutes: 5}
+  judge:
+    runner: claude
+    model: haiku
+    effort: low
+    timeout_minutes: 10
+    fallback: {runner: cursor-plan, model: composer-2.5, timeout_minutes: 10}
+  harvest:
+    runner: claude
+    model: haiku
+    effort: low
+  memory_reviewer:
+    runner: claude
+    model: haiku
+    effort: low
+
+consilium:
+  critics:
+    - {runner: claude, model: haiku, effort: low}
+    - {runner: cursor-plan, model: composer-2.5}
+  synthesizer: {runner: claude, model: haiku, effort: low}
+
+verification:
+  max_checks_per_iteration: 5
+  max_total_checks: 20
+  max_command_timeout_minutes: 10
+  max_baseline_repairs: 2
+  min_acceptance_confidence: 0.6
+
+limits:
+  max_iterations: 5
+  max_consiliums: 1
+  max_wall_time_minutes: 90
+  max_agent_calls: 20
+
+# The toy's own change-based selection, deliberately imperfect like real ones:
+# scripts/affected.py maps changed files to tests by name only.
+landing_gate:
+  - paths: ["sheet/**", "tests/**"]
+    checks:
+      - cmd: python3 scripts/affected.py --run
+        purpose: tests of the changed modules
+        timeout_minutes: 10
+        rerun_on_base: python3 -m pytest -q {files}
+
+dispatch:
+  park_after_human_minutes: 5    # no human on the bench: Alloy's own park decides

@@ -1,0 +1,31 @@
+name: toy-cheap-fast
+graph: fast-track
+# Bench fast-track: same cheapest-models rule as toy-cheap.
+roles:
+  implement:
+    runner: cursor
+    model: composer-2.5
+    timeout_minutes: 25
+    fallback: {runner: claude-write, model: haiku, effort: low, timeout_minutes: 25}
+  harvest: {runner: claude, model: haiku, effort: low}
+verification:
+  max_checks_per_iteration: 5
+  max_total_checks: 15
+  max_command_timeout_minutes: 10
+limits:
+  max_iterations: 4
+  max_consiliums: 0
+  max_wall_time_minutes: 45
+  max_agent_calls: 10
+escalate:
+  after_iterations: 2
+  to: toy-cheap
+landing_gate:
+  - paths: ["sheet/**", "tests/**"]
+    checks:
+      - cmd: python3 scripts/affected.py --run
+        purpose: tests of the changed modules
+        timeout_minutes: 10
+        rerun_on_base: python3 -m pytest -q {files}
+dispatch:
+  park_after_human_minutes: 5
