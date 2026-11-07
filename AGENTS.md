@@ -126,7 +126,8 @@ A recipe's `landing_gate:` (`[{paths: [glob...], checks: [{cmd, purpose,
 timeout_minutes}]}]`) runs, on the final tree, every check whose globs match a
 path the bead's diff touches, before the bead may finish `done` (budget-landed
 included). A red gate check is one more implement iteration, or a human gate
-when a limit is spent.
+when a limit is spent. A gated recipe skips the final broader pass: a done
+verdict goes straight to the gate.
 
 A fast-track recipe with `escalate: {after_iterations: N,
 when_packages_touched_over: M, package_roots: [glob...], to: <recipe>}`

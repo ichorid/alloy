@@ -275,8 +275,11 @@ landing_gate:
     checks: [{cmd: "./scripts/run_tests.sh server", purpose: "server suite", timeout_minutes: 30}]
 ```
 
-Before a run finishes `done` -- after its final pass, or as a budget-landed
-stop -- Alloy lists the paths the bead's diff touches relative to the run's
+A gated recipe has no final broader pass: once the judge (or fast-track's
+worker) says done, the run goes straight to the gate -- the gate is the
+declared landing step, so a second "broadest check" on top of it only ran the
+whole suite twice. Before a run finishes `done` -- after that green
+iteration, or as a budget-landed stop -- Alloy lists the paths the bead's diff touches relative to the run's
 base -- a moved file under its old and its new path, and lockfiles too --
 selects every entry with a matching glob (`**` spans directories, `*` stays
 within one) and runs those checks, each command once, on the final tree. Only this run's check cache, keyed on the unchanged tree, can answer one

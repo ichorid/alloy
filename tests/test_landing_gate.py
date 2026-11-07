@@ -103,15 +103,17 @@ GREEN_FAST_TRACK = [
 ]
 
 
+GREEN_GATED_FAST_TRACK = GREEN_FAST_TRACK[:2]
+"""A gated recipe has no final broader pass: done goes straight to the gate."""
+
+
 async def test_fast_track_red_gate_goes_back_to_the_agent_as_a_failed_check(project, alloy_home, fake_harnesses):
     fake_harnesses.configure(
         {
             "implement": [
-                *GREEN_FAST_TRACK,
+                *GREEN_GATED_FAST_TRACK,
                 run_check_entry(GATE_CMD, write=[{"path": GATE_FILE, "content": "ok"}]),
                 done_entry(reason="gate fixed"),
-                run_check_entry(PROBE, reason="final pass check"),
-                done_entry(reason="final pass verified"),
             ]
         }
     )
@@ -121,8 +123,11 @@ async def test_fast_track_red_gate_goes_back_to_the_agent_as_a_failed_check(proj
     assert final["outcome"] == "done"
     gate_runs = [c for c in final["checks"] if c["command"] == GATE_CMD and c["purpose"] == "package suite"]
     assert [c["exit_code"] for c in gate_runs] == [1, 0]
-    after_gate = fake_harnesses.calls_for("implement")[4]["prompt"]
+    calls = fake_harnesses.calls_for("implement")
+    assert len(calls) == 4, "no final-pass round once a landing gate is configured"
+    after_gate = calls[2]["prompt"]
     assert "landing gate" in after_gate and GATE_CMD in after_gate
+    assert not any("broadest" in call["prompt"] for call in calls)
 
 
 async def test_a_gate_whose_paths_the_diff_does_not_touch_never_runs(project, alloy_home, fake_harnesses):
@@ -170,6 +175,9 @@ async def test_tdd_loop_red_gate_is_a_new_implement_iteration(project, alloy_hom
     assert final["iteration"] == 2
     second = fake_harnesses.calls_for("implement")[1]["prompt"]
     assert "landing gate" in second and GATE_CMD in second
+    verifier_prompts = [call["prompt"] for call in fake_harnesses.calls_for("verifier")]
+    assert verifier_prompts, "the verifier ran"
+    assert not any("broadest" in prompt for prompt in verifier_prompts), "gated: no final broader pass"
 
 
 async def test_budget_landing_also_needs_the_gate(project, alloy_home, fake_harnesses):

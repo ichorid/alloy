@@ -882,18 +882,25 @@ def _make_node_guard(ctx):
 
 def _make_node_route(_dispatch_critics, *, gated: bool = False):
     """`gated`: the recipe has a `landing_gate`, so a run that would finish
-    done goes through the `landing_gate` node first (alloy.recipes.landing_gate)."""
+    done goes through the `landing_gate` node (alloy.recipes.landing_gate)
+    instead of the final broader pass: the gate already is the operator's
+    declared landing step, and a second "broadest check" on top of it ran the
+    whole suite twice and timed out against the per-check cap."""
 
     def route(state: TddState) -> str | list[Send]:
         decision = (state.get("decision") or {}).get("decision", "retry")
         if decision == "done":
+            if gated:
+                # The landing gate's own checks are the final word; a red one
+                # is an ordinary new iteration (see landing_gate.py).
+                return "landing_gate"
             # A green iteration goes through one more, broader pass before
             # finishing -- Alloy's replacement for a separate worktree-merge
             # landing step. Only once that pass has itself come back done
             # does the run actually finish.
             if not state.get("final_pass"):
                 return "start_final_pass"
-            return "landing_gate" if gated else "finish"
+            return "finish"
         if decision == "abort":
             return "finish"
         if decision == "human":
