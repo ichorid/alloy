@@ -1,0 +1,27 @@
+# Step 3 (D1/D6): beads well beyond composer-2.5 within toy-cheap's limits.
+# Expected after step 3: fewer runs that grind to max_*, every exhaustion
+# classified, stalls broken by a fresh session or an escalation.
+version: 1
+prefix: toy
+default_recipe: toy-cheap
+overlays: [core]
+beads:
+  - id: toy-41
+    areas: [perf]
+    title: Make big sheets fast
+    description: >-
+      Tens of thousands of cells should still feel instant, including after a
+      change, and long chains of formulas must work.
+    acceptance: Changing A1 at the start of a chain of 10,000 formulas (A2 is =A1+1, A3 is =A2+1, ...) updates A10000 within a second.
+
+  - id: toy-42
+    areas: [rows]
+    title: Insert and delete rows
+    description: INSERTROW and DELETEROW; formulas should keep pointing at the right things.
+    acceptance: Inserting a row above a referenced cell keeps the formula's result; deleting the referenced row shows #REF!.
+
+  - id: toy-43
+    areas: [sheets]
+    title: Several sheets
+    description: SHEET switches sheets; formulas can refer to other sheets like Sheet2!A1.
+    acceptance: A formula on one sheet can use a cell on another sheet.

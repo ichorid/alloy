@@ -1,0 +1,26 @@
+# Step 1 (D3): three independent beads in areas far from the seed's traps
+# (tests/test_ids.py flaky, tests/test_units.py red since before the bench).
+# Expected after step 1: no implement iterations spent on the traps, at most
+# one alloy-bug per trap, no needs-human caused by them.
+version: 1
+prefix: toy
+default_recipe: toy-cheap
+overlays: [core]
+beads:
+  - id: toy-21
+    areas: [ranges]
+    title: Ranges and everyday functions
+    description: Ranges like A1:B3 and the functions everybody uses on them (sums, averages and so on).
+    acceptance: SUM over a range of numbers shows their total.
+
+  - id: toy-22
+    areas: [logic]
+    title: Conditions and text
+    description: IF, comparisons, AND/OR/NOT, joining text, and a few text functions.
+    acceptance: IF with a comparison picks the right branch.
+
+  - id: toy-23
+    areas: [copy]
+    title: Copy with reference shifting
+    description: COPY moves formulas like a spreadsheet does, $ anchors included.
+    acceptance: Copying =A1 from B1 to B2 gives =A2.

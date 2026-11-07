@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -104,9 +105,10 @@ def reset(scenario: str, toy: Path, sha: str) -> None:
         alloy(sha, toy, "stop", "--now", check=False)
         shutil.rmtree(toy)
     shutil.copytree(SHEET / "seed", toy, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".ruff_cache"))
-    overlay = SHEET / "overlays" / scenario
-    if overlay.exists():
-        shutil.copytree(overlay, toy, dirs_exist_ok=True)
+    for name in spec.get("overlays", [scenario]):
+        overlay = SHEET / "overlays" / name
+        if overlay.exists():
+            shutil.copytree(overlay, toy, dirs_exist_ok=True)
     git = lambda *a: sh(["git", *a], cwd=toy, env=GIT_ENV)  # noqa: E731
     git("init", "-q", "-b", "main")
     git("add", "-A")
@@ -159,12 +161,16 @@ def ready_work(toy: Path) -> list[str]:
 
 
 def active_runs(toy: Path, sha: str) -> list[str]:
+    """Runs that can still make progress on their own. A waiting-human run
+    does not: with no operator it only ends by Alloy's auto-park, which fires
+    only when it holds other ready work -- so it never counts as active here."""
     db = toy / ".alloy" / "alloy.db"
     if not db.exists():
         return []
+    working = tuple(s for s in ACTIVE if s != "waiting-human")
     with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
         rows = conn.execute(
-            f"SELECT bead_id FROM runs WHERE status IN ({','.join('?' * len(ACTIVE))})", tuple(ACTIVE)
+            f"SELECT bead_id FROM runs WHERE status IN ({','.join('?' * len(working))})", working
         ).fetchall()
     return [row[0] for row in rows]
 
@@ -238,6 +244,8 @@ def report(toy: Path, sha: str, out_name: str | None) -> Path:
         for a in b.get("areas", [])
         if status.get(b["id"]) == "closed" and a in areas and areas[a]["fraction"] < 1.0
     ]
+    checks = check_stats(toy)
+    probe_results = probes(toy, spec, status)
     data = {
         "meta": {
             **meta,
@@ -268,11 +276,17 @@ def report(toy: Path, sha: str, out_name: str | None) -> Path:
                 if f in ("sheet/ids.py", "sheet/units.py", "tests/test_ids.py", "tests/test_units.py")
             ),
             "D3_trap_bugs": [b["title"] for b in beads if "alloy-bug" in (b.get("labels") or []) and _mentions_trap(b)],
+            "D3_red_checks_only_traps": checks["red_only_traps"],
+            "D4_probes_red_after_close": [
+                p["cmd"] for p in probe_results if p["bead_status"] == "closed" and p["exit"] != 0
+            ],
             "D4_D8_closed_but_failing": closed_but_failing,
             "D5_baseline": sum(n for c, n in metrics["needs_human"]["by_cause"].items() if c.startswith("baseline")),
             "D6_parks": metrics["parks"],
             "D7_duplicate_bugs": metrics["bugs"]["duplicates"],
         },
+        "checks": checks,
+        "probes": probe_results,
         "metrics": metrics,
         "seed_files_changed": sorted(f for f in changed if f in seed_files),
         "transcript_audit": audit_transcripts(toy),
@@ -284,6 +298,52 @@ def report(toy: Path, sha: str, out_name: str | None) -> Path:
     target.write_text(json.dumps(data, indent=2))
     log(f"report {target.name}: oracle {data['oracle']['score']:.3f}, beads {data['beads']['by_status']}")
     return target
+
+
+TRAP_TESTS = ("tests/test_ids.py", "tests/test_units.py")
+
+
+def check_stats(toy: Path) -> dict:
+    """Every check Alloy ran, from the per-run check logs: count by kind,
+    reds, and reds whose only failures are the seed's trap tests."""
+    out: dict = {"total": 0, "red": 0, "by_kind": {}, "red_only_traps": 0, "red_with_traps": 0}
+    for log_file in (toy / ".alloy" / "logs").glob("*/check-*.log"):
+        text = log_file.read_text(errors="replace")
+        kind = re.search(r"^kind=(\S+)", text, re.M)
+        exit_code = re.search(r"^exit=(-?\d+)", text, re.M)
+        out["total"] += 1
+        key = kind.group(1) if kind else "?"
+        out["by_kind"][key] = out["by_kind"].get(key, 0) + 1
+        if not exit_code or exit_code.group(1) == "0":
+            continue
+        out["red"] += 1
+        failed = re.findall(r"^(?:FAILED|ERROR) (\S+?)(?:::|\s|$)", text, re.M)
+        traps = [f for f in failed if f in TRAP_TESTS]
+        if traps:
+            out["red_with_traps"] += 1
+            if len(traps) == len(failed):
+                out["red_only_traps"] += 1
+    return out
+
+
+def probes(toy: Path, spec: dict, status: dict) -> list[dict]:
+    """The scenario's hidden regression probes: commands that must stay green
+    once the named bead is closed (a red one is D4: a regression reached done)."""
+    results = []
+    for probe in spec.get("probes", []):
+        proc = subprocess.run(
+            probe["cmd"], shell=True, cwd=toy, env=toy_env(toy), capture_output=True, text=True, timeout=300
+        )
+        results.append(
+            {
+                "bead": probe["bead"],
+                "bead_status": status.get(probe["bead"]),
+                "cmd": probe["cmd"],
+                "exit": proc.returncode,
+                "tail": proc.stdout[-600:],
+            }
+        )
+    return results
 
 
 def _mentions_trap(bead: dict) -> bool:

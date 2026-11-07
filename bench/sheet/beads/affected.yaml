@@ -1,0 +1,28 @@
+# Step 2 (D4): toy-31's natural fix edits sheet/values.py:fmt, which CSV export
+# also uses; tests/test_csvio.py pins lossless export but is not selected by the
+# name-based `scripts/affected.py` gate for a values.py change. The probe runs
+# it after the campaign: red with toy-31 closed = a regression reached done.
+# toy-32 then works in csvio.py on top of whatever toy-31 left.
+version: 1
+prefix: toy
+default_recipe: toy-cheap
+overlays: [core]
+probes:
+  - bead: toy-31
+    cmd: python3 -m pytest -q tests/test_csvio.py
+beads:
+  - id: toy-31
+    areas: [format]
+    title: Show long numbers like a spreadsheet cell
+    description: >-
+      GET shows long decimals the way a spreadsheet's default cell does: at
+      most 10 significant digits (=1/3 shows 0.3333333333), and very large
+      numbers in scientific notation (1E+20).
+    acceptance: SET A1 =1/3 then GET A1 prints 0.3333333333.
+
+  - id: toy-32
+    areas: [csv]
+    deps: [toy-31]
+    title: CSV import
+    description: IMPORT reads a CSV into the sheet starting at A1; EXPORT already exists.
+    acceptance: Exported values can be imported back.
