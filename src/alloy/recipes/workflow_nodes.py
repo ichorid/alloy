@@ -774,6 +774,31 @@ def _breach_update(ctx, state: TddState, breach: str, decision: JudgeDecision) -
     }
 
 
+def _judge_verify_update(state: TddState, decision: JudgeDecision, iteration: int) -> dict[str, Any] | None:
+    """The judge said the code is right but required checks never ran on this
+    tree: send the run back to the verifier with the judge's commands, not to
+    a new implement iteration (2026-11-07: 10 of 21 tentura judge retries were
+    exactly this, each a full implement round). Once per iteration -- a second
+    `verify` in the same iteration returns None and becomes a retry -- and the
+    iteration gets a fresh per-iteration check budget for it
+    (`max_total_checks` still bounds the run)."""
+    if state.get("judge_verify_iteration") == iteration:
+        return None
+    instructions = decision.next_instructions or decision.reason
+    return {
+        "stage": "guard",
+        "decision": decision.model_dump(),
+        "judge_verify_iteration": iteration,
+        "instructions": f"The judge found the diff complete but these checks missing on this tree: {instructions}",
+        "journal": [f"iteration {iteration}: the judge asked for checks only, no code change -- {decision.reason}"],
+        "verifier_stop": None,
+        "pending_check": None,
+        "verify_route": None,
+        "unrunnable_streak": 0,
+        "iteration_checks": 0,
+    }
+
+
 def _make_node_guard(ctx):
     def guard(state: TddState) -> dict[str, Any]:
         """The deterministic gate.
@@ -815,6 +840,19 @@ def _make_node_guard(ctx):
 
         if decision.decision in ("done", "abort", "human"):
             return {"stage": "guard", "decision": decision.model_dump(), **recorded}
+
+        if decision.decision == "verify":
+            verify_update = _judge_verify_update(state, decision, iteration)
+            if verify_update is not None and not breach:
+                return {**recorded, **verify_update}
+            decision = JudgeDecision(
+                decision="retry",
+                reason=f"{decision.reason}; "
+                + ("a run limit is spent" if breach else "the judge already asked for checks this iteration")
+                + ", so this is a retry",
+                next_instructions=decision.next_instructions,
+                confidence=decision.confidence,
+            )
 
         if breach:
             return {**recorded, **_breach_update(ctx, state, breach, decision)}
@@ -880,7 +918,7 @@ def _make_node_guard(ctx):
     return guard
 
 
-def _make_node_route(_dispatch_critics, *, gated: bool = False):
+def _make_node_route(_dispatch_critics, *, gated: bool = False, verify_node: bool = False):
     """`gated`: the recipe has a `landing_gate`, so a run that would finish
     done goes through the `landing_gate` node (alloy.recipes.landing_gate)
     instead of the final broader pass: the gate already is the operator's
@@ -905,6 +943,9 @@ def _make_node_route(_dispatch_critics, *, gated: bool = False):
             return "finish"
         if decision == "human":
             return "human_gate"
+        if decision == "verify" and verify_node:
+            # guard turned a judge `verify` into checks-only: no new implement round.
+            return "verifier_step"
         if decision == "consilium":
             return _dispatch_critics(state)
         return "implement"

@@ -383,6 +383,9 @@ you only decide what happens next.
 Choose exactly one decision:
 - "done"      -- tests pass and the diff genuinely satisfies the acceptance criteria
 - "retry"     -- a specific, well-understood fix remains; put it in next_instructions
+- "verify"    -- the diff needs no change, but checks the criteria require have not run
+               on this tree; list the exact commands in next_instructions and Alloy runs
+               them without another implement round (once per iteration)
 - "consilium" -- attempts are going in circles and independent opinions would help
 - "human"     -- the task is ambiguous, or needs a decision or access Alloy does not have
 - "abort"     -- the task cannot be completed as specified

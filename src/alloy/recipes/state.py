@@ -41,6 +41,7 @@ class TddState(TypedDict, total=False):
 
     checks: Annotated[list[dict[str, Any]], operator.add]  # CheckResult dicts, every iteration
     iteration_checks: int  # checks run in the current iteration
+    judge_verify_iteration: int  # the iteration whose judge already sent the run back to verify
     verifier_stop: dict[str, Any] | None  # the VerifierAction that ended the last loop
     last_check: dict[str, Any] | None  # the most recent CheckResult
     last_instructions: str  # what the last implement call was told

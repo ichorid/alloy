@@ -288,7 +288,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
     gather_context = _make_node_gather_context(ctx, _capture_bugs, record_memory_contradictions)
     review_tests = _make_node_review_tests(ctx, _first_available)
     gated = bool(ctx.recipe.landing_gate)
-    route = _make_node_route(_dispatch_critics, gated=gated)
+    route = _make_node_route(_dispatch_critics, gated=gated, verify_node=True)
     finish = _make_node_finish(ctx, remember_check_hints, remember_calibration)
     harvest = _make_node_harvest(ctx, remember_lesson)
 
@@ -357,7 +357,15 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
     graph.add_conditional_edges(
         "guard",
         route,
-        ["implement", "critic", "human_gate", "finish", "start_final_pass", *(["landing_gate"] if gated else [])],
+        [
+            "implement",
+            "critic",
+            "human_gate",
+            "finish",
+            "start_final_pass",
+            "verifier_step",
+            *(["landing_gate"] if gated else []),
+        ],
     )
     graph.add_edge("critic", "synthesize")
     graph.add_edge("synthesize", "implement")

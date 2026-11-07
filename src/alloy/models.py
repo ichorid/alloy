@@ -518,8 +518,11 @@ class TestsOutput(BaseModel):
         }
 
 
-Decision = Literal["done", "retry", "consilium", "human", "abort"]
-DECISIONS: tuple[str, ...] = ("done", "retry", "consilium", "human", "abort")
+Decision = Literal["done", "retry", "verify", "consilium", "human", "abort"]
+DECISIONS: tuple[str, ...] = ("done", "retry", "verify", "consilium", "human", "abort")
+"""`verify`: the code needs no change, only named checks are missing on this
+tree -- Alloy sends the run back to the verifier, not to a new implement
+iteration (at most once per iteration; a second one is a retry)."""
 
 
 PLACEHOLDER_TEXTS = frozenset(

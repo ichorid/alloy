@@ -152,7 +152,7 @@ alloy assign-recipe tdd-loop-sonnet [--from tdd-loop] [--apply]   # retarget bea
 ```
 context → write failing tests → implement → verify → judge → guard
                                     ↑                          │
-                                    │                 done / retry /
+                                    │             done / retry / verify /
                                     │               consilium / human / abort
                                     └── synthesize ← critics (parallel)
 ```
@@ -172,7 +172,10 @@ long; it never says what they are.
 **The judge proposes; Alloy disposes.** `guard` is a plain Python function and it
 is the only place the loop can continue from. It refuses `done` while tests are
 red, downgrades a `consilium` request when the budget is spent, and escalates to
-a human when a limit is hit. An agent cannot talk its way past a limit.
+a human when a limit is hit. An agent cannot talk its way past a limit. A judge
+`verify` (the diff is right, only required checks never ran on this tree) goes
+back to the verifier with the judge's commands instead of a new implement
+iteration, once per iteration; a second one in the same iteration is a retry.
 
 Cycles that do not pass through `guard` -- the reported-bug repair cycle
 (implement → triage → implement), the verifier ↔ check loop, acceptance ↔
