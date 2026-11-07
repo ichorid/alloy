@@ -275,3 +275,62 @@ def test_stash_all_handles_intent_to_add_entries(tmp_path):
     subprocess.run(["git", "stash", "pop", "-q"], cwd=repo, check=True)
     assert (repo / "new" / "cells.py").read_text() == "x = 1\n"
     assert (repo / "loose.txt").exists()
+
+
+def test_stash_all_with_a_gitignored_state_dir(tmp_path):
+    """Alloy's state dir is passed as an exclude and is usually gitignored;
+    git refuses a pathspec that names an ignored path ("paths are ignored"),
+    which made `git add -A` fail -- and `git stash push` save the stash yet
+    leave the tree dirty (bench run stuck-2, 2026-11-07)."""
+    from alloy.worktree import WorktreeManager
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / ".gitignore").write_text(".alloy/\n")
+    (repo / "cells.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    (repo / ".alloy").mkdir()
+    (repo / ".alloy" / "alloy.db").write_text("state\n")
+    (repo / "cells.py").write_text("x = 2\n")
+    (repo / "rows.py").write_text("new\n")
+    (repo / "loose.txt").write_text("untracked\n")
+    subprocess.run(["git", "add", "--intent-to-add", "rows.py"], cwd=repo, check=True)
+
+    manager = WorktreeManager(repo=repo, root=tmp_path / "wt")
+    stash = manager.stash_all(repo, "alloy-park t-1 run r", exclude=(".alloy",))
+
+    assert stash
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True).stdout
+    assert status == ""
+    assert (repo / ".alloy" / "alloy.db").read_text() == "state\n"
+    assert subprocess.run(["git", "stash", "list"], cwd=repo, capture_output=True, text=True).stdout.count("\n") == 1
+    subprocess.run(["git", "stash", "pop", "-q"], cwd=repo, check=True)
+    assert (repo / "cells.py").read_text() == "x = 2\n"
+    assert (repo / "rows.py").read_text() == "new\n"
+    assert (repo / "loose.txt").exists()
+
+
+def test_a_failed_stash_leaves_the_run_waiting_for_a_human(scheduler, beads_project, monkeypatch):
+    """Parking stashes before it defers or cancels anything: a stash that
+    fails must not leave a cancelled run, a deferred bead and a dirty tree
+    that holds the queue with nobody asked (bench run stuck-2, 2026-11-07)."""
+    from alloy.worktree import WorktreeError, WorktreeManager
+
+    recipe = _policy_recipe(beads_project, "parky", {"park_after_human_minutes": 45})
+    stuck = bd_create(beads_project, "stuck", priority=0, alloy_recipe=recipe)
+    bd_create(beads_project, "next", priority=1, alloy_recipe=recipe)
+    run_id = _seed_waiting_run(scheduler, beads_project, stuck, recipe, minutes_ago=50)
+    _dirty(beads_project)
+
+    def refuse(self, path, message, *, exclude=()):
+        raise WorktreeError("git stash push failed: simulated")
+
+    monkeypatch.setattr(WorktreeManager, "stash_all", refuse)
+
+    assert scheduler.next_task() is None
+    assert scheduler.engine.store.get_run(run_id)["status"] == RUN_WAITING_HUMAN
+    assert scheduler.engine.beads.show(stuck).status == bd.STATUS_WAITING_HUMAN
+    assert stuck in scheduler._park_failed
+    assert scheduler._hold is not None and scheduler._hold[0] == stuck

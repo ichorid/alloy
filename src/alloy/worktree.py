@@ -244,13 +244,22 @@ class WorktreeManager:
         Returns the stash commit, or None when there was nothing to stash."""
         if not self.has_uncommitted_tracked_changes(path) and not self.untracked_files(path, exclude=exclude):
             return None
-        excludes = self._own_excludes(exclude)
+        # A pathspec naming a gitignored path makes `git add` (and the add
+        # inside `git stash push`) fail with "paths are ignored" -- the stash
+        # is then saved but the tree is left dirty. An ignored directory is
+        # never stashed anyway, so it needs no exclude.
+        excludes = self._own_excludes(tuple(d for d in exclude if not self._ignored(path, d)))
         # The judge's diff stages new files with `--intent-to-add`, and
         # `git stash` refuses such entries ("not uptodate. Cannot merge"):
-        # stage them for real first so the stash can take them.
-        _git(["add", "-A", "--", ".", *excludes], path)
+        # stage tracked and intent-to-add entries for real first (`-u`;
+        # untracked files go in through `--include-untracked`).
+        _git(["add", "-u", "--", ".", *excludes], path)
         _git(["stash", "push", "--include-untracked", "-m", message, "--", ".", *excludes], path)
         return _git(["rev-parse", "stash@{0}"], path).stdout.strip()
+
+    @staticmethod
+    def _ignored(path: Path, relative: str) -> bool:
+        return _git(["check-ignore", "-q", "--", relative], path, check=False).returncode == 0
 
     def head(self, path: Path) -> str:
         """The worktree's current HEAD commit."""

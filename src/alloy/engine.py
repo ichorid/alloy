@@ -462,12 +462,13 @@ class Engine:
         """Take a run parked at the human gate out of the queue's way.
 
         In this order: save the bead's uncommitted work as a patch under
-        `<root>/parked/` (read-only on the tree); set the bead `deferred` --
-        BEFORE the cancel, so the cancel's revert-to-ready (CAS'd on
-        implementing / waiting-human) leaves it alone and the scheduler does
-        not re-pick it two seconds later; cancel the run; then, for an
-        in-place run, stash the work (`git stash push --include-untracked`)
-        so the next bead starts on a clean checkout. Returns what it did."""
+        `<root>/parked/` (read-only on the tree); for an in-place run, stash
+        the work (`git stash push --include-untracked`) so the next bead
+        starts on a clean checkout -- a failure here changes nothing else;
+        set the bead `deferred` -- BEFORE the cancel, so the cancel's
+        revert-to-ready (CAS'd on implementing / waiting-human) leaves it
+        alone and the scheduler does not re-pick it two seconds later; then
+        cancel the run. Returns what it did."""
         record = self.store.latest_run_for_bead(bead_id)
         if record is None or record["status"] != RUN_WAITING_HUMAN:
             raise EngineError(f"{bead_id}: no run waiting for a human to park")
@@ -477,12 +478,13 @@ class Engine:
         stamp = time.strftime("%Y%m%dT%H%M%S")
         patch = self.paths.root / "parked" / f"{bead_id}-{stamp}.patch"
         size = worktrees.save_patch(tree, patch, exclude=self._own_dirs_in_repo())
-        self.beads.set_status(bead_id, "deferred")
         note = (
             f"alloy: parked -- waited for a human while holding the queue ({reason}). "
             f"Uncommitted work saved to {patch} ({size} bytes)"
         )
-        self.cancel(bead_id)
+        # Stash first: a stash that fails must leave the run waiting for its
+        # human, not cancelled with a deferred bead and a dirty tree that
+        # holds every later bead. The run is paused, so nothing writes here.
         stash = None
         if in_place:
             stash = worktrees.stash_all(
@@ -490,6 +492,8 @@ class Engine:
             )
             if stash:
                 note += f" and stashed as {stash} (`git stash list` shows 'alloy-park {bead_id}')"
+        self.beads.set_status(bead_id, "deferred")
+        self.cancel(bead_id)
         self.beads.note(bead_id, note + ". Undefer the bead to run it again.")
         log.warning("%s: %s", bead_id, note)
         return {"run_id": record["run_id"], "patch": str(patch), "patch_bytes": size, "stash": stash}
