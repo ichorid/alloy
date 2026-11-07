@@ -314,8 +314,6 @@ class Scheduler:
         """An in-place start refuses a dirty primary checkout; holding dispatch
         here keeps the scheduler from booking a refused run every poll (and
         from the retry that used to slip past the refusal)."""
-        if bd.metadata_flag(bead.metadata, bd.META_USE_WORKTREE):
-            return False
         dirty = self.engine.primary_checkout_dirty()
         if dirty is None:
             return False

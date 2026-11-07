@@ -126,17 +126,15 @@ alloy assign-recipe tdd-loop-sonnet [--from tdd-loop] [--apply]   # retarget bea
 - **Human-operated beads.** A bead labelled `manual` or `merge-gate`, or with
   `alloy_manual=true`, is never dispatched, run or landed, whatever
   `alloy_recipe` it carries. Epics with children are never run as tasks; they
-  land once every descendant is closed.
+  close once every descendant is closed.
 - **Dispatch holds are re-announced.** When a review-ready bead or a run with
   no live process keeps every other top-level bead waiting for more than
   `--stall-minutes`, the scheduler logs a warning and emits a `stalled` event
   naming the holder and the command that clears it. `alloy reconcile <bead>`
   explains what is out of step.
-- **Landing is bounded.** A closed bead is never landed or reopened. A bead
-  with nothing to land (a tracking epic, work already on the target) is closed
-  without a land run. An in-place land verifies the diff since the bead's
-  first run. After three failed landings in a row the bead parks at
-  waiting-human instead of filing another repair bug.
+- **No landing step.** A `done` run commits its work in the primary checkout
+  as `<bead-id>: <title>` and closes the bead; the recipe's `landing_gate:`
+  decides what must be green first.
 - **Recipe defaults only reach unassigned beads.** `alloy start --recipe` and
   `alloy:default:recipe` never override a bead's own `alloy_recipe`. The
   scheduler logs how many ready beads pin another recipe; `alloy

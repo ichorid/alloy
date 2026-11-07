@@ -96,7 +96,6 @@ alloy resume <bead-id> -m "<message>" # continue a paused/crashed run with guida
 alloy cancel <bead-id>                # stop the run (in-scheduler if the scheduler owns it); bead returns to ready unless closed
 alloy reconcile [<bead-id>] [--apply] # find/fix drift between bd status, alloy_* metadata and the run ledger
 alloy assign-recipe <recipe> [--from R] [--apply]  # retarget beads pinning another recipe; skips epics and manual beads
-alloy land <bead-id>                  # trial-merge, re-verify, merge into landing.target (default main)
 alloy start [--poll SECS] [--recipe N]  # scheduler: poll Beads, run READY work, concurrency 1
 alloy stop [--now]                    # stop the scheduler after the current task (--now: cancel it too)
 alloy monitor [--once [--json]]       # live htop-style view of every active run; --once prints one snapshot
@@ -236,16 +235,11 @@ alloy start
   can accept `done`, and it refuses while tests are red. If a run reaches
   `waiting-human`, use `alloy resume <bead-id> -m "..."` with guidance, don't
   edit the bead status directly.
-- Standalone beads sit at `review-ready` until landing. Recipes opt in via
-  `landing: {mode: off|auto, target: <branch>}`; shipped `tdd-loop` and
-  `tdd-loop-jev` set `landing: {mode: auto, target: main}`, so the scheduler
-  runs `alloy land` after a successful run. Landing is never set via
-  `alloy_recipe` metadata. Epic children share one worktree/branch
-  (`alloy/<epic-id>`); children close on success and the epic lands when all
-  descendants are closed. `cleanup_worktree_on_success: false` keeps the
-  worktree until land removes it. For stacked features, decide up front
-  whether later beads' worktrees branch off an earlier bead's branch or off
-  main — Alloy does not stack branches for you.
+- A `done` run commits its work in the primary checkout (`<bead-id>: <title>`)
+  and closes the bead; there is no landing step, worktree or bead branch.
+  The recipe's `landing_gate:` is what must be green first. Epics close once
+  every descendant is closed. Stacked features stack naturally: each bead
+  starts from the commits the previous ones left on the checked-out branch.
 - `.beads/` is a Dolt database with its own version control — do not commit it
   into the project's git repo. If you want a reviewable, git-friendly record
   of issues, enable `bd config set export.auto true` and use the resulting

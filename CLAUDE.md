@@ -96,36 +96,23 @@ transcripts go under Alloy's logs without run-ledger entries.
 `alloy status <bead-id> --json` includes `complexity`, `complexity_source`, and
 `dispatch_tier` (null in shadow mode).
 
-By default a bead (or epic) runs **in place**, directly in the primary
-checkout, on whatever branch is already there — no git worktree is created.
-Set the bead metadata flag `alloy_use_worktree` truthy (`bd update <id>
---set-metadata alloy_use_worktree=true`) to opt that bead, or an epic and all
-its children, into an isolated git worktree/branch (`alloy/<bead-id>` or
-`alloy/<epic-id>`) instead; epic children with the flag share one worktree,
-each child closing on success and the epic landing once every descendant is
-closed. `alloy_worktree_owner=<id>` still names an explicit shared owner
-outside an epic, and that owner's own `alloy_use_worktree` flag decides
-whether the shared checkout is isolated or in place.
+Every bead runs **in place**: directly in the primary checkout, on whatever
+branch is already there. Alloy creates no worktree or branch of its own and
+runs one bead at a time. It commits a bead's work with a plain `git add -A`,
+which cannot tell its own changes apart from anyone else's, so a fresh
+(non-resume, non-retry) start refuses, and the scheduler holds dispatch,
+while the checkout has uncommitted changes to tracked files or untracked,
+not-ignored files (gitignored files and Alloy's own `.alloy/`, `.beads/`
+state never count). Manual work alongside Alloy belongs in a separate clone,
+or committed or stashed before the next bead is picked.
 
-In-place runs share the single primary checkout, so they are not
-concurrency-safe: two beads cannot run in place at once, and Alloy commits WIP
-there with a plain `git add -A`, which cannot tell its own bead's changes
-apart from anyone else's. To avoid silently sweeping unrelated work into a
-bead's diff/commit, a fresh (non-resume, non-retry) in-place start refuses to
-begin while the primary checkout has uncommitted changes to tracked files or
-untracked, not-ignored files (gitignored files and Alloy's own `.alloy/`,
-`.beads/` state never count). Beads that need real
-concurrency or run alongside manual edits to the repo should set
-`alloy_use_worktree`.
-
-Shipped recipes set `landing: {mode: auto, target: main}`. After a successful
-run the scheduler invokes `alloy land <bead-id>`: for a worktree-opted bead,
-trial-merge into the bead branch, re-verify, merge into the primary checkout
-on `landing.target`, close the bead, and remove the worktree; for an in-place
-bead there is no branch to merge, so landing just verifies the primary
-checkout is already on `landing.target` and closes the bead. Recipes with
-`landing: {mode: off}` stop at `review-ready`; land manually with `alloy land
-<bead-id>` when ready.
+There is no separate landing step. On a `done` verdict Alloy commits the work
+as `<bead-id>: <title>` and closes the bead; a tracking epic closes once every
+descendant is closed. What must be green before `done` is the recipe's
+`landing_gate:` -- checks selected by the paths the diff touches (README
+"`landing_gate:`"). Bead metadata `alloy_use_worktree`, `alloy_worktree_owner`
+and `alloy_land_*` belongs to the removed worktree / `alloy land` flow and has
+no effect; `alloy reconcile` clears stale `alloy_land_*` keys.
 
 Remediation is bounded by each run's own budget: a run is capped by its own
 `max_agent_calls` (remediation children spend their own budget, not the

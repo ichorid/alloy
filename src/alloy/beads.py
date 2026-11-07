@@ -50,14 +50,9 @@ never runs it by itself; the verifier decides which checks to run."""
 META_COMPLEXITY = "alloy_complexity"
 META_COMPLEXITY_ESTIMATED = "alloy_complexity_estimated"
 META_DISCOVERED_IN_RUN = "alloy_discovered_in_run"
-META_WORKTREE_OWNER = "alloy_worktree_owner"
 META_LAND_STATE = "alloy_land_state"
 META_LAND_SHA = "alloy_land_sha"
 META_LAND_REPAIR = "alloy_land_repair"
-META_USE_WORKTREE = "alloy_use_worktree"
-"""Opt-in flag: a bead (or epic) with this set truthy gets an isolated git
-worktree/branch. Without it, Alloy runs the bead directly in the primary
-checkout -- no worktree is created."""
 META_MANUAL = "alloy_manual"
 """Flag: a human-operated bead (a checklist, a merge gate, a tracking epic).
 Alloy never dispatches, runs or lands it, whatever `alloy_recipe` says."""

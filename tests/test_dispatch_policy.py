@@ -136,6 +136,18 @@ async def test_a_dirty_checkout_holds_dispatch_without_booking_a_run(scheduler, 
     assert "uncommitted tracked changes" in scheduler._hold[1]
 
 
+async def test_a_leftover_worktree_flag_does_not_skip_the_dirty_hold(scheduler, beads_project):
+    """`alloy_use_worktree` is a leftover of the removed worktree flow: every
+    run is in place, so the flag must not let a dirty checkout book a run."""
+    bead = bd_create(beads_project, "old flag", alloy_recipe="tdd-loop", alloy_use_worktree="true")
+    (beads_project / "mypkg" / "__init__.py").write_text("SOMEONE_ELSES_WIP = True\n", encoding="utf-8")
+
+    assert await scheduler.tick() is False
+
+    assert scheduler.engine.store.runs_for_bead(bead) == []
+    assert scheduler._hold is not None and scheduler._hold[0] == PRIMARY_CHECKOUT_HOLDER
+
+
 async def test_a_refused_start_does_not_let_the_next_start_sweep_the_changes(beads_project, alloy_home, fake_harnesses):
     engine = Engine.open(beads_project, alloy_home)
     bead = bd_create(beads_project, "would sweep", alloy_recipe="tdd-loop")

@@ -1,5 +1,9 @@
 # Auto-land: merge finished work into the target branch
 
+> **Historical.** Superseded: runs are in place and a `done` run commits and
+> closes its bead; `alloy land`, bead branches and `landing:` are gone. What
+> must be green before `done` is the recipe's `landing_gate:` (README).
+
 Today a successful run stops at `review-ready` and a human merges
 `alloy/<bead-id>` by hand. This plan makes Alloy land finished work itself.
 
