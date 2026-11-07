@@ -12,6 +12,11 @@ complexity:
     medium: [{runner: cursor, model: composer-2.5}]
     complex: [{runner: cursor, model: composer-2.5}]
 
+# Agents on the bench load no MCP servers: the operator's user-scope servers
+# (serena, ...) started one process per agent call and per toy.
+runners:
+  claude: {extra_args: ["--strict-mcp-config"]}
+  claude-write: {extra_args: ["--strict-mcp-config"]}
 roles:
   context:
     runner: cursor-plan

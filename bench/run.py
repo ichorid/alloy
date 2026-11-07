@@ -160,9 +160,29 @@ def reset(scenario: str, toy: Path, sha: str) -> None:
 
 
 # --- start / wait ------------------------------------------------------------
+# Per-toy cgroup: a runaway check (2026-11-07: an agent-written test that ran
+# the whole suite from inside it, recursively) is OOM-killed inside its own toy
+# instead of starving the machine and the other toys.
+TOY_MEMORY_HIGH = "6G"
+TOY_MEMORY_MAX = "8G"
+TOY_TASKS_MAX = "768"
+
+
 def start(toy: Path, sha: str) -> None:
-    alloy(sha, toy, "start", "--poll", "15", "--stall-minutes", "20")
-    log(f"started scheduler for {toy.name}")
+    binary = alloy_checkout(sha) / ".venv" / "bin" / "alloy"
+    unit = f"bench-{toy.name}-{int(time.time())}"
+    scope = [
+        "systemd-run", "--user", "--scope", "--quiet", "--collect", f"--unit={unit}",
+        "--slice=alloy-bench.slice",
+        "-p", f"MemoryHigh={TOY_MEMORY_HIGH}", "-p", f"MemoryMax={TOY_MEMORY_MAX}",
+        "-p", "MemorySwapMax=0", "-p", f"TasksMax={TOY_TASKS_MAX}",
+    ]  # fmt: skip
+    if shutil.which("systemd-run") is None:
+        scope = []
+        log("systemd-run missing: the toy runs without a memory cap")
+    cmd = [*scope, str(binary), "start", "--poll", "15", "--stall-minutes", "20"]
+    subprocess.run(cmd, cwd=toy, env=toy_env(toy), check=True, text=True, capture_output=True)
+    log(f"started scheduler for {toy.name} (cgroup {unit or 'none'})")
 
 
 def ready_work(toy: Path) -> list[str]:
