@@ -84,6 +84,8 @@ class TddState(TypedDict, total=False):
     outcome: str | None
     outcome_reason: str
     limit_hit: str | None
+    refined: dict[str, Any] | None
+    """The refine role's answer (`workflow_nodes.refine`), if it ran."""
     exhaustion: str | None
     """Why a limit parked the run (`workflow_nodes.classify_exhaustion`)."""
     limit_breach: str | None

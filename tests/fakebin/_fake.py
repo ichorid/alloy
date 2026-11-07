@@ -23,6 +23,7 @@ ROLE_MARKERS = [
     ("timeout_resume", "Alloy stopped your previous turn"),
     ("context", "You are gathering context"),
     ("estimate", "You are estimating how hard this task is"),
+    ("refine", "You are refining a task before anyone works on it"),
     ("tests_review", "You are an independent reviewer of the tests"),
     ("tests", "Write failing tests"),
     ("triage", "You are triaging a bug report"),

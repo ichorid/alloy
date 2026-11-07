@@ -142,6 +142,10 @@ with class nearly-done / stalled / progressing / infrastructure; two
 iterations that fix nothing turn the next retry into a consilium (README "The
 judge proposes; Alloy disposes").
 
+A tdd-loop recipe with a `refine` role appends testable criteria and recorded
+assumptions to a vague bead's acceptance in bd ("## Refined by Alloy",
+metadata `alloy_refined`, label `alloy-needs-spec` when it finds no goal).
+
 A fast-track recipe with `escalate: {after_iterations: N,
 when_packages_touched_over: M, package_roots: [glob...], to: <recipe>}`
 reroutes a bead that ran N implement rounds without done, or touched more

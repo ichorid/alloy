@@ -236,6 +236,34 @@ ACCEPTANCE_DECISIONS: tuple[str, ...] = ("accept", "verify_more", "repair", "esc
 AcceptanceDecision = Literal["accept", "verify_more", "repair", "escalate"]
 
 
+REFINE_DECISIONS: tuple[str, ...] = ("refined", "unchanged", "unclear")
+
+
+class RefinedSpec(BaseModel):
+    """The refine role's answer: testable acceptance criteria and the
+    assumptions behind them, for a bead whose description asks for more than
+    its acceptance criteria name."""
+
+    decision: Literal["refined", "unchanged", "unclear"]
+    criteria: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+    @classmethod
+    def schema_for_agents(cls) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "decision": {"type": "string", "enum": list(REFINE_DECISIONS)},
+                "criteria": {"type": "array", "items": {"type": "string"}},
+                "assumptions": {"type": "array", "items": {"type": "string"}},
+                "reason": {"type": "string"},
+            },
+            "required": ["decision", "criteria", "assumptions", "reason"],
+            "additionalProperties": False,
+        }
+
+
 class AcceptanceVerdict(BaseModel):
     """The acceptance role's answer: is there enough evidence to call the task complete?"""
 

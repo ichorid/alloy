@@ -79,6 +79,10 @@ def metadata_flag(metadata: dict[str, Any], key: str) -> bool:
 # `bd human list` surfaces needs-human bugs without any Alloy-specific query.
 LABEL_BUG = "alloy-bug"
 LABEL_HUMAN = "human"
+LABEL_NEEDS_SPEC = "alloy-needs-spec"
+"""The refine role found no testable goal in the bead (see `workflow_nodes.refine`)."""
+META_REFINED = "alloy_refined"
+"""The refine role's decision for this bead; set once, so later runs skip it."""
 # A bead Alloy finished through a budget-stop auto-land (see META_BUDGET_LANDED).
 LABEL_BUDGET_LANDED = "budget-landed"
 # Labels that mark a bead as human-operated, like META_MANUAL.
@@ -518,6 +522,11 @@ class BeadsClient:
         for key, value in values.items():
             args += ["--set-metadata", f"{key}={value}"]
         self._run(args)
+
+    def set_acceptance(self, bead_id: str, text: str) -> None:
+        """Replace the bead's acceptance criteria (the refine role appends a
+        section; the operator's own text stays above it)."""
+        self._run(["update", bead_id, "--acceptance", text])
 
     def unset_metadata(self, bead_id: str, keys: list[str]) -> None:
         if not keys:

@@ -239,6 +239,14 @@ roles:
   judge:     {runner: claude, model: sonnet}
 ```
 
+An optional `refine` role (tdd-loop) runs once per bead, after context: it
+turns everything the description names into testable acceptance criteria,
+writes the conventional choice for each vague point as an assumption, and
+appends both to the bead's acceptance in bd under "Refined by Alloy" (metadata
+`alloy_refined` records that it ran; alloy-bug beads are skipped). A bead with
+no discernible goal is labelled `alloy-needs-spec` and the run goes on with
+its own criteria. Without the role nothing changes.
+
 Cursor roles (`cursor`, `cursor-plan`) take the CLI's model ids, and every
 id must be an explicit **non-fast** variant: `composer-2.5`, `grok-4.7-high`.
 Never use `*-fast`, a bare family name or `auto`. Cursor defaults to its fast

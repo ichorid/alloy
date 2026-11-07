@@ -172,6 +172,7 @@ from alloy.recipes.workflow_nodes import _make_node__first_available as _make_no
 from alloy.recipes.workflow_nodes import _make_node__park as _make_node__park
 from alloy.recipes.workflow_nodes import _make_node_critic as _make_node_critic
 from alloy.recipes.workflow_nodes import _make_node_estimate as _make_node_estimate
+from alloy.recipes.workflow_nodes import _make_node_refine as _make_node_refine
 from alloy.recipes.workflow_nodes import _make_node_finish as _make_node_finish
 from alloy.recipes.workflow_nodes import _make_node_gather_context as _make_node_gather_context
 from alloy.recipes.workflow_nodes import _make_node_guard as _make_node_guard
@@ -263,6 +264,7 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
     _capture_bugs = _make_node__capture_bugs(ctx)
     record_memory_contradictions = _make_node_record_memory_contradictions(ctx)
     estimate = _make_node_estimate(ctx)
+    refine = _make_node_refine(ctx)
     write_tests = _make_node_write_tests(ctx, _capture_bugs)
     route_after_tests = _make_node_route_after_tests()
     route_after_human = _make_node_route_after_human()
@@ -318,11 +320,13 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         graph.add_node("landing_gate", _make_node_landing_gate(ctx))
         graph.add_conditional_edges("landing_gate", route_after_landing_gate, ["finish", "implement", "human_gate"])
 
+    graph.add_node("refine", refine)
     if skip_context:
-        graph.add_edge(START, "estimate")
+        graph.add_edge(START, "refine")
     else:
         graph.add_edge(START, "context")
-        graph.add_edge("context", "estimate")
+        graph.add_edge("context", "refine")
+    graph.add_edge("refine", "estimate")
     graph.add_edge("estimate", "tests")
     graph.add_conditional_edges("tests", route_after_tests, ["prove_red", "finish", "human_gate"])
     graph.add_conditional_edges(

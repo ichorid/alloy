@@ -145,6 +145,29 @@ def estimate_prompt(
     ).text
 
 
+REFINE_STATIC = """You are refining a task before anyone works on it. You are read-only: do not modify any
+file. The acceptance criteria decide what gets tested and what counts as done: whatever the
+description asks for that no criterion names will be left out. Make the criteria cover the task.
+
+- One criterion per behaviour the description or design notes name, each item of a list
+  included ("AND/OR/NOT" is three behaviours).
+- Each criterion concrete enough for a test: an input through the project's own interface and
+  the exact expected result.
+- Where the task is vague ("a few text functions", "like a spreadsheet does"), choose the
+  conventional behaviour a user of such a tool expects, write it as a criterion, and record the
+  choice in `assumptions`. Record assumptions instead of asking.
+- Keep every existing criterion. Add nothing the task does not ask for, and give no
+  implementation advice. At most 12 criteria.
+
+Answer `decision` "refined" with `criteria` (the added ones only) and `assumptions`;
+"unchanged" when the existing criteria already name every behaviour testably; "unclear" only
+when the task has no discernible goal or contradicts itself -- say why in `reason`."""
+
+
+def refine_prompt(brief: str, acceptance: str, context: dict[str, Any], *, memory: str = "") -> str:
+    return assemble(REFINE_STATIC, _project_layer(memory), _run_layer(context), _task_layer(brief, acceptance), "").text
+
+
 ROOT_CAUSE_RULE = """Fix the cause, not the symptom: a guard, catch, retry or longer timeout that only hides the
   failure is not a fix."""
 

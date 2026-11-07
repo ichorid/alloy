@@ -7,7 +7,7 @@ from typing import Any
 
 from langgraph.types import Send, interrupt
 
-from alloy.beads import LABEL_BUG, LABEL_HUMAN, META_DISCOVERED_IN_RUN
+from alloy.beads import LABEL_BUG, LABEL_HUMAN, LABEL_NEEDS_SPEC, META_DISCOVERED_IN_RUN, META_REFINED
 from alloy.config import RoleSpec
 from alloy.models import (
     CALIBRATION_KEY,
@@ -25,6 +25,7 @@ from alloy.models import (
     HarvestAnswer,
     JudgeDecision,
     Outcome,
+    RefinedSpec,
     TestsOutput,
     TestsReview,
     clip,
@@ -54,6 +55,7 @@ from alloy.recipes.role_prompts import (
     harvest_prompt,
     implement_prompt,
     log,
+    refine_prompt,
     synthesize_prompt,
     tests_prompt,
     tests_review_prompt,
@@ -275,6 +277,76 @@ def _make_node_record_memory_contradictions(ctx):
             )
 
     return record_memory_contradictions
+
+
+REFINED_HEADING = "## Refined by Alloy"
+
+
+def refined_acceptance(original: str, answer: RefinedSpec) -> str:
+    """The operator's acceptance criteria with the refine role's additions
+    below them, under a heading that says who wrote them."""
+    lines = [REFINED_HEADING, "Testable criteria added for behaviour the description names:"]
+    lines += [f"- {criterion}" for criterion in answer.criteria]
+    if answer.assumptions:
+        lines += ["", "Assumptions made where the description is vague:"]
+        lines += [f"- {assumption}" for assumption in answer.assumptions]
+    return "\n".join([original.rstrip(), "", *lines]).strip()
+
+
+def _make_node_refine(ctx):
+    async def refine(state: TddState) -> dict[str, Any]:
+        """Bench calibration (D8): a bead whose description names five
+        behaviours and whose acceptance names one closed done with only that
+        one built. The optional `refine` role turns the description into
+        testable criteria plus recorded assumptions, appended to the bead's
+        acceptance in bd (so a resumed run and every later role see them).
+        Once per bead (`alloy_refined`); alloy-bug beads are already specific.
+        "unclear" only labels the bead `alloy-needs-spec` and the run goes on."""
+        spec = ctx.recipe.roles.get("refine")
+        if spec is None or ctx.bead.metadata.get(META_REFINED) or LABEL_BUG in ctx.bead.labels:
+            return {}
+        ctx.set_stage("refine")
+        default = RefinedSpec(decision="unchanged")
+        answer = await classify(
+            ctx,
+            "refine",
+            spec,
+            refine_prompt(
+                ctx.bead.task_brief(),
+                ctx.bead.acceptance_criteria,
+                state.get("context", {}),
+                memory=state.get("memory_block", ""),
+            ),
+            model_cls=RefinedSpec,
+            default=default,
+        )
+        if answer is default:
+            return {"stage": "refine", "journal": [f"refine: no answer ({answer.reason}); criteria unchanged"]}
+        journal = f"refine: {answer.decision}"
+        if answer.decision == "refined" and answer.criteria:
+            text = refined_acceptance(ctx.bead.acceptance_criteria, answer)
+            ctx.bead = ctx.bead.model_copy(update={"acceptance_criteria": text})
+            _best_effort(ctx, lambda beads: beads.set_acceptance(ctx.bead.id, text))
+            journal += f" -- {len(answer.criteria)} criteria, {len(answer.assumptions)} assumptions added"
+        elif answer.decision == "unclear":
+            _best_effort(ctx, lambda beads: beads.add_label(ctx.bead.id, LABEL_NEEDS_SPEC))
+            _best_effort(
+                ctx, lambda beads: beads.note(ctx.bead.id, f"alloy: refine found no testable goal: {answer.reason}")
+            )
+            journal += f" -- {answer.reason}"
+        _best_effort(ctx, lambda beads: beads.set_metadata(ctx.bead.id, {META_REFINED: answer.decision}))
+        return {"stage": "refine", "refined": answer.model_dump(), "journal": [journal]}
+
+    return refine
+
+
+def _best_effort(ctx, action) -> None:
+    if ctx.beads is None:
+        return
+    try:
+        action(ctx.beads)
+    except Exception as exc:  # the in-memory bead already carries the change
+        log.warning("%s: refine could not update bd: %s", ctx.bead.id, exc)
 
 
 def _make_node_estimate(ctx):
