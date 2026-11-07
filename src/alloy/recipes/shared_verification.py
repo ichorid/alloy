@@ -23,6 +23,7 @@ from alloy.models import (
     parse_pinned_check_hints,
 )
 from alloy.prompts import assemble
+from alloy.recipes.known_red import review_red_check
 from alloy.recipes.role_prompts import (
     _project_layer,
     _render_history,
@@ -581,6 +582,8 @@ def _make_check_nodes(ctx, _implementer):
         records: list[dict[str, Any]] = []
         streak = int(state.get("unrunnable_streak", 0) or 0)
         failed_required: CheckResult | None = None
+        known = dict(state.get("known_red") or {})
+        journal: list[str] = []
 
         for request in requests:
             if records and ctx.wall_time_breach():
@@ -588,6 +591,8 @@ def _make_check_nodes(ctx, _implementer):
                 break
             result = await ctx.run_check(request)
             result.iteration = iteration
+            result, known, excused = await review_red_check(ctx, result, known, iteration)
+            journal += excused
             records.append(result.model_dump(mode="json"))
             if not result.runnable:
                 streak += 1
@@ -601,6 +606,8 @@ def _make_check_nodes(ctx, _implementer):
                         "last_check": records[-1],
                         "iteration_checks": iteration_checks,
                         "unrunnable_streak": streak,
+                        "known_red": known,
+                        "journal": journal,
                         "verify_route": "human_gate",
                         "resume_to": "implement",
                         "decision": JudgeDecision(
@@ -614,7 +621,7 @@ def _make_check_nodes(ctx, _implementer):
                     }
             else:
                 streak = 0
-            if result.required and not result.ok:
+            if result.required and not result.ok and not result.all_excused:
                 failed_required = result
 
         checks = [*(state.get("checks") or []), *records]
@@ -629,6 +636,8 @@ def _make_check_nodes(ctx, _implementer):
             "iteration_checks": iteration_checks,
             "verify_route": "verifier_step",
             "unrunnable_streak": streak,
+            "known_red": known,
+            "journal": journal,
         }
 
         if batch:
@@ -929,9 +938,10 @@ def _last_check_summary(state: TddState) -> dict[str, Any] | None:
 
 
 def _is_red(check: dict[str, Any]) -> bool:
-    """A runnable, required check that did not pass."""
+    """A runnable, required check that did not pass, unless every failure
+    was excused as not this bead's (pre-existing or flaky)."""
     result = CheckResult.model_validate(check)
-    return result.required and result.runnable and not result.ok
+    return result.required and result.runnable and not result.ok and not result.all_excused
 
 
 def _check_target(command: str) -> str:

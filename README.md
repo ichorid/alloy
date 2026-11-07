@@ -168,6 +168,18 @@ project-layout autodetection are handed to the verifier as unverified hints.
 The `verification:` block of a recipe caps how many checks may run and for how
 long; it never says what they are.
 
+Two optional `verification:` keys let the loop tell a failure that is not the
+bead's from one that is: `rerun_tests` (a command with `{files}`, e.g.
+`python3 -m pytest -q {files}`) and `base_setup` (as at the landing gate,
+below). With `rerun_tests` set, a red check's failing tests outside the files
+the run changed get one isolated rerun; a green rerun marks the test flaky.
+Tests still red are rerun on the base commit; red there too marks them
+pre-existing. A check whose every failure is flaky or pre-existing does not
+send the run back to implement or block `done`. Alloy files one `alloy-bug`
+per such test, deduplicated against open bugs, and later implement prompts
+list those tests as not this task's. A load or compile error, more than 20
+failing files, or any unparsed failure leaves the check red as before.
+
 **The judge proposes; Alloy disposes.** `guard` is a plain Python function and it
 is the only place the loop can continue from. It refuses `done` while tests are
 red, downgrades a `consilium` request when the budget is spent, and escalates to

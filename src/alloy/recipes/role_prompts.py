@@ -344,6 +344,7 @@ def implement_prompt(
     previous_instructions: str = "",
     memory: str = "",
     resumed: bool = False,
+    not_ours: str = "",
 ) -> str:
     """`resumed` is the variant sent into a session that already holds the task:
     a branch of the tests writer's session, or the implementer's own session on
@@ -364,6 +365,8 @@ def implement_prompt(
             volatile.append(f"## Previous repair instructions\n{previous_instructions}")
     if history:
         volatile.append("## Previous attempts\n" + _render_history(history))
+    if not_ours:
+        volatile.append(not_ours)
     if instructions:
         volatile.append(f"## Required changes this iteration\n{instructions}")
     return assemble(
@@ -421,7 +424,10 @@ def fast_track_prompt(
     last_checks: list[dict[str, Any]] | None = None,
     diff: str = "",
     memory: str = "",
+    not_ours: str = "",
 ) -> str:
+    """`not_ours` is `known_red.excused_note`: failing tests Alloy found are
+    pre-existing or flaky, which this task must leave alone."""
     task = [_task_layer(brief, acceptance)]
     volatile: list[str] = []
     if last_checks:
@@ -430,6 +436,8 @@ def fast_track_prompt(
         volatile.append(_diff_section(diff))
     if history:
         volatile.append("## Previous attempts\n" + _render_history(history))
+    if not_ours:
+        volatile.append(not_ours)
     if instructions:
         volatile.append(f"## Required changes this iteration\n{instructions}")
     return assemble(
@@ -452,6 +460,9 @@ def triage_prompt(
     filed: list[dict[str, Any]],
     remediations: list[dict[str, Any]],
     project_context: str | None,
+    *,
+    own_bead: str = "",
+    tracker: list[dict[str, Any]] | None = None,
 ) -> str:
     bug = BugReport.model_validate(report)
     blocks = {True: "yes", False: "no"}.get(bug.blocks_task, "(not stated)")
@@ -481,13 +492,22 @@ def triage_prompt(
         f"## Bugs already filed in this run\n{filed_text}",
         f"## Remediations already performed in this run\n{remediation_text}",
     ]
+    if own_bead:
+        sections.insert(1, f"## This task's bead\n{own_bead}")
+    if tracker:
+        sections.append(
+            "## Open and recently closed bugs in the tracker\n"
+            + "\n".join(f"- {item['bead_id']}: {item['title']} [{item['status']}]" for item in tracker)
+        )
     if project_context:
         sections.append(f"## Project context\n{project_context}")
     sections.append(
         "Choose exactly one severity:\n"
         '- "not-a-bug"    -- the report is the task itself, the tests it was asked to make '
-        "pass, or a defect that only appears with this task's changes\n"
-        '- "duplicate"    -- it matches a bug already filed in this run (listed above)\n'
+        "pass, the defect this task's bead was filed to fix, or a defect that only appears "
+        "with this task's changes\n"
+        '- "duplicate"    -- it matches a bug already filed in this run or in the tracker '
+        "(listed above), open or recently closed\n"
         '- "non-blocking" -- a real pre-existing defect the task can finish without; '
         "it is filed for later and stays out of this task's scope\n"
         '- "blocking"     -- a real pre-existing defect the task cannot finish without; '

@@ -31,8 +31,9 @@ from alloy.models import (
     ProjectMemory,
     is_unavailable,
 )
+from alloy.recipes.known_red import excused_note, review_red_check
 from alloy.recipes.landing_gate import _make_node_landing_gate, path_matches, route_after_landing_gate
-from alloy.recipes.role_prompts import fast_track_prompt, log
+from alloy.recipes.role_prompts import extract_summary, fast_track_prompt, log
 from alloy.recipes.shared_verification import (
     _checks_of,
     _unavailable_decision,
@@ -43,11 +44,11 @@ from alloy.recipes.shared_verification import (
     limit_stop,
     resumable_session,
 )
-from alloy.recipes.role_prompts import extract_summary
 from alloy.recipes.state import FastTrackState
 from alloy.recipes.tdd_loop import existing_lessons, flag_stale_embed_block
 from alloy.recipes.workflow_nodes import (
     _make_node__capture_bugs,
+    _make_node__dispatch_critics,
     _make_node_finish,
     _make_node_guard,
     _make_node_harvest,
@@ -58,7 +59,6 @@ from alloy.recipes.workflow_nodes import (
     _make_node_route,
     _make_node_route_after_human,
     _make_node_start_final_pass,
-    _make_node__dispatch_critics,
 )
 from alloy.runtime import RunContext
 
@@ -154,6 +154,7 @@ def _make_node_fast_implement(ctx: RunContext, _capture_bugs):
             last_checks=_checks_of(state, previous_iteration) if session_id else [],
             diff=ctx.diff(),
             memory=state.get("memory_block", ""),
+            not_ours=excused_note(state.get("known_red") or {}, ctx.worktree.base_commit),
         )
         result = await call_in_session(
             ctx,
@@ -244,9 +245,13 @@ def _make_node_fast_run_check(ctx: RunContext):
         records: list[dict[str, Any]] = []
         streak = int(state.get("unrunnable_streak", 0) or 0)
         failed_required = None
+        known = dict(state.get("known_red") or {})
+        journal: list[str] = []
         for request in requests:
             result = await ctx.run_check(request)
             result.iteration = iteration
+            result, known, excused = await review_red_check(ctx, result, known, iteration)
+            journal += excused
             records.append(result.model_dump(mode="json"))
             if not result.runnable:
                 streak += 1
@@ -257,6 +262,8 @@ def _make_node_fast_run_check(ctx: RunContext):
                         "unrunnable_streak": streak,
                         "iteration_checks": int(state.get("iteration_checks", 0) or 0) + len(records),
                         "pending_checks": [],
+                        "known_red": known,
+                        "journal": journal,
                         "verify_route": "human_gate",
                         "resume_to": "implement",
                         "decision": JudgeDecision(
@@ -267,7 +274,7 @@ def _make_node_fast_run_check(ctx: RunContext):
                     }
             else:
                 streak = 0
-            if request.required and not result.ok:
+            if request.required and not result.ok and not result.all_excused:
                 failed_required = result
         update: dict[str, Any] = {
             "checks": records,
@@ -275,6 +282,8 @@ def _make_node_fast_run_check(ctx: RunContext):
             "unrunnable_streak": streak,
             "iteration_checks": int(state.get("iteration_checks", 0) or 0) + len(records),
             "pending_checks": [],
+            "known_red": known,
+            "journal": journal,
         }
         if failed_required is not None:
             reason = f"required check `{failed_required.command}` failed ({failed_required.headline()})"

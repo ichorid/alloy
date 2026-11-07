@@ -32,17 +32,19 @@ gate. Without `landing_gate` the graph has no such node and runs as before.
 
 from __future__ import annotations
 
-import asyncio
 import re
-import shlex
-import subprocess
 from functools import lru_cache
-from pathlib import Path
 from typing import Any, Iterable
 
-from alloy import verify
 from alloy.config import CommandSpec, LandingGateEntry
 from alloy.models import CheckRequest, CheckResult, JudgeDecision, clip
+from alloy.recipes.known_red import (  # noqa: F401  (failing_tests, LOAD_FAILURE: re-exported)
+    LOAD_FAILURE,
+    failing_tests,
+    failure_key,
+    read_log,
+    rerun_on_base,
+)
 from alloy.recipes.role_prompts import log
 
 GATE_OUTPUT_CHARS = 2000
@@ -93,81 +95,13 @@ def gate_checks(entries: Iterable[LandingGateEntry], changed_paths: Iterable[str
     return list(selected.values())
 
 
-# -- failing test names ---------------------------------------------------------
-
-_ANSI = re.compile(r"\x1b\[[0-9;]*m")
-_DART_FAILURE = re.compile(r"^\d+:\d+ \+\d+(?: ~\d+)? -\d+: (?P<body>.+?) \[E\]\s*$")
-_DART_FILE = re.compile(r"^(?P<file>\S+?_test\.dart): (?P<name>.+)$")
-_PYTEST_FAILURE = re.compile(r"^(?P<kind>FAILED|ERROR) (?P<id>\S+)")
-_PACKAGE_TEST_PATH = re.compile(r"(?:^|/)((?:test|integration_test)/\S+)$")
-LOAD_FAILURE = "<load>"
-"""Name of a test file that failed to load or compile: never pre-existing."""
-
-
-def _relative(path: str, roots: Iterable[Path]) -> str:
-    for root in roots:
-        prefix = str(root).rstrip("/") + "/"
-        if path.startswith(prefix):
-            path = path[len(prefix):]
-            break
-    # Dart prints a package's tests relative to the package when run inside
-    # it and absolute otherwise; both reduce to `test/...` from the package.
-    match = _PACKAGE_TEST_PATH.search(path) if path.endswith(".dart") else None
-    return match.group(1) if match else path
-
-
-def failing_tests(
-    text: str, *, roots: Iterable[Path] = (), single_file: str | None = None
-) -> set[tuple[str | None, str]]:
-    """(test file, test name) for every failing test a dart/flutter or pytest
-    log reports. A load/compile failure has the name LOAD_FAILURE. Dart omits
-    the file when one file ran: `single_file` names it."""
-    roots = tuple(roots)
-    found: set[tuple[str | None, str]] = set()
-    for raw in text.splitlines():
-        line = _ANSI.sub("", raw).rstrip()
-        dart = _DART_FAILURE.match(line)
-        if dart:
-            body = dart.group("body")
-            if body.startswith("loading "):
-                found.add((_relative(body[len("loading "):].strip(), roots), LOAD_FAILURE))
-                continue
-            named = _DART_FILE.match(body)
-            if named:
-                found.add((_relative(named.group("file"), roots), named.group("name").strip()))
-            else:
-                found.add((single_file, body.strip()))
-            continue
-        pytest = _PYTEST_FAILURE.match(line)
-        if pytest:
-            ident = pytest.group("id")
-            file, _, name = ident.partition("::")
-            if pytest.group("kind") == "ERROR" and not name:
-                name = LOAD_FAILURE
-            found.add((_relative(file, roots), name or LOAD_FAILURE))
-    return found
-
-
-def _read_log(result: CheckResult) -> str:
-    if result.log_path:
-        try:
-            return Path(result.log_path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            pass
-    return result.output_tail or ""
-
-
-def _key(test: tuple[str | None, str]) -> str:
-    return f"{test[0] or ''}::{test[1]}"
-
-
 async def _known_red(ctx, spec: CommandSpec, result: CheckResult, memo: dict[str, Any]) -> str | None:
     """A journal line when every failing test of this red gate check also
     fails on the run's base commit; None when the failure stands."""
     if not spec.rerun_on_base or not result.runnable:
         return None
     worktree = ctx.worktree
-    current = failing_tests(_read_log(result), roots=(worktree.path,))
+    current = failing_tests(read_log(result), roots=(worktree.path,))
     if not current or any(name == LOAD_FAILURE for _, name in current):
         return None
     if "{files}" in spec.rerun_on_base and any(file is None for file, _ in current):
@@ -178,12 +112,12 @@ async def _known_red(ctx, spec: CommandSpec, result: CheckResult, memo: dict[str
         base = await _rerun_on_base(ctx, spec, files)
         memo[spec.cmd] = base
     base_failures = set(base.get("failures") or ())
-    missing = [_key(test) for test in sorted(current, key=_key) if _key(test) not in base_failures]
+    missing = [failure_key(test) for test in sorted(current, key=failure_key) if failure_key(test) not in base_failures]
     if missing or not base.get("ran"):
         log.info("%s: gate check `%s` red beyond its base (%s)", ctx.bead.id, spec.cmd, missing[:3] or base.get("why"))
         return None
     short = worktree.base_commit[:9]
-    names = ", ".join(_key(test) for test in sorted(current, key=_key))
+    names = ", ".join(failure_key(test) for test in sorted(current, key=failure_key))
     return (
         f"landing gate check {_label(spec)} failed only on tests that fail the same way on the base commit "
         f"{short}: {clip(names, 600)}; treated as pre-existing, not this bead's failure"
@@ -192,45 +126,10 @@ async def _known_red(ctx, spec: CommandSpec, result: CheckResult, memo: dict[str
 
 async def _rerun_on_base(ctx, spec: CommandSpec, files: list[str]) -> dict[str, Any]:
     """Run the failing tests on the base commit in a throwaway worktree."""
-    worktree = ctx.worktree
-    repo = ctx.worktrees.repo
-    target = Path(ctx.worktrees.root) / f"base-{ctx.run_id[:16]}"
     timeout_s = (spec.timeout_minutes or ctx.recipe.verification.max_command_timeout_minutes) * 60
-
-    def git(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=300)
-
-    await asyncio.to_thread(git, "worktree", "remove", "--force", str(target))
-    added = await asyncio.to_thread(git, "worktree", "add", "--detach", "--force", str(target), worktree.base_commit)
-    if added.returncode != 0:
-        return {"ran": False, "why": f"git worktree add failed: {added.stderr.strip()[:200]}"}
-    try:
-        index = len(list(ctx.log_dir.glob("check-*.log"))) if ctx.log_dir.is_dir() else 0
-        if spec.base_setup:
-            setup = await verify.run_check(
-                CheckRequest(command=spec.base_setup, purpose="landing gate base setup", kind="regression"),
-                target, timeout_s=timeout_s, log_dir=ctx.log_dir, index=index,
-            )
-            if not setup.ok:
-                return {"ran": False, "why": f"base setup {setup.headline()}"}
-            index += 1
-        command = spec.rerun_on_base.replace("{files}", " ".join(shlex.quote(f) for f in files))
-        rerun = await verify.run_check(
-            CheckRequest(command=command, purpose="landing gate rerun on the base commit", kind="regression"),
-            target, timeout_s=timeout_s, log_dir=ctx.log_dir, index=index,
-        )
-        if not rerun.runnable:
-            return {"ran": False, "why": f"base rerun {rerun.headline()}"}
-        failures = failing_tests(
-            _read_log(rerun), roots=(target,), single_file=files[0] if len(files) == 1 else None
-        )
-        log.info(
-            "%s: base rerun of `%s` on %s: %d failing", ctx.bead.id, command, worktree.base_commit[:9], len(failures)
-        )
-        return {"ran": True, "files": files, "failures": sorted(_key(test) for test in failures)}
-    finally:
-        await asyncio.to_thread(git, "worktree", "remove", "--force", str(target))
-        await asyncio.to_thread(git, "worktree", "prune")
+    return await rerun_on_base(
+        ctx, spec.rerun_on_base or "", files, base_setup=spec.base_setup, timeout_s=timeout_s, purpose="landing gate"
+    )
 
 
 def _label(spec: CommandSpec) -> str:

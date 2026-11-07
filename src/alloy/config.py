@@ -257,6 +257,13 @@ class VerificationSpec:
     max_baseline_repairs: int = 2
     max_test_reviews: int = 1
     min_acceptance_confidence: float = 0.6
+    rerun_tests: str | None = None
+    """Command template with `{files}` (e.g. `pytest -q {files}`) that runs
+    just the given test files. Set, a red check's failing tests outside the
+    bead's diff get one isolated rerun (flaky) and one rerun on the base
+    commit (pre-existing); see `alloy.recipes.known_red`."""
+    base_setup: str | None = None
+    """Run in the base-commit worktree before `rerun_tests` there."""
 
     @classmethod
     def parse(cls, raw: dict[str, Any] | None, *, legacy: dict[str, Any] | None = None) -> "VerificationSpec":
@@ -275,7 +282,20 @@ class VerificationSpec:
             max_baseline_repairs=int(raw.get("max_baseline_repairs", defaults.max_baseline_repairs)),
             max_test_reviews=int(raw.get("max_test_reviews", defaults.max_test_reviews)),
             min_acceptance_confidence=float(raw.get("min_acceptance_confidence", defaults.min_acceptance_confidence)),
+            rerun_tests=_rerun_template(raw),
+            base_setup=str(raw["base_setup"]) if raw.get("base_setup") else None,
         )
+
+
+def _rerun_template(raw: dict[str, Any]) -> str | None:
+    template = raw.get("rerun_tests")
+    if raw.get("base_setup") and not template:
+        raise ConfigError(f"verification has base_setup without rerun_tests: {raw!r}")
+    if not template:
+        return None
+    if "{files}" not in str(template):
+        raise ConfigError(f"verification.rerun_tests must contain {{files}}: {template!r}")
+    return str(template)
 
 
 @dataclass(frozen=True)

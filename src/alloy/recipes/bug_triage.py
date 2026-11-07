@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from alloy.models import (
@@ -24,6 +25,45 @@ class TriageFailure:
 
     def __init__(self) -> None:
         self.reason = ""
+
+
+TRACKER_BUGS_LIMIT = 20
+RECENTLY_CLOSED = timedelta(days=3)
+
+
+def tracker_bugs(ctx, now: datetime | None = None) -> list[dict[str, Any]]:
+    """Alloy-filed bugs triage must not file again: this task's own bead
+    (when it is itself a bug) and every open or recently closed `alloy-bug`
+    bead, newest first. Bench stuck-1: a remediation run reported its own
+    defect and triage filed it a second time, since it only saw this run's
+    bugs. Best effort: a tracker error leaves the list empty."""
+    if ctx.beads is None:
+        return []
+    try:
+        rows = ctx.beads.filed_bugs()
+    except Exception:
+        return []
+    cutoff = (now or datetime.now(UTC)) - RECENTLY_CLOSED
+    kept = []
+    for row in rows:
+        if row.get("id") == ctx.bead.id:
+            continue
+        if row.get("status") == "closed" and _timestamp(row.get("closed_at")) < cutoff:
+            continue
+        kept.append(row)
+    kept.sort(key=lambda row: _timestamp(row.get("updated_at") or row.get("created_at")), reverse=True)
+    return [
+        {"bead_id": row.get("id"), "title": row.get("title", ""), "status": row.get("status", "")}
+        for row in kept[:TRACKER_BUGS_LIMIT]
+    ]
+
+
+def _timestamp(raw: Any) -> datetime:
+    try:
+        value = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=UTC)
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def untriaged(state: TddState) -> list[dict[str, Any]]:
@@ -160,6 +200,7 @@ async def triage_reports(state: TddState, ctx, _first_available, _park, _file_bu
     remediations = state.get("remediations") or []
     notes = [state["instructions"]] if state.get("instructions") else []
     project_context = getattr(ctx, "project_context", None)
+    tracker: list[dict[str, Any]] | None = None
     update: dict[str, Any] = {
         "stage": "triage",
         "triaged_titles": triaged,
@@ -192,6 +233,8 @@ async def triage_reports(state: TddState, ctx, _first_available, _park, _file_bu
                     "is triaged before the implementer runs again.",
                 ),
             }
+        if tracker is None:
+            tracker = tracker_bugs(ctx)
         failure = TriageFailure()
         verdict = await classify(
             ctx,
@@ -205,6 +248,8 @@ async def triage_reports(state: TddState, ctx, _first_available, _park, _file_bu
                 filed,
                 remediations,
                 project_context(state) if callable(project_context) else None,
+                own_bead=f"{ctx.bead.id}: {ctx.bead.title}",
+                tracker=tracker,
             ),
             model_cls=BugTriage,
             default=failure,
@@ -230,7 +275,7 @@ async def triage_reports(state: TddState, ctx, _first_available, _park, _file_bu
             )
             continue
         if severity == "duplicate":
-            notes.append(f"Bug '{report.title}' duplicates a report already filed in this run; proceed with the task.")
+            notes.append(f"Bug '{report.title}' duplicates a bug already filed; proceed with the task.")
             continue
         try:
             bug_id = _file_bug(report, verdict)

@@ -129,6 +129,13 @@ included). A red gate check is one more implement iteration, or a human gate
 when a limit is spent. A gated recipe skips the final broader pass: a done
 verdict goes straight to the gate.
 
+`verification: {rerun_tests: "<cmd with {files}>", base_setup: <cmd>}` lets
+the check loop excuse failures that are not the bead's: a failing test
+outside the changed files that is green on one isolated rerun (flaky) or red
+on the base commit too (pre-existing) neither sends the run back to implement
+nor blocks `done`; it gets one `alloy-bug` and an out-of-scope note in later
+implement prompts (README "Verification is deterministic").
+
 A fast-track recipe with `escalate: {after_iterations: N,
 when_packages_touched_over: M, package_roots: [glob...], to: <recipe>}`
 reroutes a bead that ran N implement rounds without done, or touched more

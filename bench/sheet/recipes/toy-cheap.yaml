@@ -86,6 +86,7 @@ consilium:
   synthesizer: {runner: claude, model: haiku, effort: low}
 
 verification:
+  rerun_tests: "python3 -m pytest -q {files}"
   max_checks_per_iteration: 5
   max_total_checks: 20
   max_command_timeout_minutes: 10

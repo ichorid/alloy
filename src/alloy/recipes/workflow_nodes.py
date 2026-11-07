@@ -13,7 +13,6 @@ from alloy.models import (
     CALIBRATION_KEY,
     CHECK_HINTS_KEY,
     CONTRADICTION_KEY_PREFIX,
-    REGRESSION_KEY_PREFIX,
     AgentResult,
     Attempt,
     BugReport,
@@ -45,6 +44,7 @@ from alloy.recipes.bug_triage import (
     triage_reports,
     untriaged,
 )
+from alloy.recipes.known_red import excused_note
 from alloy.recipes.role_prompts import (
     CONTEXT_SCHEMA,
     context_prompt,
@@ -60,9 +60,6 @@ from alloy.recipes.role_prompts import (
 )
 from alloy.recipes.shared_verification import (
     VERIFY_MORE_BREACH_PREFIX,
-    limit_gate,
-    limit_refused,
-    limit_stop,
     _check_hints,
     _checks_headline,
     _checks_of,
@@ -76,6 +73,9 @@ from alloy.recipes.shared_verification import (
     call_in_session,
     call_on_branch,
     classify,
+    limit_gate,
+    limit_refused,
+    limit_stop,
     resumable_session,
 )
 from alloy.recipes.state import CriticInput, TddState
@@ -522,6 +522,7 @@ def _make_node_implement(ctx, _capture_bugs):
             diff=ctx.diff() if repairing else "",
             previous_instructions=state.get("last_instructions", "") if repairing else "",
             memory=state.get("memory_block", ""),
+            not_ours=excused_note(state.get("known_red") or {}, ctx.worktree.base_commit),
         )
         # The tests writer implements, in its own branch of its session.
         result, implement_session = await call_on_branch(
@@ -709,10 +710,10 @@ def budget_landing(ctx, state: TddState, breach: str, decision: JudgeDecision) -
     if not regressions:
         return None
     regression = regressions[-1]
-    if not (regression.ok and regression.exit_code == 0 and regression.fingerprint):
+    if not ((regression.ok and regression.exit_code == 0) or regression.all_excused) or not regression.fingerprint:
         return None
     final = [CheckResult.model_validate(item) for item in _checks_of(state, state.get("iteration", 0))]
-    if any(not check.ok for check in final):
+    if any(not check.ok and not check.all_excused for check in final):
         return None
     if not ctx.worktrees.has_changes(ctx.worktree):
         return None

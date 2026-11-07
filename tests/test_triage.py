@@ -427,3 +427,51 @@ def test_agents_md_documents_bug_triage_protocol():
         "bd human list",
     ):
         assert needle in text
+
+
+# -- duplicates across runs (alloy-fw6) -----------------------------------------
+
+
+def test_tracker_bugs_lists_open_and_recent_bugs_but_not_this_task():
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from alloy.recipes.bug_triage import tracker_bugs
+
+    rows = [
+        {"id": "b-own", "title": "ids collide", "status": "in_progress", "updated_at": "2026-11-07T10:00:00Z"},
+        {"id": "b-open", "title": "units wrong", "status": "open", "updated_at": "2026-11-01T10:00:00Z"},
+        {
+            "id": "b-new",
+            "title": "flaky clock",
+            "status": "closed",
+            "closed_at": "2026-11-06T10:00:00Z",
+            "updated_at": "2026-11-06T10:00:00Z",
+        },
+        {"id": "b-old", "title": "ancient", "status": "closed", "closed_at": "2026-10-01T10:00:00Z"},
+    ]
+    ctx = SimpleNamespace(beads=SimpleNamespace(filed_bugs=lambda: rows), bead=SimpleNamespace(id="b-own"))
+
+    listed = tracker_bugs(ctx, now=datetime(2026, 11, 7, 12, tzinfo=UTC))
+
+    assert [item["bead_id"] for item in listed] == ["b-new", "b-open"]
+
+
+def test_triage_prompt_shows_the_tasks_bead_and_tracker_bugs():
+    from alloy.recipes.role_prompts import triage_prompt
+
+    prompt = triage_prompt(
+        "brief",
+        "",
+        [],
+        {"title": "ids collide", "reporter": "implement"},
+        [],
+        [],
+        None,
+        own_bead="toy-cyy: Fix colliding ids",
+        tracker=[{"bead_id": "toy-1", "title": "units wrong", "status": "open"}],
+    )
+
+    assert "## This task's bead\ntoy-cyy: Fix colliding ids" in prompt
+    assert "- toy-1: units wrong [open]" in prompt
+    assert "the defect this task's bead was filed to fix" in prompt

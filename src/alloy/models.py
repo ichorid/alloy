@@ -375,6 +375,11 @@ class CheckResult(BaseModel):
     fingerprint: str = ""
     """`worktree.tree_fingerprint` of the tree right after this check ran;
     "" when unknown."""
+    excused: dict[str, str] = Field(default_factory=dict)
+    """Failing tests of this check that are not the bead's (test key ->
+    "pre-existing" or "flaky"; see `alloy.recipes.known_red`)."""
+    all_excused: bool = False
+    """Every failure is in `excused`: the check does not count as red."""
 
     @property
     def tail(self) -> str:  # legacy name for output_tail
@@ -407,6 +412,11 @@ class CheckResult(BaseModel):
             text = f"exit {self.exit_code}"
         else:
             text = f"{self.passed or 0} passed, {self.failed or 0} failed"
+        if self.excused and not self.ok:
+            kinds = sorted(set(self.excused.values()))
+            shown = ", ".join(sorted(self.excused)[:3]) + (", ..." if len(self.excused) > 3 else "")
+            scope = "every failure" if self.all_excused else f"{len(self.excused)} failure(s)"
+            text += f" ({scope} not this task's -- {'/'.join(kinds)}: {shown})"
         return f"{text} (cached: same command already passed on this unchanged tree)" if self.cached else text
 
 
