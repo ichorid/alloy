@@ -24,6 +24,59 @@ from alloy.status_display import (
     _role_label,
 )
 
+# (substring of a model name, family), tried in order; then the runner's own.
+_MODEL_FAMILIES: tuple[tuple[str, str], ...] = (
+    ("claude", "anthropic"),
+    ("opus", "anthropic"),
+    ("sonnet", "anthropic"),
+    ("haiku", "anthropic"),
+    ("fable", "anthropic"),
+    ("gpt", "openai"),
+    ("codex", "openai"),
+    ("gemini", "google"),
+    ("kimi", "moonshot"),
+    ("glm", "zhipu"),
+    ("grok", "xai"),
+    ("deepseek", "deepseek"),
+    ("qwen", "alibaba"),
+    ("composer", "cursor"),
+)
+_RUNNER_FAMILIES = {"claude": "anthropic", "claude-write": "anthropic", "codex": "openai", "codex-readonly": "openai"}
+EVALUATOR_ROLES = ("acceptance", "judge")
+
+
+def model_family(spec: RoleSpec) -> str | None:
+    """The vendor family of a role's primary model; None when unknown."""
+    model = (spec.model or "").lower()
+    for needle, family in _MODEL_FAMILIES:
+        if needle in model:
+            return family
+    return _RUNNER_FAMILIES.get(spec.runner)
+
+
+def evaluator_warnings(config) -> list[str]:
+    """Evaluator roles whose primary model shares a family with an
+    implementer the recipe can dispatch: a judge from the implementer's own
+    family tends to share its blind spots (code-factory practice: keep the
+    evaluator independent). Advisory only."""
+    implement = config.roles.get("implement")
+    if implement is None:
+        return []
+    implementers = [implement]
+    if config.complexity.routing == "live" and implement.tiered:
+        implementers += list(config.complexity.tiers.values())
+    families = {family for spec in implementers if (family := model_family(spec))}
+    warnings = []
+    for role in EVALUATOR_ROLES:
+        spec = config.roles.get(role)
+        family = model_family(spec) if spec is not None else None
+        if family and family in families:
+            warnings.append(
+                f"{role} ({spec.runner}/{spec.model or 'default'}) shares the {family} model family with "
+                "implement; an evaluator from another family catches more of the implementer's mistakes"
+            )
+    return warnings
+
 
 def _recipe_entries(found, paths, repo_path, probe):
     entries: list[dict[str, Any]] = []
@@ -86,6 +139,7 @@ def _recipe_entries(found, paths, repo_path, probe):
             {"runner": spec.runner, "available": registry.available(spec.runner)} for spec in config.consilium.critics
         ]
         entry["limits"] = config.limits.__dict__
+        entry["warnings"] = evaluator_warnings(config)
         entries.append(entry)
     return entries, probes
 
@@ -135,6 +189,8 @@ def _show_recipe_entry(entry):
     critics = ", ".join(f"{c['runner']}{'' if c['available'] else '(missing)'}" for c in entry["critics"])
     console.print(f"  critics    {critics or '(none)'}")
     console.print(f"  limits     {entry['limits']}")
+    for warning in entry.get("warnings", []):
+        console.print(f"  [yellow]warning[/yellow]    {warning}")
 
 
 def _show_recipes(entries, probes, probe, json):

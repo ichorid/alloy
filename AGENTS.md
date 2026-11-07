@@ -175,7 +175,9 @@ records Alloy's estimate or escalation. `alloy recipes` shows routing, escalatio
 tier chains, effort, and runner availability. Use `--probe` to smoke-test each
 distinct runner/model/effort entry with a two-minute timeout before relying on
 model aliases or effort flags; any failed probe gives a non-zero exit, and
-transcripts go under Alloy's logs without run-ledger entries.
+transcripts go under Alloy's logs without run-ledger entries. It also warns
+(`warnings` in `--json`) when the judge or acceptance model shares a vendor
+family with an implementer the recipe can dispatch.
 `alloy status <bead-id> --json` includes `complexity`, `complexity_source`, and
 `dispatch_tier` (null in shadow mode).
 
