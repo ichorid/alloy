@@ -74,17 +74,23 @@ def alloy_checkout(sha: str) -> Path:
 
 
 def toy_env(toy: Path) -> dict:
-    return {"ALLOY_HOME": str(toy / ".alloy-home")}
+    """The environment Alloy (and so every agent and check) runs with: an
+    isolated ALLOY_HOME, and no Python venv of Alloy's own -- `uv run` puts
+    Alloy's venv first on PATH, and then the toy's `python3 -m pytest` ran
+    Alloy's interpreter, which has no pytest."""
+    path = [
+        entry
+        for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if not (entry.endswith("/.venv/bin") and (str(ALLOY_REPO) in entry or str(REF_WORKTREES) in entry))
+    ]
+    env = {k: v for k, v in os.environ.items() if k not in ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "PYTHONPATH")}
+    env.update({"ALLOY_HOME": str(toy / ".alloy-home"), "PATH": os.pathsep.join(path)})
+    return env
 
 
 def alloy(sha: str, toy: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    checkout = alloy_checkout(sha)
-    return sh(
-        ["uv", "run", "--project", str(checkout), "--quiet", "alloy", *args, "--repo", str(toy)],
-        cwd=toy,
-        env=toy_env(toy),
-        check=check,
-    )
+    binary = alloy_checkout(sha) / ".venv" / "bin" / "alloy"
+    return subprocess.run([str(binary), *args], cwd=toy, env=toy_env(toy), check=check, text=True, capture_output=True)
 
 
 # --- reset -----------------------------------------------------------------
