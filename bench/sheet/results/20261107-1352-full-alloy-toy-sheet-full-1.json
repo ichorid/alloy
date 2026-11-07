@@ -1,0 +1,1189 @@
+{
+  "meta": {
+    "scenario": "full",
+    "version": 1,
+    "alloy_sha": "c80a8fe339fc345cacee45b8126314ae329e1468",
+    "seed_sha": "74becb86929b409a9162e9a9625f52292daf74ae",
+    "toy": "/home/vader/MY_SRC/alloy-toy-sheet-full-1",
+    "reported_at": "2026-11-07T13:36:10.153548+00:00",
+    "deadline_hit": false,
+    "cli": {
+      "cursor-agent": "2026.11.05-86047df",
+      "claude": "2.1.319 (Claude Code)",
+      "bd": "bd version 1.3.0 (f45b249ce)"
+    }
+  },
+  "oracle": {
+    "score": 0.158,
+    "passed": 21,
+    "total": 152,
+    "areas": {
+      "cells": {
+        "passed": 10,
+        "total": 10,
+        "fraction": 1.0
+      },
+      "format": {
+        "passed": 2,
+        "total": 5,
+        "fraction": 0.4
+      },
+      "arith": {
+        "passed": 0,
+        "total": 14,
+        "fraction": 0.0
+      },
+      "refs": {
+        "passed": 0,
+        "total": 12,
+        "fraction": 0.0
+      },
+      "ranges": {
+        "passed": 0,
+        "total": 14,
+        "fraction": 0.0
+      },
+      "errors": {
+        "passed": 0,
+        "total": 14,
+        "fraction": 0.0
+      },
+      "logic": {
+        "passed": 0,
+        "total": 14,
+        "fraction": 0.0
+      },
+      "copy": {
+        "passed": 0,
+        "total": 10,
+        "fraction": 0.0
+      },
+      "rows": {
+        "passed": 0,
+        "total": 10,
+        "fraction": 0.0
+      },
+      "undo": {
+        "passed": 1,
+        "total": 8,
+        "fraction": 0.125
+      },
+      "files": {
+        "passed": 1,
+        "total": 8,
+        "fraction": 0.125
+      },
+      "csv": {
+        "passed": 0,
+        "total": 6,
+        "fraction": 0.0
+      },
+      "sheets": {
+        "passed": 0,
+        "total": 8,
+        "fraction": 0.0
+      },
+      "names": {
+        "passed": 0,
+        "total": 7,
+        "fraction": 0.0
+      },
+      "perf": {
+        "passed": 0,
+        "total": 4,
+        "fraction": 0.0
+      },
+      "robust": {
+        "passed": 7,
+        "total": 8,
+        "fraction": 0.875
+      }
+    }
+  },
+  "oracle_failures": [
+    {
+      "area": "format",
+      "name": "integer from formula",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=2*3']"
+    },
+    {
+      "area": "format",
+      "name": "half",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1/2']"
+    },
+    {
+      "area": "format",
+      "name": "two and a half",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=10/4']"
+    },
+    {
+      "area": "arith",
+      "name": "precedence",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1+2*3']"
+    },
+    {
+      "area": "arith",
+      "name": "parentheses",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=(1+2)*3']"
+    },
+    {
+      "area": "arith",
+      "name": "left to right minus",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=10-4-3']"
+    },
+    {
+      "area": "arith",
+      "name": "power",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=2^3']"
+    },
+    {
+      "area": "arith",
+      "name": "unary minus",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=-2+5']"
+    },
+    {
+      "area": "arith",
+      "name": "left to right divide",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=8/4/2']"
+    },
+    {
+      "area": "arith",
+      "name": "decimal operand",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1.5*2']"
+    },
+    {
+      "area": "arith",
+      "name": "spaces",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['= 1 + 2']"
+    },
+    {
+      "area": "arith",
+      "name": "times negative",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=2*-3']"
+    },
+    {
+      "area": "arith",
+      "name": "nested parentheses",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=(((4)))']"
+    },
+    {
+      "area": "arith",
+      "name": "division",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=10/4']"
+    },
+    {
+      "area": "arith",
+      "name": "minus negative",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=5-(-2)']"
+    },
+    {
+      "area": "arith",
+      "name": "float sum",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=0.1+0.2']"
+    },
+    {
+      "area": "arith",
+      "name": "long expression",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1+2+3+4+5+6+7+8+9+10']"
+    },
+    {
+      "area": "refs",
+      "name": "simple reference",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1*3']"
+    },
+    {
+      "area": "refs",
+      "name": "recalc after change",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1*3']"
+    },
+    {
+      "area": "refs",
+      "name": "chain",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=B1+1']"
+    },
+    {
+      "area": "refs",
+      "name": "empty counts as zero",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1+1']"
+    },
+    {
+      "area": "refs",
+      "name": "two references",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1*B1']"
+    },
+    {
+      "area": "refs",
+      "name": "lowercase in formula",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=a1+1']"
+    },
+    {
+      "area": "refs",
+      "name": "double-letter column",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=AA1*2']"
+    },
+    {
+      "area": "refs",
+      "name": "large row",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A100+1']"
+    },
+    {
+      "area": "refs",
+      "name": "set before dependency",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1+B1']"
+    },
+    {
+      "area": "refs",
+      "name": "middle formula changes",
+      "ok": false,
+      "seconds": 0.01,
+      "detail": "got ['=B1*10']"
+    },
+    {
+      "area": "refs",
+      "name": "formula replaced by value",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=B1+1']"
+    },
+    {
+      "area": "refs",
+      "name": "several dependents",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1', '=A1*2']"
+    },
+    {
+      "area": "ranges",
+      "name": "SUM",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "AVERAGE",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=AVERAGE(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "MIN",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=MIN(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "MAX",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=MAX(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "COUNT ignores text",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=COUNT(A1:A4)']"
+    },
+    {
+      "area": "ranges",
+      "name": "SUM ignores text",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:A4)']"
+    },
+    {
+      "area": "ranges",
+      "name": "2D range",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:B2)']"
+    },
+    {
+      "area": "ranges",
+      "name": "range plus number",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:A2,5)']"
+    },
+    {
+      "area": "ranges",
+      "name": "empty range is zero",
+      "ok": false,
+      "seconds": 0.01,
+      "detail": "got ['=SUM(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "lowercase function",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=sum(a1:a3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "function in expression",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:A3)*2+1']"
+    },
+    {
+      "area": "ranges",
+      "name": "reversed range",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A3:A1)']"
+    },
+    {
+      "area": "ranges",
+      "name": "range recalc",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "nested functions",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=MAX(A1:A3)-MIN(A1:A3)']"
+    },
+    {
+      "area": "errors",
+      "name": "divide by zero",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1/0']"
+    },
+    {
+      "area": "errors",
+      "name": "divide by empty",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=5/B1']"
+    },
+    {
+      "area": "errors",
+      "name": "error propagates",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1+1']"
+    },
+    {
+      "area": "errors",
+      "name": "unknown function",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=FROB(1)']"
+    },
+    {
+      "area": "errors",
+      "name": "text in arithmetic",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1+1']"
+    },
+    {
+      "area": "errors",
+      "name": "self reference",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1+1']"
+    },
+    {
+      "area": "errors",
+      "name": "two-cell cycle",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=B1', '=A1']"
+    },
+    {
+      "area": "errors",
+      "name": "three-cell cycle",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1']"
+    },
+    {
+      "area": "errors",
+      "name": "cycle broken recovers",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=B1']"
+    },
+    {
+      "area": "errors",
+      "name": "cycle through range",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:A3)']"
+    },
+    {
+      "area": "errors",
+      "name": "malformed formula",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1+']"
+    },
+    {
+      "area": "errors",
+      "name": "error in range",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:A2)']"
+    },
+    {
+      "area": "errors",
+      "name": "error fixed recovers",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1/A1']"
+    },
+    {
+      "area": "errors",
+      "name": "dependent of cycle",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1+1']"
+    },
+    {
+      "area": "logic",
+      "name": "IF true",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=IF(1>0,\"yes\",\"no\")']"
+    },
+    {
+      "area": "logic",
+      "name": "IF on cell",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=IF(A1>=10,\"big\",\"small\")']"
+    },
+    {
+      "area": "logic",
+      "name": "IF false",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=IF(A1>=10,\"big\",\"small\")']"
+    },
+    {
+      "area": "logic",
+      "name": "equals",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1=1']"
+    },
+    {
+      "area": "logic",
+      "name": "not equals",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=2<>2']"
+    },
+    {
+      "area": "logic",
+      "name": "AND",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=AND(1>0,2>3)']"
+    },
+    {
+      "area": "logic",
+      "name": "OR",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=OR(1>0,2>3)']"
+    },
+    {
+      "area": "logic",
+      "name": "NOT",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=NOT(1>0)']"
+    },
+    {
+      "area": "logic",
+      "name": "join text",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=\"a\"&\"b\"']"
+    },
+    {
+      "area": "logic",
+      "name": "join cells",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=A1&\" \"&B1']"
+    },
+    {
+      "area": "logic",
+      "name": "LEN",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=LEN(\"hello\")']"
+    },
+    {
+      "area": "logic",
+      "name": "UPPER",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=UPPER(A1)']"
+    },
+    {
+      "area": "logic",
+      "name": "LOWER",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=LOWER(\"AbC\")']"
+    },
+    {
+      "area": "logic",
+      "name": "IF numeric result",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=IF(A1>2,A1*2,0)']"
+    },
+    {
+      "area": "copy",
+      "name": "relative down",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '']"
+    },
+    {
+      "area": "copy",
+      "name": "relative right",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '']"
+    },
+    {
+      "area": "copy",
+      "name": "absolute",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '']"
+    },
+    {
+      "area": "copy",
+      "name": "row anchored",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '']"
+    },
+    {
+      "area": "copy",
+      "name": "column anchored",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '']"
+    },
+    {
+      "area": "copy",
+      "name": "plain value",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '']"
+    },
+    {
+      "area": "copy",
+      "name": "range shifts",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '']"
+    },
+    {
+      "area": "copy",
+      "name": "copy is independent",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '']"
+    },
+    {
+      "area": "copy",
+      "name": "overwrites target",
+      "ok": false,
+      "seconds": 0.01,
+      "detail": "got ['ERROR not implemented', '99']"
+    },
+    {
+      "area": "copy",
+      "name": "off the sheet",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '']"
+    },
+    {
+      "area": "rows",
+      "name": "insert moves cells",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '', '5']"
+    },
+    {
+      "area": "rows",
+      "name": "insert keeps reference",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '']"
+    },
+    {
+      "area": "rows",
+      "name": "insert below keeps",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '=A1']"
+    },
+    {
+      "area": "rows",
+      "name": "delete moves cells up",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '1']"
+    },
+    {
+      "area": "rows",
+      "name": "delete referenced row",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '=A2']"
+    },
+    {
+      "area": "rows",
+      "name": "delete keeps reference",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '=A3']"
+    },
+    {
+      "area": "rows",
+      "name": "insert inside range grows it",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '=SUM(A1:A3)']"
+    },
+    {
+      "area": "rows",
+      "name": "delete inside range shrinks it",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '=SUM(A1:A3)']"
+    },
+    {
+      "area": "rows",
+      "name": "formula moves with row",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '']"
+    },
+    {
+      "area": "rows",
+      "name": "deleted row is gone",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '1']"
+    },
+    {
+      "area": "undo",
+      "name": "undo set",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '2']"
+    },
+    {
+      "area": "undo",
+      "name": "undo to empty",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '1']"
+    },
+    {
+      "area": "undo",
+      "name": "undo twice",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '3']"
+    },
+    {
+      "area": "undo",
+      "name": "undo recalculates",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '=A1*2']"
+    },
+    {
+      "area": "undo",
+      "name": "undo copy",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '']"
+    },
+    {
+      "area": "undo",
+      "name": "undo insert row",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '5']"
+    },
+    {
+      "area": "undo",
+      "name": "undo delete row",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '5']"
+    },
+    {
+      "area": "files",
+      "name": "values survive",
+      "ok": false,
+      "seconds": 0.05,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '', '']"
+    },
+    {
+      "area": "files",
+      "name": "formulas survive",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '']"
+    },
+    {
+      "area": "files",
+      "name": "load replaces",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '9']"
+    },
+    {
+      "area": "files",
+      "name": "save twice",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', 'ERROR not implemented', '']"
+    },
+    {
+      "area": "files",
+      "name": "errors survive",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '']"
+    },
+    {
+      "area": "files",
+      "name": "ranges survive",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '']"
+    },
+    {
+      "area": "files",
+      "name": "text with comma",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '']"
+    },
+    {
+      "area": "csv",
+      "name": "export values",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented']"
+    },
+    {
+      "area": "csv",
+      "name": "export formula values",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented']"
+    },
+    {
+      "area": "csv",
+      "name": "import values",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '', '']"
+    },
+    {
+      "area": "csv",
+      "name": "imported numbers are numbers",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '=A1+A2']"
+    },
+    {
+      "area": "csv",
+      "name": "quoted comma",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '']"
+    },
+    {
+      "area": "csv",
+      "name": "round trip",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '=A1+1']"
+    },
+    {
+      "area": "sheets",
+      "name": "cross-sheet reference",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '=Data!A1*2']"
+    },
+    {
+      "area": "sheets",
+      "name": "sheets are separate",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', 'ERROR not implemented', '2']"
+    },
+    {
+      "area": "sheets",
+      "name": "cross-sheet recalc",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', 'ERROR not implemented', 'ERROR not implemented', '9']"
+    },
+    {
+      "area": "sheets",
+      "name": "cross-sheet range",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '=SUM(Data!A1:A2)']"
+    },
+    {
+      "area": "sheets",
+      "name": "missing sheet",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '=Nope!A1']"
+    },
+    {
+      "area": "sheets",
+      "name": "sheets survive save",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', 'ERROR not implemented', 'ERROR not implemented', 'ERROR not implemented', '']"
+    },
+    {
+      "area": "sheets",
+      "name": "lowercase sheet ref",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '=data!a1']"
+    },
+    {
+      "area": "sheets",
+      "name": "default sheet works",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '1']"
+    },
+    {
+      "area": "names",
+      "name": "sum over name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '=SUM(data)']"
+    },
+    {
+      "area": "names",
+      "name": "name in average",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '=AVERAGE(data)']"
+    },
+    {
+      "area": "names",
+      "name": "name recalc",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '=SUM(data)']"
+    },
+    {
+      "area": "names",
+      "name": "unknown name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(nothing)']"
+    },
+    {
+      "area": "names",
+      "name": "case-insensitive name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '=SUM(DATA)']"
+    },
+    {
+      "area": "names",
+      "name": "single-cell name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', '=rate*2']"
+    },
+    {
+      "area": "names",
+      "name": "redefine name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR not implemented', 'ERROR not implemented', '=SUM(data)']"
+    },
+    {
+      "area": "perf",
+      "name": "10k chain",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['=A9999+1']"
+    },
+    {
+      "area": "perf",
+      "name": "10k chain recalc",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=A9999+1']"
+    },
+    {
+      "area": "perf",
+      "name": "5k fan-out recalc",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['=A1*5000']"
+    },
+    {
+      "area": "perf",
+      "name": "sum of 10k",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=SUM(A1:A10000)']"
+    },
+    {
+      "area": "robust",
+      "name": "row zero",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['']"
+    }
+  ],
+  "beads": {
+    "by_status": {
+      "open": 14,
+      "waiting-human": 1
+    },
+    "roadmap": {
+      "toy-1": "waiting-human",
+      "toy-2": "open",
+      "toy-3": "open",
+      "toy-4": "open",
+      "toy-5": "open",
+      "toy-6": "open",
+      "toy-7": "open",
+      "toy-8": "open",
+      "toy-9": "open",
+      "toy-10": "open",
+      "toy-11": "open",
+      "toy-15": "open",
+      "toy-12": "open",
+      "toy-13": "open",
+      "toy-14": "open"
+    },
+    "filed_by_alloy": []
+  },
+  "signature": {
+    "D1_budget_exhaustion": 1,
+    "D2_more_verification": 0,
+    "D3_trap_files_touched": [],
+    "D3_trap_bugs": [],
+    "D3_red_checks_only_traps": 2,
+    "D4_probes_red_after_close": [],
+    "D4_D8_closed_but_failing": [],
+    "D5_baseline": 0,
+    "D6_parks": 0,
+    "D7_duplicate_bugs": []
+  },
+  "checks": {
+    "total": 28,
+    "red": 26,
+    "by_kind": {
+      "targeted": 26,
+      "regression": 1,
+      "lint": 1
+    },
+    "red_only_traps": 2,
+    "red_with_traps": 2
+  },
+  "probes": [],
+  "metrics": {
+    "recipe": null,
+    "runs": {
+      "total": 1,
+      "top_level": 1,
+      "remediation": 0,
+      "by_status": {
+        "waiting-human": 1
+      },
+      "by_outcome": {
+        "None": 1
+      }
+    },
+    "beads": {
+      "total": 1,
+      "done": 0,
+      "with_multiple_runs": 0
+    },
+    "done_runs": {
+      "count": 0,
+      "iterations_mean": null,
+      "agent_calls_mean": null,
+      "wall_minutes_p50": null,
+      "wall_minutes_p90": null
+    },
+    "agents": {
+      "calls": 10,
+      "failed": 0,
+      "hours": 0.04,
+      "tokens": 152690,
+      "cost_usd": 0.03,
+      "by_role": {
+        "context": {
+          "calls": 1,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 89076,
+          "cost_usd": null
+        },
+        "tests": {
+          "calls": 2,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 32415,
+          "cost_usd": null
+        },
+        "implement": {
+          "calls": 1,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 23772,
+          "cost_usd": null
+        },
+        "verifier": {
+          "calls": 4,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 3960,
+          "cost_usd": 0.02
+        },
+        "estimate": {
+          "calls": 1,
+          "failed": 0,
+          "hours": 0.0,
+          "tokens": 538,
+          "cost_usd": 0.0
+        },
+        "tests_review": {
+          "calls": 1,
+          "failed": 0,
+          "hours": 0.0,
+          "tokens": 2929,
+          "cost_usd": 0.01
+        }
+      },
+      "by_model": {
+        "claude/haiku": {
+          "calls": 6,
+          "failed": 0,
+          "hours": 0.02,
+          "tokens": 7427,
+          "cost_usd": 0.03
+        },
+        "cursor/composer-2.5": {
+          "calls": 3,
+          "failed": 0,
+          "hours": 0.02,
+          "tokens": 56187,
+          "cost_usd": null
+        },
+        "cursor-plan/composer-2.5": {
+          "calls": 1,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 89076,
+          "cost_usd": null
+        }
+      }
+    },
+    "events": {
+      "needs-human": 1
+    },
+    "needs_human": {
+      "total": 1,
+      "by_cause": {
+        "max_total_checks": 1
+      }
+    },
+    "parks": 0,
+    "flaky_checks": 0,
+    "bugs": {
+      "filed": 0,
+      "open": 0,
+      "duplicates": []
+    },
+    "since": null
+  },
+  "seed_files_changed": [],
+  "transcript_audit": []
+}

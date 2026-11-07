@@ -19,6 +19,7 @@ a run: the recipe's `dispatch.park_after_human_minutes` parks held gates.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -64,13 +65,22 @@ def resolve_ref(ref: str) -> str:
 
 
 def alloy_checkout(sha: str) -> Path:
+    """A frozen worktree of Alloy at `sha` with its own venv. Campaigns
+    started together share it, so creation is serialised by a lock and only
+    a completed checkout (marked `.bench-ready`) is reused."""
     path = REF_WORKTREES / sha[:12]
-    if not path.exists():
-        REF_WORKTREES.mkdir(parents=True, exist_ok=True)
-        sh(["git", "worktree", "add", "--detach", str(path), sha], cwd=ALLOY_REPO)
-        sh(["uv", "sync", "--quiet"], cwd=path)
-        # Agents must not find the oracle or the reference implementation.
-        shutil.rmtree(path / "bench", ignore_errors=True)
+    REF_WORKTREES.mkdir(parents=True, exist_ok=True)
+    with open(REF_WORKTREES / ".lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not (path / ".bench-ready").exists():
+            if path.exists():
+                sh(["git", "worktree", "remove", "--force", str(path)], cwd=ALLOY_REPO, check=False)
+                shutil.rmtree(path, ignore_errors=True)
+            sh(["git", "worktree", "add", "--detach", str(path), sha], cwd=ALLOY_REPO)
+            sh(["uv", "sync", "--quiet"], cwd=path)
+            # Agents must not find the oracle or the reference implementation.
+            shutil.rmtree(path / "bench", ignore_errors=True)
+            (path / ".bench-ready").write_text(sha)
     return path
 
 
@@ -208,7 +218,12 @@ def wait(toys: list[Path], sha: str, hours: float) -> None:
 
 # --- report ------------------------------------------------------------------
 def oracle(toy: Path) -> dict:
-    proc = sh([sys.executable, "-I", str(SHEET / "oracle" / "oracle.py"), "--toy", str(toy), "--json"])
+    """Score with the toy's own `python3` -- the interpreter its agents and
+    checks use -- never this script's (Alloy's venv may be another version:
+    3.13 vs 3.14 once scored a working tree 0.0 on eager annotations)."""
+    env = toy_env(toy)
+    python = shutil.which("python3", path=env["PATH"]) or "python3"
+    proc = sh([python, "-I", str(SHEET / "oracle" / "oracle.py"), "--toy", str(toy), "--json"], env=env)
     return json.loads(proc.stdout)
 
 

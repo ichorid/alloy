@@ -1,0 +1,641 @@
+{
+  "meta": {
+    "scenario": "full",
+    "version": 1,
+    "alloy_sha": "c80a8fe339fc345cacee45b8126314ae329e1468",
+    "seed_sha": "c369374540250f48a37913d193fc5ddcf307c811",
+    "toy": "/home/vader/MY_SRC/alloy-toy-sheet-full-3",
+    "reported_at": "2026-11-07T13:36:15.348321+00:00",
+    "deadline_hit": false,
+    "cli": {
+      "cursor-agent": "2026.11.05-86047df",
+      "claude": "2.1.319 (Claude Code)",
+      "bd": "bd version 1.3.0 (f45b249ce)"
+    }
+  },
+  "oracle": {
+    "score": 0.754,
+    "passed": 111,
+    "total": 152,
+    "areas": {
+      "cells": {
+        "passed": 10,
+        "total": 10,
+        "fraction": 1.0
+      },
+      "format": {
+        "passed": 5,
+        "total": 5,
+        "fraction": 1.0
+      },
+      "arith": {
+        "passed": 13,
+        "total": 14,
+        "fraction": 0.929
+      },
+      "refs": {
+        "passed": 11,
+        "total": 12,
+        "fraction": 0.917
+      },
+      "ranges": {
+        "passed": 7,
+        "total": 14,
+        "fraction": 0.5
+      },
+      "errors": {
+        "passed": 8,
+        "total": 14,
+        "fraction": 0.571
+      },
+      "logic": {
+        "passed": 1,
+        "total": 14,
+        "fraction": 0.071
+      },
+      "copy": {
+        "passed": 10,
+        "total": 10,
+        "fraction": 1.0
+      },
+      "rows": {
+        "passed": 10,
+        "total": 10,
+        "fraction": 1.0
+      },
+      "undo": {
+        "passed": 5,
+        "total": 8,
+        "fraction": 0.625
+      },
+      "files": {
+        "passed": 8,
+        "total": 8,
+        "fraction": 1.0
+      },
+      "csv": {
+        "passed": 6,
+        "total": 6,
+        "fraction": 1.0
+      },
+      "sheets": {
+        "passed": 4,
+        "total": 8,
+        "fraction": 0.5
+      },
+      "names": {
+        "passed": 4,
+        "total": 7,
+        "fraction": 0.571
+      },
+      "perf": {
+        "passed": 2,
+        "total": 4,
+        "fraction": 0.5
+      },
+      "robust": {
+        "passed": 7,
+        "total": 8,
+        "fraction": 0.875
+      }
+    }
+  },
+  "oracle_failures": [
+    {
+      "area": "arith",
+      "name": "power",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=2^3']"
+    },
+    {
+      "area": "refs",
+      "name": "empty counts as zero",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=A1+1']"
+    },
+    {
+      "area": "ranges",
+      "name": "AVERAGE",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=AVERAGE(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "MIN",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['=MIN(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "MAX",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=MAX(A1:A3)']"
+    },
+    {
+      "area": "ranges",
+      "name": "COUNT ignores text",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['=COUNT(A1:A4)']"
+    },
+    {
+      "area": "ranges",
+      "name": "range plus number",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=SUM(A1:A2,5)']"
+    },
+    {
+      "area": "ranges",
+      "name": "function in expression",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=SUM(A1:A3)*2+1']"
+    },
+    {
+      "area": "ranges",
+      "name": "nested functions",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=MAX(A1:A3)-MIN(A1:A3)']"
+    },
+    {
+      "area": "errors",
+      "name": "divide by empty",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['=5/B1']"
+    },
+    {
+      "area": "errors",
+      "name": "unknown function",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=FROB(1)']"
+    },
+    {
+      "area": "errors",
+      "name": "text in arithmetic",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['=A1+1']"
+    },
+    {
+      "area": "errors",
+      "name": "cycle through range",
+      "ok": false,
+      "seconds": 0.21,
+      "detail": "exit 1: ic_formula(\n        text[1:], get_cell, get_named_range, visiting\n    )\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-full-3/sheet/values.py\", line 274, in _evaluate_arithmetic_formula\n    summed = _evaluate_sum_range(stripped, get_cell, get_named_range)\nRecursionError: maximum recursion depth exceeded"
+    },
+    {
+      "area": "errors",
+      "name": "malformed formula",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1+']"
+    },
+    {
+      "area": "errors",
+      "name": "error in range",
+      "ok": false,
+      "seconds": 0.13,
+      "detail": "exit 1: thmetic_formula\n    return _eval_arith(\n        tree.body, get_cell, cross_refs or None, visiting, get_named_range\n    )\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-full-3/sheet/values.py\", line 156, in _eval_arith\n    raise SpreadsheetError(\"#DIV/0!\") from None\nsheet.values.SpreadsheetError: #DIV/0!"
+    },
+    {
+      "area": "logic",
+      "name": "IF true",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['=IF(1>0,\"yes\",\"no\")']"
+    },
+    {
+      "area": "logic",
+      "name": "IF on cell",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=IF(A1>=10,\"big\",\"small\")']"
+    },
+    {
+      "area": "logic",
+      "name": "IF false",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=IF(A1>=10,\"big\",\"small\")']"
+    },
+    {
+      "area": "logic",
+      "name": "equals",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=1=1']"
+    },
+    {
+      "area": "logic",
+      "name": "not equals",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=2<>2']"
+    },
+    {
+      "area": "logic",
+      "name": "AND",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=AND(1>0,2>3)']"
+    },
+    {
+      "area": "logic",
+      "name": "OR",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=OR(1>0,2>3)']"
+    },
+    {
+      "area": "logic",
+      "name": "NOT",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=NOT(1>0)']"
+    },
+    {
+      "area": "logic",
+      "name": "join text",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=\"a\"&\"b\"']"
+    },
+    {
+      "area": "logic",
+      "name": "join cells",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['=A1&\" \"&B1']"
+    },
+    {
+      "area": "logic",
+      "name": "LEN",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=LEN(\"hello\")']"
+    },
+    {
+      "area": "logic",
+      "name": "UPPER",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=UPPER(A1)']"
+    },
+    {
+      "area": "logic",
+      "name": "LOWER",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['=LOWER(\"AbC\")']"
+    },
+    {
+      "area": "undo",
+      "name": "undo copy",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=A2']"
+    },
+    {
+      "area": "undo",
+      "name": "undo insert row",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['']"
+    },
+    {
+      "area": "undo",
+      "name": "undo delete row",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['']"
+    },
+    {
+      "area": "sheets",
+      "name": "cross-sheet range",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=SUM(Data!A1:A2)']"
+    },
+    {
+      "area": "sheets",
+      "name": "missing sheet",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['=Nope!A1']"
+    },
+    {
+      "area": "sheets",
+      "name": "sheets survive save",
+      "ok": false,
+      "seconds": 0.07,
+      "detail": "got ['', '']"
+    },
+    {
+      "area": "sheets",
+      "name": "lowercase sheet ref",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['=data!a1']"
+    },
+    {
+      "area": "names",
+      "name": "name in average",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=AVERAGE(data)']"
+    },
+    {
+      "area": "names",
+      "name": "unknown name",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['=SUM(nothing)']"
+    },
+    {
+      "area": "names",
+      "name": "single-cell name",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR invalid range', '=rate*2']"
+    },
+    {
+      "area": "perf",
+      "name": "10k chain",
+      "ok": false,
+      "seconds": 0.17,
+      "detail": "exit 1: _formula(\n        text[1:],\n    ...<2 lines>...\n        visiting,\n    )\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-full-3/sheet/values.py\", line 274, in _evaluate_arithmetic_formula\n    summed = _evaluate_sum_range(stripped, get_cell, get_named_range)\nRecursionError: maximum recursion depth exceeded"
+    },
+    {
+      "area": "perf",
+      "name": "10k chain recalc",
+      "ok": false,
+      "seconds": 0.17,
+      "detail": "exit 1: _formula(\n        text[1:],\n    ...<2 lines>...\n        visiting,\n    )\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-full-3/sheet/values.py\", line 274, in _evaluate_arithmetic_formula\n    summed = _evaluate_sum_range(stripped, get_cell, get_named_range)\nRecursionError: maximum recursion depth exceeded"
+    },
+    {
+      "area": "robust",
+      "name": "row zero",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['']"
+    }
+  ],
+  "beads": {
+    "by_status": {
+      "closed": 15,
+      "open": 1
+    },
+    "roadmap": {
+      "toy-1": "closed",
+      "toy-2": "closed",
+      "toy-3": "closed",
+      "toy-4": "closed",
+      "toy-5": "closed",
+      "toy-6": "closed",
+      "toy-7": "closed",
+      "toy-8": "closed",
+      "toy-9": "closed",
+      "toy-10": "closed",
+      "toy-11": "closed",
+      "toy-15": "open",
+      "toy-12": "closed",
+      "toy-13": "closed",
+      "toy-14": "closed"
+    },
+    "filed_by_alloy": [
+      "Dollar-anchored refs not parsed; where: sheet/refs.py:5-13; evidence: `_CELL_REF` rejects `$`; SPEC mentions `$` on copy; blocks_task: no for acceptance `=A1`\u2192`=A2`"
+    ]
+  },
+  "signature": {
+    "D1_budget_exhaustion": 0,
+    "D2_more_verification": 0,
+    "D3_trap_files_touched": [],
+    "D3_trap_bugs": [],
+    "D3_red_checks_only_traps": 6,
+    "D4_probes_red_after_close": [],
+    "D4_D8_closed_but_failing": [
+      {
+        "bead": "toy-1",
+        "area": "robust",
+        "fraction": 0.875
+      },
+      {
+        "bead": "toy-2",
+        "area": "arith",
+        "fraction": 0.929
+      },
+      {
+        "bead": "toy-3",
+        "area": "refs",
+        "fraction": 0.917
+      },
+      {
+        "bead": "toy-4",
+        "area": "ranges",
+        "fraction": 0.5
+      },
+      {
+        "bead": "toy-5",
+        "area": "errors",
+        "fraction": 0.571
+      },
+      {
+        "bead": "toy-6",
+        "area": "logic",
+        "fraction": 0.071
+      },
+      {
+        "bead": "toy-9",
+        "area": "undo",
+        "fraction": 0.625
+      },
+      {
+        "bead": "toy-12",
+        "area": "sheets",
+        "fraction": 0.5
+      },
+      {
+        "bead": "toy-13",
+        "area": "names",
+        "fraction": 0.571
+      },
+      {
+        "bead": "toy-14",
+        "area": "perf",
+        "fraction": 0.5
+      }
+    ],
+    "D5_baseline": 0,
+    "D6_parks": 0,
+    "D7_duplicate_bugs": []
+  },
+  "checks": {
+    "total": 203,
+    "red": 96,
+    "by_kind": {
+      "targeted": 133,
+      "regression": 45,
+      "lint": 16,
+      "custom": 9
+    },
+    "red_only_traps": 6,
+    "red_with_traps": 6
+  },
+  "probes": [],
+  "metrics": {
+    "recipe": null,
+    "runs": {
+      "total": 15,
+      "top_level": 15,
+      "remediation": 0,
+      "by_status": {
+        "done": 15
+      },
+      "by_outcome": {
+        "done": 15
+      }
+    },
+    "beads": {
+      "total": 15,
+      "done": 15,
+      "with_multiple_runs": 0
+    },
+    "done_runs": {
+      "count": 15,
+      "iterations_mean": 1.27,
+      "agent_calls_mean": 4.67,
+      "wall_minutes_p50": 4.7,
+      "wall_minutes_p90": 11.7
+    },
+    "agents": {
+      "calls": 201,
+      "failed": 0,
+      "hours": 1.43,
+      "tokens": 3883289,
+      "cost_usd": 0.78,
+      "by_role": {
+        "implement": {
+          "calls": 19,
+          "failed": 0,
+          "hours": 0.47,
+          "tokens": 1368998,
+          "cost_usd": null
+        },
+        "tests": {
+          "calls": 21,
+          "failed": 0,
+          "hours": 0.34,
+          "tokens": 1411006,
+          "cost_usd": null
+        },
+        "context": {
+          "calls": 15,
+          "failed": 0,
+          "hours": 0.23,
+          "tokens": 919162,
+          "cost_usd": null
+        },
+        "verifier": {
+          "calls": 67,
+          "failed": 0,
+          "hours": 0.16,
+          "tokens": 78106,
+          "cost_usd": 0.37
+        },
+        "acceptance": {
+          "calls": 25,
+          "failed": 0,
+          "hours": 0.08,
+          "tokens": 40307,
+          "cost_usd": 0.13
+        },
+        "tests_review": {
+          "calls": 15,
+          "failed": 0,
+          "hours": 0.06,
+          "tokens": 30631,
+          "cost_usd": 0.08
+        },
+        "estimate": {
+          "calls": 15,
+          "failed": 0,
+          "hours": 0.03,
+          "tokens": 9594,
+          "cost_usd": 0.06
+        },
+        "harvest": {
+          "calls": 15,
+          "failed": 0,
+          "hours": 0.03,
+          "tokens": 14882,
+          "cost_usd": 0.08
+        },
+        "judge": {
+          "calls": 5,
+          "failed": 0,
+          "hours": 0.02,
+          "tokens": 7801,
+          "cost_usd": 0.03
+        },
+        "triage": {
+          "calls": 4,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 2802,
+          "cost_usd": 0.02
+        }
+      },
+      "by_model": {
+        "cursor/composer-2.5": {
+          "calls": 40,
+          "failed": 0,
+          "hours": 0.81,
+          "tokens": 2780004,
+          "cost_usd": null
+        },
+        "claude/haiku": {
+          "calls": 146,
+          "failed": 0,
+          "hours": 0.38,
+          "tokens": 184123,
+          "cost_usd": 0.78
+        },
+        "cursor-plan/composer-2.5": {
+          "calls": 15,
+          "failed": 0,
+          "hours": 0.23,
+          "tokens": 919162,
+          "cost_usd": null
+        }
+      }
+    },
+    "events": {
+      "done": 15
+    },
+    "needs_human": {
+      "total": 0,
+      "by_cause": {}
+    },
+    "parks": 0,
+    "flaky_checks": 0,
+    "bugs": {
+      "filed": 1,
+      "open": 0,
+      "duplicates": []
+    },
+    "since": null
+  },
+  "seed_files_changed": [
+    "sheet/__main__.py"
+  ],
+  "transcript_audit": []
+}
