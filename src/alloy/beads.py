@@ -619,6 +619,10 @@ class BeadsClient:
             raise BeadsError(f"bd create --silent returned no id: {proc.stderr.strip()}")
         return lines[-1]
 
+    def filed_bugs(self) -> list[dict[str, Any]]:
+        """Every bead Alloy filed (`alloy-bug`), any status, as raw bd rows."""
+        return self._json(["list", "--all", "--label", LABEL_BUG, "--limit", "0", "--flat"])
+
     def open_by_label(self, label: str) -> list[Bead]:
         """Open beads carrying `label`."""
         rows = self._json(["list", "--label", label, "--status", "open", "--limit", "0", "--flat"])

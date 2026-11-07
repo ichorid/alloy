@@ -823,6 +823,21 @@ class Store:
             ).fetchall()
         return {row["status"]: row["n"] for row in rows}
 
+    def metrics_rows(self, repo: Path, since: str | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Every run of `repo` started at or after `since` (all when None), and
+        their agent calls -- the raw input of `alloy metrics`."""
+        where, params = "WHERE runs.repo = ?", [str(repo)]
+        if since:
+            where += " AND runs.started_at >= ?"
+            params.append(since)
+        with self.connect() as conn:
+            runs = conn.execute(f"SELECT * FROM runs {where} ORDER BY started_at", params).fetchall()
+            calls = conn.execute(
+                f"SELECT agent_calls.* FROM agent_calls JOIN runs ON runs.run_id = agent_calls.run_id {where}",
+                params,
+            ).fetchall()
+        return [dict(row) for row in runs], [dict(row) for row in calls]
+
     def children_of(self, run_id: str) -> list[dict[str, Any]]:
         """Remediation runs started from `run_id` (see Engine.run_child)."""
         with self.connect() as conn:

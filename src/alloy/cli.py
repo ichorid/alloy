@@ -42,6 +42,7 @@ from alloy.memory_commands import memory_review_impl as memory_review_impl
 from alloy.memory_schedule import (
     MEMORY_REVIEW_RECIPE,
 )
+from alloy.metrics_command import metrics_impl
 from alloy.models import (
     utcnow,
     with_provenance,
@@ -546,6 +547,19 @@ def status(
     limit: int = typer.Option(50, "--limit", help="Cap when listing every bead"),
 ) -> None:
     return status_impl(bead_id, repo, root, json, limit)
+
+
+@app.command()
+def metrics(
+    repo: Optional[Path] = RepoOption,
+    root: Optional[Path] = RootOption,
+    json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+    since: Optional[str] = typer.Option(None, "--since", help="Only runs started since (30m, 2d or an ISO time)"),
+    recipe: Optional[str] = typer.Option(None, "--recipe", help="Only runs of this recipe"),
+) -> None:
+    """Factory health: outcomes, iterations, agent time and cost by role and
+    model, needs-human causes, parks, flaky checks and duplicate bugs."""
+    return metrics_impl(repo, root, json, since, recipe)
 
 
 @app.command()

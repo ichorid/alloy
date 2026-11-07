@@ -90,6 +90,7 @@ alloy init [--repo PATH]              # one-time: create <repo>/.alloy, register
 alloy recipes                         # list recipes, roles, runners, limits — check before running
 alloy run <bead-id> [--recipe NAME]   # run one bead to done / human-gate / failure
 alloy status [<bead-id>] --json       # what's running, stage, iteration count, tests
+alloy metrics [--since 7d] [--recipe R] [--json]  # outcomes, needs-human causes, agent time/cost by role+model, parks, duplicate bugs
 alloy logs <bead-id>                  # every agent call in the run + transcript paths
 alloy resume <bead-id> -m "<message>" # continue a paused/crashed run with guidance
 alloy cancel <bead-id>                # stop the run (in-scheduler if the scheduler owns it); bead returns to ready unless closed
