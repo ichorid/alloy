@@ -443,6 +443,57 @@ class Engine:
         deliver_pending(self.store, self.beads, bead_id=bead_id)
         return True
 
+    def primary_checkout_dirty(self) -> str | None:
+        """Why a fresh in-place start would be refused right now (tracked
+        changes or untracked, not-ignored files in the primary checkout), or
+        None when it is clean. The scheduler checks this before picking a bead
+        so it holds dispatch instead of booking a refused run every poll."""
+        worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
+        if worktrees.has_uncommitted_tracked_changes(self.repo):
+            return f"primary checkout {self.repo} has uncommitted tracked changes"
+        untracked = worktrees.untracked_files(self.repo, exclude=self._own_dirs_in_repo())
+        if untracked:
+            shown = ", ".join(untracked[:_UNTRACKED_SHOWN])
+            more = f" +{len(untracked) - _UNTRACKED_SHOWN} more" if len(untracked) > _UNTRACKED_SHOWN else ""
+            return f"primary checkout {self.repo} has untracked files: {shown}{more}"
+        return None
+
+    def park(self, bead_id: str, reason: str) -> dict[str, Any]:
+        """Take a run parked at the human gate out of the queue's way.
+
+        In this order: save the bead's uncommitted work as a patch under
+        `<root>/parked/` (read-only on the tree); set the bead `deferred` --
+        BEFORE the cancel, so the cancel's revert-to-ready (CAS'd on
+        implementing / waiting-human) leaves it alone and the scheduler does
+        not re-pick it two seconds later; cancel the run; then, for an
+        in-place run, stash the work (`git stash push --include-untracked`)
+        so the next bead starts on a clean checkout. Returns what it did."""
+        record = self.store.latest_run_for_bead(bead_id)
+        if record is None or record["status"] != RUN_WAITING_HUMAN:
+            raise EngineError(f"{bead_id}: no run waiting for a human to park")
+        worktrees = WorktreeManager(repo=self.repo, root=self.paths.worktrees)
+        in_place = Path(record.get("worktree") or self.repo).resolve() == self.repo.resolve()
+        tree = self.repo if in_place else Path(record["worktree"])
+        stamp = time.strftime("%Y%m%dT%H%M%S")
+        patch = self.paths.root / "parked" / f"{bead_id}-{stamp}.patch"
+        size = worktrees.save_patch(tree, patch, exclude=self._own_dirs_in_repo())
+        self.beads.set_status(bead_id, "deferred")
+        note = (
+            f"alloy: parked -- waited for a human while holding the queue ({reason}). "
+            f"Uncommitted work saved to {patch} ({size} bytes)"
+        )
+        self.cancel(bead_id)
+        stash = None
+        if in_place:
+            stash = worktrees.stash_all(
+                self.repo, f"alloy-park {bead_id} run {record['run_id']}", exclude=self._own_dirs_in_repo()
+            )
+            if stash:
+                note += f" and stashed as {stash} (`git stash list` shows 'alloy-park {bead_id}')"
+        self.beads.note(bead_id, note + ". Undefer the bead to run it again.")
+        log.warning("%s: %s", bead_id, note)
+        return {"run_id": record["run_id"], "patch": str(patch), "patch_bytes": size, "stash": stash}
+
     def _bead_status(self, bead_id: str) -> str | None:
         try:
             return self.beads.show(bead_id).status
@@ -539,7 +590,15 @@ class Engine:
             # retry after a past attempt (a *different*, prior run_id already
             # on record) both mean dirty state here is this bead's own work,
             # not something foreign to refuse on.
-            retrying_own_work = not fresh or any(r["run_id"] != run_id for r in self.store.runs_for_bead(bead.id))
+            # Only a prior run that actually started (it recorded a base commit)
+            # makes leftover changes this bead's own: a start refused for a
+            # dirty checkout books a row too, and counting it let the very next
+            # pick sweep the foreign changes into this bead's commit
+            # (tentura-zrf7 9b5e81eb9: another bead's WIP and 66 MB of build
+            # artifacts, 2026-11-06).
+            retrying_own_work = not fresh or any(
+                r["run_id"] != run_id and r.get("base_commit") for r in self.store.runs_for_bead(bead.id)
+            )
             if not base_commit and not retrying_own_work:
                 # commit_wip does `git add -A`: on a truly fresh in-place
                 # start (never run before, not a resume/retry of this

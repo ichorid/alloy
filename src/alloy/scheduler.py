@@ -12,6 +12,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import Callable
 
 from alloy import beads as bd
-from alloy.config import ConfigError, MemorySpec, discover_recipes
+from alloy.config import ConfigError, DispatchSpec, MemorySpec, RecipeConfig, discover_recipes
 from alloy.engine import Engine, EngineError, RunResult
 from alloy.events import EVENT_STALLED
 from alloy.memory_schedule import (
@@ -48,6 +49,15 @@ from alloy.sandbox import ENV_MODE as ENV_SANDBOX_MODE
 from alloy.sandbox import host_info as sandbox_host_info
 from alloy.sandbox import write_status as write_sandbox_status
 from alloy.store import RUN_CLAIMING, RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN, _pid_alive
+
+LABEL_NEEDS_TEST_CMD = "alloy-needs-test-cmd"
+"""A ready bead its recipe's `dispatch.require_test_cmd` keeps from running."""
+LABEL_STALE_BASE = "alloy-stale-base"
+"""A ready bead whose work already shows up upstream but not in the checkout."""
+PRIMARY_CHECKOUT_HOLDER = "primary-checkout"
+"""The pseudo holder named while a dirty primary checkout holds dispatch."""
+RECIPE_CACHE_SECONDS = 60.0
+UPSTREAM_REREAD_SECONDS = 60.0
 
 DEFAULT_POLL_SECONDS = 15.0
 DEFAULT_STALL_MINUTES = 30.0
@@ -100,6 +110,14 @@ class Scheduler:
     _hold_announced: datetime | None = field(default=None, init=False)
     _pinned_reported: bool = field(default=False, init=False)
     _unknown_recipe_noted: set[tuple[str, str]] = field(default_factory=set, init=False)
+    _recipe_cache: dict[str, tuple[float, RecipeConfig | None]] = field(default_factory=dict, init=False)
+    _policy_skipped: dict[str, str] = field(default_factory=dict, init=False)
+    """bead id -> label it was skipped under this session (logged and labelled once)."""
+    _last_fetch: dict[str, float] = field(default_factory=dict, init=False)
+    _upstream_subjects: tuple[str, float, list[str]] | None = field(default=None, init=False)
+    """(upstream, when read, subjects of upstream commits not in HEAD); reread
+    at most every UPSTREAM_REREAD_SECONDS, not once per ready bead."""
+    _park_failed: set[str] = field(default_factory=set, init=False)
 
     def __post_init__(self) -> None:
         if self.recipe_filter is not None:
@@ -288,9 +306,21 @@ class Scheduler:
             return True
         with self._beads_snapshot():
             bead = self.next_task()
-        if bead is None:
+        if bead is None or self._dirty_checkout_holds(bead):
             return False
         return await self._run_picked(bead)
+
+    def _dirty_checkout_holds(self, bead: bd.Bead) -> bool:
+        """An in-place start refuses a dirty primary checkout; holding dispatch
+        here keeps the scheduler from booking a refused run every poll (and
+        from the retry that used to slip past the refusal)."""
+        if bd.metadata_flag(bead.metadata, bd.META_USE_WORKTREE):
+            return False
+        dirty = self.engine.primary_checkout_dirty()
+        if dirty is None:
+            return False
+        self._note_hold((PRIMARY_CHECKOUT_HOLDER, f"{dirty}; commit, stash or remove them"))
+        return True
 
     async def _run_picked(self, bead: bd.Bead) -> bool:
         log.info("picked %s (%s, P%d)", bead.id, bead.title, bead.priority)
@@ -457,31 +487,7 @@ class Scheduler:
         known = set(recipes.names()) | set(
             discover_recipes(alloy_root=self.engine.paths.shared_root, project=self.engine.repo)
         )
-        if self.recipe_filter is not None:
-            # Validated in __post_init__; it stands in for the memory
-            # default this session and wins over it, but still yields to a
-            # bead's own alloy_recipe metadata (see the check below).
-            self._default_recipe = self.recipe_filter
-            self._unknown_default_recipe = None
-        else:
-            self._default_recipe = None
-            default = self.engine.beads.memories().get(DEFAULT_RECIPE_KEY)
-            if default and default not in known:
-                if default != self._unknown_default_recipe:
-                    log.warning(
-                        "ignoring unknown default recipe %r from %s",
-                        default,
-                        DEFAULT_RECIPE_KEY,
-                    )
-                self._unknown_default_recipe = default
-            else:
-                self._unknown_default_recipe = None
-                self._default_recipe = default or None
-            if self._default_recipe is None:
-                # Neither --recipe nor alloy:default:recipe named one: fall
-                # back to fast-track rather than leaving unassigned beads
-                # undispatched forever.
-                self._default_recipe = FALLBACK_DEFAULT_RECIPE
+        self._resolve_default_recipe(known)
         ready = self.engine.beads.ready(include_unassigned=self._default_recipe is not None)
         self._report_pinned_recipes(ready)
         held_by: tuple[str, str] | None = None
@@ -493,6 +499,8 @@ class Scheduler:
             if (bead.recipe or self._default_recipe) not in known:
                 self._note_unknown_recipe(bead)
                 continue
+            if self._dispatch_policy_skips(bead):
+                continue
             holder = self._dispatch_holder(bead.id)
             if holder is not None:
                 held_by = held_by or holder
@@ -501,8 +509,176 @@ class Scheduler:
                 continue
             self._note_hold(None)
             return bead
+        if held_by is not None and self._maybe_park(held_by[0]):
+            return None  # the next tick dispatches on the cleaned checkout
         self._note_hold(held_by)
         return None
+
+    # -- dispatch policy (recipe `dispatch:`) -------------------------------
+
+    def _recipe(self, name: str | None) -> RecipeConfig | None:
+        """The recipe's config, cached briefly (selection runs every poll)."""
+        if not name:
+            return None
+        now = self.clock().timestamp()
+        cached = self._recipe_cache.get(name)
+        if cached is not None and now - cached[0] < RECIPE_CACHE_SECONDS:
+            return cached[1]
+        try:
+            config: RecipeConfig | None = self.engine.load_config(name)
+        except (ConfigError, OSError):
+            config = None
+        self._recipe_cache[name] = (now, config)
+        return config
+
+    def _dispatch_policy(self, bead: bd.Bead) -> DispatchSpec:
+        config = self._recipe(bead.recipe or self._default_recipe)
+        return config.dispatch if config is not None else DispatchSpec()
+
+    def _dispatch_policy_skips(self, bead: bd.Bead) -> bool:
+        """True when the bead's recipe policy keeps it from running now. The
+        bead is labelled and logged once; the rest of the queue moves on."""
+        policy = self._dispatch_policy(bead)
+        label, why = None, ""
+        if policy.require_test_cmd and not bead.check_hint:
+            label = LABEL_NEEDS_TEST_CMD
+            why = "no alloy_test_cmd metadata (the recipe requires one: its tests role must prove a baseline red)"
+        elif policy.stale_base_upstream:
+            hit = self._landed_upstream(bead, policy)
+            if hit:
+                label = LABEL_STALE_BASE
+                why = (
+                    f"{policy.stale_base_upstream} has commits for this work that the checkout lacks "
+                    f"({hit}); rebase the checkout first"
+                )
+        if label is None:
+            if self._policy_skipped.pop(bead.id, None) == LABEL_STALE_BASE:
+                self.engine.beads.remove_label(bead.id, LABEL_STALE_BASE)
+            return False
+        if self._policy_skipped.get(bead.id) != label:
+            self._policy_skipped[bead.id] = label
+            log.warning("%s: not dispatched -- %s", bead.id, why)
+            self.engine.beads.add_label(bead.id, label)
+            self.engine.beads.note(bead.id, f"alloy: not dispatched -- {why}")
+        return True
+
+    def _landed_upstream(self, bead: bd.Bead, policy: DispatchSpec) -> str | None:
+        """The first upstream-only commit subject naming this bead or its epic."""
+        subjects = self._upstream_only_subjects(policy)
+        if not subjects:
+            return None
+        ids = {bead.id}
+        root = self.engine.beads.epic_root(bead.id)
+        if root:
+            ids.add(root)
+        for bead_id in ids:
+            pattern = re.compile(rf"(?<![\w.-]){re.escape(bead_id)}(?:\.\d+)*(?![\w-])")
+            for subject in subjects:
+                if pattern.search(subject):
+                    return subject[:120]
+        return None
+
+    def _upstream_only_subjects(self, policy: DispatchSpec) -> list[str]:
+        upstream = policy.stale_base_upstream or ""
+        remote = upstream.split("/", 1)[0]
+        now = self.clock().timestamp()
+        if now - self._last_fetch.get(remote, 0.0) >= policy.fetch_minutes * 60:
+            self._last_fetch[remote] = now
+            try:
+                proc = subprocess.run(
+                    ["git", "fetch", "--quiet", remote],
+                    cwd=str(self.engine.repo),
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                )
+                if proc.returncode != 0:
+                    log.warning("git fetch %s failed: %s", remote, proc.stderr.strip()[:200])
+            except (OSError, subprocess.SubprocessError) as exc:
+                log.warning("git fetch %s failed: %s", remote, exc)
+        cached = self._upstream_subjects
+        if cached is not None and cached[0] == upstream and now - cached[1] < UPSTREAM_REREAD_SECONDS:
+            return cached[2]
+        try:
+            proc = subprocess.run(
+                ["git", "log", "--format=%s", f"HEAD..{upstream}"],
+                cwd=str(self.engine.repo),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        subjects = [line for line in proc.stdout.splitlines() if line.strip()] if proc.returncode == 0 else []
+        self._upstream_subjects = (upstream, now, subjects)
+        return subjects
+
+    def _maybe_park(self, holder: str) -> bool:
+        """Park the run that holds the queue when it has waited for a human
+        longer than its recipe's `dispatch.park_after_human_minutes`. True
+        when it was parked. A stop whose diff the judge already called
+        complete (a red landing gate, or a limit after a `done` verdict) is
+        left for the human; so is a run whose harness said when it is back."""
+        if holder in self._park_failed:
+            return False
+        run = self.engine.store.latest_run_for_bead(holder)
+        if run is None or run["status"] != RUN_WAITING_HUMAN or run.get("retry_at"):
+            return False
+        config = self._recipe(run.get("recipe"))
+        minutes = config.dispatch.park_after_human_minutes if config is not None else None
+        paused_at = _parse_iso(run.get("paused_at") or run.get("updated_at") or "")
+        if minutes is None or paused_at is None:
+            return False
+        waited = (self.clock() - paused_at).total_seconds() / 60
+        if waited < minutes:
+            return False
+        reason = run.get("outcome_reason") or ""
+        if _diff_called_complete(reason, self.engine.store.agent_calls(run["run_id"])):
+            return False
+        try:
+            parked = self.engine.park(holder, f"waited {int(waited)} min; {reason[:200]}")
+        except Exception:
+            log.exception("%s: parking failed; leaving it for a human", holder)
+            self._park_failed.add(holder)
+            return False
+        log.warning("%s: parked after %d min at the human gate: %s", holder, int(waited), parked)
+        self.engine.store.events.emit(
+            EVENT_STALLED,
+            bead=holder,
+            run=run["run_id"],
+            reason=f"parked after {int(waited)} min waiting for a human; work saved to {parked['patch']}"
+            + (f", stash {parked['stash']}" if parked.get("stash") else "")
+            + "; bead deferred",
+            stage="parked",
+        )
+        return True
+
+    def _resolve_default_recipe(self, known: set[str]) -> None:
+        if self.recipe_filter is not None:
+            # Validated in __post_init__; it stands in for the memory
+            # default this session and wins over it, but still yields to a
+            # bead's own alloy_recipe metadata (see the check below).
+            self._default_recipe = self.recipe_filter
+            self._unknown_default_recipe = None
+            return
+        self._default_recipe = None
+        default = self.engine.beads.memories().get(DEFAULT_RECIPE_KEY)
+        if default and default not in known:
+            if default != self._unknown_default_recipe:
+                log.warning(
+                    "ignoring unknown default recipe %r from %s",
+                    default,
+                    DEFAULT_RECIPE_KEY,
+                )
+            self._unknown_default_recipe = default
+        else:
+            self._unknown_default_recipe = None
+            self._default_recipe = default or None
+        if self._default_recipe is None:
+            # Neither --recipe nor alloy:default:recipe named one: fall
+            # back to fast-track rather than leaving unassigned beads
+            # undispatched forever.
+            self._default_recipe = FALLBACK_DEFAULT_RECIPE
 
     def _note_unknown_recipe(self, bead: bd.Bead) -> None:
         """Say once per bead and recipe that a ready bead is skipped because
@@ -904,6 +1080,22 @@ def _run_hold_reason(run: dict) -> str:
         f"run {run_id} is marked {run['status']} but its process is gone; "
         f"`alloy run {bead_id}` adopts it, `alloy cancel {bead_id}` drops it"
     )
+
+
+def _diff_called_complete(reason: str, calls: list[dict]) -> bool:
+    """Whether a human-gate stop came after the diff was already judged
+    complete: a red landing gate (the judge said done first), or the run's
+    last judge verdict was `done`."""
+    if reason.startswith("landing gate check"):
+        return True
+    for call in reversed(calls):
+        if call.get("role") != "judge" or not call.get("structured_json"):
+            continue
+        try:
+            return json.loads(call["structured_json"]).get("decision") == "done"
+        except (TypeError, ValueError):
+            return False
+    return False
 
 
 def _worktree_dirty(worktree: str | None) -> bool:

@@ -216,6 +216,40 @@ class WorktreeManager:
         proc = _git(["ls-files", "--others", "--exclude-standard", "-z", "--", ".", *excludes], path, check=False)
         return [name for name in proc.stdout.split("\0") if name]
 
+    def _own_excludes(self, exclude: tuple[str, ...]) -> list[str]:
+        return [
+            *junk_pathspecs(FINGERPRINT_EXCLUDES),
+            ":(exclude,glob)**/.beads.gate.lock*",
+            *(f":(exclude,literal){d}" for d in exclude),
+        ]
+
+    def save_patch(self, path: Path, target: Path, *, exclude: tuple[str, ...] = ()) -> int:
+        """Write every uncommitted change at `path` -- tracked edits against
+        HEAD and untracked, not-ignored files as additions -- to `target` as
+        one `git apply`-able binary patch, without touching the index or the
+        tree. Returns the patch size in bytes."""
+        excludes = self._own_excludes(exclude)
+        parts = [_git(["diff", "--binary", "HEAD", "--", ".", *excludes], path, check=False).stdout]
+        for name in self.untracked_files(path, exclude=exclude):
+            proc = _git(["diff", "--no-index", "--binary", "--", "/dev/null", name], path, check=False)
+            parts.append(proc.stdout)
+        text = "".join(parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        return len(text.encode("utf-8"))
+
+    def stash_all(self, path: Path, message: str, *, exclude: tuple[str, ...] = ()) -> str | None:
+        """`git stash push --include-untracked` of everything uncommitted at
+        `path` except Alloy's own state, so the checkout is clean again.
+        Returns the stash commit, or None when there was nothing to stash."""
+        if not self.has_uncommitted_tracked_changes(path) and not self.untracked_files(path, exclude=exclude):
+            return None
+        _git(
+            ["stash", "push", "--include-untracked", "-m", message, "--", ".", *self._own_excludes(exclude)],
+            path,
+        )
+        return _git(["rev-parse", "stash@{0}"], path).stdout.strip()
+
     def head(self, path: Path) -> str:
         """The worktree's current HEAD commit."""
         return self._head(path)

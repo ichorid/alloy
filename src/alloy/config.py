@@ -430,6 +430,65 @@ class EscalateSpec:
         )
 
 
+@dataclass(frozen=True)
+class DispatchSpec:
+    """`dispatch:` -- the scheduler's policy for beads of this recipe (and for
+    a run of this recipe that holds the queue). Everything is off by default.
+
+    require_test_cmd: a ready bead without `alloy_test_cmd` metadata is not
+        dispatched; it gets the `alloy-needs-test-cmd` label instead, and the
+        queue moves on to the next ready bead.
+    stale_base_upstream: an upstream ref (`origin/main`). A ready bead whose
+        own id or epic root id appears in a commit subject on that ref but not
+        in the primary checkout's HEAD is not dispatched (`alloy-stale-base`
+        label): its work, or part of it, already landed elsewhere and the
+        checkout must be rebased first. The scheduler fetches the ref's remote
+        at most every `fetch_minutes`.
+    park_after_human_minutes: a run of this recipe that has waited this long
+        at the human gate and holds the queue is parked -- its uncommitted
+        work saved as a patch under `<alloy root>/parked/` and stashed, the
+        bead set to `deferred`, then the run cancelled -- so the next bead can
+        run. A stop whose diff the judge already called complete (a red landing
+        gate, or a limit after a `done` verdict) is never parked.
+    """
+
+    require_test_cmd: bool = False
+    stale_base_upstream: str | None = None
+    fetch_minutes: float = 15.0
+    park_after_human_minutes: float | None = None
+
+    @classmethod
+    def parse(cls, raw: Any) -> "DispatchSpec":
+        if raw is None:
+            return cls()
+        if not isinstance(raw, dict):
+            raise ConfigError(f"recipe 'dispatch' must be a mapping, got {raw!r}")
+        known = {"require_test_cmd", "stale_base_upstream", "fetch_minutes", "park_after_human_minutes"}
+        unknown = raw.keys() - known
+        if unknown:
+            raise ConfigError(f"unknown dispatch keys: {', '.join(sorted(map(repr, unknown)))}")
+        require = raw.get("require_test_cmd", False)
+        if not isinstance(require, bool):
+            raise ConfigError(f"dispatch.require_test_cmd must be true or false, got {require!r}")
+        upstream = raw.get("stale_base_upstream")
+        if upstream is not None and (not isinstance(upstream, str) or "/" not in upstream.strip()):
+            raise ConfigError(f"dispatch.stale_base_upstream must be a <remote>/<branch> ref, got {upstream!r}")
+        try:
+            fetch = float(raw.get("fetch_minutes", 15.0))
+            park = raw.get("park_after_human_minutes")
+            park = float(park) if park is not None else None
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"dispatch minutes must be numbers: {raw!r}") from exc
+        if park is not None and park <= 0:
+            raise ConfigError(f"dispatch.park_after_human_minutes must be positive, got {park!r}")
+        return cls(
+            require_test_cmd=require,
+            stale_base_upstream=upstream.strip() if upstream else None,
+            fetch_minutes=fetch,
+            park_after_human_minutes=park,
+        )
+
+
 SCRIPT_GRAPH = "script"
 """The registered graph that runs `prepare:` and `checks:` with no agent."""
 
@@ -469,6 +528,8 @@ class RecipeConfig:
     Empty: no gate, the run finishes as before."""
     escalate: EscalateSpec | None = None
     """fast-track only: reroute a mis-sized bead to a fuller recipe. None: off."""
+    dispatch: DispatchSpec = field(default_factory=DispatchSpec)
+    """The scheduler's dispatch policy for this recipe's beads (see DispatchSpec)."""
 
     def role(self, name: str) -> RoleSpec:
         try:
@@ -523,6 +584,7 @@ class RecipeConfig:
             raise ConfigError(f"recipe '{name}' cannot escalate to itself")
         return cls(
             name=name,
+            dispatch=DispatchSpec.parse(raw.get("dispatch")),
             prepare=prepare,
             checks=checks,
             landing_gate=landing_gate,

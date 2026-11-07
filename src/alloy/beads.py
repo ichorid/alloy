@@ -546,6 +546,10 @@ class BeadsClient:
         """Add one label; see `note`'s `check` docstring."""
         self._run(["label", "add", bead_id, label], check=check)
 
+    def remove_label(self, bead_id: str, label: str, *, check: bool = False) -> None:
+        """Remove one label; see `note`'s `check` docstring."""
+        self._run(["label", "remove", bead_id, label], check=check)
+
     def close(self, bead_id: str, *, check: bool = False) -> None:
         """See `note`'s `check` docstring -- same reasoning applies here."""
         self._run(["close", bead_id], check=check)

@@ -292,6 +292,30 @@ sees it as a failed check); when a limit is already spent -- a budget-landed
 stop included -- the run parks at the human gate instead. Without
 `landing_gate` the graph is unchanged.
 
+### `dispatch:` -- what the scheduler may start, and when it parks
+
+```yaml
+dispatch:
+  require_test_cmd: true            # no alloy_test_cmd: label alloy-needs-test-cmd, skip
+  stale_base_upstream: origin/main  # bead/epic id in an upstream-only commit: label alloy-stale-base, skip
+  fetch_minutes: 15                 # how often the scheduler fetches that remote
+  park_after_human_minutes: 45      # a run holding the queue at the human gate this long is parked
+```
+
+Everything is off by default. A skipped bead is labelled and noted once and
+the queue moves on to the next ready bead (no dispatch hold); the stale-base
+label is removed once the checkout has the upstream commits. Parking saves the
+run's uncommitted work as a patch under `<alloy root>/parked/`, sets the bead
+`deferred` (before the cancel, so the cancel's revert to ready leaves it
+alone), cancels the run and, for an in-place run, stashes the work
+(`git stash list` shows `alloy-park <bead>`) so the next bead starts clean. A
+stop whose diff the judge already called complete -- a red landing gate, or a
+limit right after a `done` verdict -- is never parked. Independently of any
+recipe, a dirty primary checkout now holds dispatch (announced like any other
+hold) instead of booking a refused run every poll; a refused start no longer
+counts as the bead's own earlier attempt, so the next pick cannot sweep
+someone else's changes into the bead's commit.
+
 ### fast-track `escalate:` -- reroute a mis-sized bead
 
 A bead sized wrong for fast-track spins until `max_iterations` and parks. A
