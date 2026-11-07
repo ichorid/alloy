@@ -292,6 +292,26 @@ sees it as a failed check); when a limit is already spent -- a budget-landed
 stop included -- the run parks at the human gate instead. Without
 `landing_gate` the graph is unchanged.
 
+A gate check can tell a pre-existing failure from the bead's own:
+
+```yaml
+    checks:
+      - cmd: ./scripts/run_tests.sh server-affected
+        rerun_on_base: ./scripts/run_tests.sh server-files {files}
+        base_setup: cd packages/server && dart pub get && dart run build_runner build -d
+```
+
+When that check is red, Alloy reads the failing tests from its log (dart and
+flutter `[E]` lines, pytest `FAILED`/`ERROR` lines), checks out the run's base
+commit in a temporary `git worktree` under the Alloy worktree root, runs
+`base_setup` there (generated code is usually gitignored, so a fresh worktree
+cannot compile without it), then `rerun_on_base` with `{files}` replaced by
+the failing test files. If every failing test fails there too, the failure is
+pre-existing: journalled, noted on the bead, and the gate moves on to its next
+check. A load or compile failure, a timed-out or unparseable run, or any test
+that passes on the base keeps the check red. The base result is kept for the
+rest of the run, so each command reruns on the base at most once.
+
 ### `dispatch:` -- what the scheduler may start, and when it parks
 
 ```yaml

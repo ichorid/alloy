@@ -323,6 +323,15 @@ class CommandSpec:
     purpose: str = ""
     timeout_minutes: float | None = None
     """None: `verification.max_command_timeout_minutes`."""
+    rerun_on_base: str | None = None
+    """Landing gate only: a command template (`{files}` becomes the failing
+    test files, shell-quoted) that reruns a red check's failing tests on the
+    run's base commit, in a temporary worktree. When every failing test fails
+    there too, the failure is pre-existing and does not hold the bead (see
+    alloy.recipes.landing_gate)."""
+    base_setup: str | None = None
+    """Landing gate only: run in that base worktree before `rerun_on_base`
+    (code generation, dependency fetch). A red setup gives up the rerun."""
 
     @classmethod
     def parse(cls, raw: Any, *, where: str) -> "CommandSpec":
@@ -338,7 +347,17 @@ class CommandSpec:
             timeout = float(timeout) if timeout is not None else None
         except (TypeError, ValueError) as exc:
             raise ConfigError(f"{where} entry has an invalid timeout_minutes: {timeout!r}") from exc
-        return cls(cmd=cmd.strip(), purpose=str(raw.get("purpose") or ""), timeout_minutes=timeout)
+        optional: dict[str, str | None] = {}
+        for key in ("rerun_on_base", "base_setup"):
+            value = raw.get(key)
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ConfigError(f"{where} entry has an invalid {key}: {value!r}")
+            optional[key] = value.strip() if value else None
+        if optional["base_setup"] and not optional["rerun_on_base"]:
+            raise ConfigError(f"{where} entry has base_setup without rerun_on_base: {raw!r}")
+        return cls(
+            cmd=cmd.strip(), purpose=str(raw.get("purpose") or ""), timeout_minutes=timeout, **optional
+        )
 
 
 def _parse_commands(raw: Any, *, where: str) -> tuple[CommandSpec, ...]:

@@ -70,6 +70,7 @@ class TddState(TypedDict, total=False):
     cycles, since anything a later check finds is a direct result of its own
     diff."""
     landing_gate_route: str | None  # where the landing gate sent the run (alloy.recipes.landing_gate)
+    landing_gate_base_failures: dict[str, Any]  # gate cmd -> {files, failures} rerun on the base commit
     final_pass: bool
     """True once the normal verify loop said done and Alloy sent the run back
     through the verify loop one more time asking for the broadest check
@@ -140,6 +141,7 @@ class FastTrackState(TypedDict, total=False):
     journal: Annotated[list[str], operator.add]
     final_pass: bool
     landing_gate_route: str | None
+    landing_gate_base_failures: dict[str, Any]
     reroute: dict[str, Any] | None  # {recipe, reason} once `escalate:` fired; the engine reroutes
 
     stage: str
