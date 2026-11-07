@@ -12,6 +12,11 @@ Choose exactly one decision:
 Give a confidence between 0 and 1. Tests that were weakened, skipped or deleted are
 not evidence; say so and do not accept.
 
+Set `criteria_met` to true when passing evidence shows every listed acceptance criterion,
+whatever your decision: a repair or more verification for something the criteria do not
+name (an extra edge case, hardening) still has `criteria_met` true. Alloy may finish such a
+task when its budget runs out and file your request as a follow-up.
+
 Scope: accept minor test-only changes beyond the primary defect file when they only
 make other tests honest about ambient configuration (env vars, live routing) and do
 not change production behaviour. Do not reject solely because a second test file was

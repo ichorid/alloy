@@ -18,7 +18,7 @@ from alloy import beads as bd
 from alloy.config import Limits
 from alloy.engine import Engine
 from alloy.models import CheckResult, JudgeDecision
-from alloy.recipes.shared_verification import VERIFY_MORE_BREACH_PREFIX
+from alloy.recipes.shared_verification import ACCEPTANCE_REPAIR_PREFIX, VERIFY_MORE_BREACH_PREFIX
 from alloy.recipes.workflow_nodes import budget_landing
 from alloy.worktree import tree_fingerprint
 
@@ -227,3 +227,74 @@ async def test_engine_lands_and_marks_the_bead(beads_project, alloy_home, fake_h
     assert landed and landed[0]["bead"] == bead_id
     assert landed[0]["regression"] == FULL_SUITE
     assert any(event["event"] == "done" and event["bead"] == bead_id for event in events)
+
+
+# -- a repair beyond the criteria (bench full-6/toy-2) -------------------------------
+
+
+def _repair(criteria_met: bool, breach: str = "max_iterations reached (5/5)"):
+    state_acceptance = {"decision": "repair", "reason": "also handle OverflowError", "confidence": 0.8}
+    if criteria_met:
+        state_acceptance["criteria_met"] = True
+    decision = JudgeDecision(decision="retry", reason=f"{ACCEPTANCE_REPAIR_PREFIX}also handle OverflowError")
+    return state_acceptance, decision
+
+
+def test_a_repair_beyond_met_criteria_lands_at_the_limit(dirty_project):
+    acceptance, decision = _repair(criteria_met=True)
+    landed = budget_landing(
+        _rule_ctx(dirty_project), _state(dirty_project, acceptance=acceptance), "max_iterations reached (5/5)", decision
+    )
+    assert landed["kind"] == "criteria_met"
+    assert landed["acceptance_reason"] == "also handle OverflowError"
+
+
+def test_a_repair_of_an_unmet_criterion_still_parks(dirty_project):
+    acceptance, decision = _repair(criteria_met=False)
+    state = _state(dirty_project, acceptance=acceptance)
+    assert budget_landing(_rule_ctx(dirty_project), state, "max_iterations reached (5/5)", decision) is None
+
+
+class _Bugs:
+    def __init__(self):
+        self.created = []
+
+    def create_bug(self, **kwargs):
+        self.created.append(kwargs)
+        return "bug-1"
+
+    def note(self, *args, **kwargs):
+        pass
+
+
+async def test_the_extra_request_becomes_a_follow_up_bug(project, alloy_home, fake_harnesses):
+    beads = _Bugs()
+    fake_harnesses.configure(
+        script(
+            verifier=GREEN_VERIFY,
+            acceptance=[
+                {
+                    "structured": {
+                        "decision": "repair",
+                        "reason": "also handle OverflowError",
+                        "confidence": 0.8,
+                        "criteria_met": True,
+                    }
+                }
+            ],
+        )
+    )
+    harness = make_harness(
+        project, alloy_home, config=_config(max_iterations=1, max_cheap_agent_calls=100), beads=beads
+    )
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done", final.get("limit_hit")
+    assert final["budget_landed"]["kind"] == "criteria_met"
+    assert final["budget_landed"]["follow_up"] == "bug-1"
+    (bug,) = beads.created
+    assert bug["priority"] == 3 and bug["labels"] == [bd.LABEL_BUG]
+    assert "also handle OverflowError" in bug["description"]

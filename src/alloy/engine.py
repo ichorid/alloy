@@ -1210,7 +1210,13 @@ def _budget_landed_outbox(landed: dict[str, Any]) -> list[tuple[str, dict[str, A
             "note",
             {
                 "text": f"alloy: budget-landed -- the run hit {landed.get('limit')} while the acceptance gate "
-                f"only wanted more verification; it was landed as done because every check was green on an "
+                + (
+                    "asked for a repair beyond the acceptance criteria, all of which were met (follow-up: "
+                    f"{landed.get('follow_up') or 'not filed'})"
+                    if landed.get("kind") == "criteria_met"
+                    else "only wanted more verification"
+                )
+                + "; it was landed as done because every check was green on an "
                 f"unchanged tree. Regression check: `{landed.get('regression')}`. Green checks: {green}. "
                 "Audit with `bd list --label budget-landed`."
             },

@@ -126,7 +126,9 @@ A recipe's `landing_gate:` (`[{paths: [glob...], checks: [{cmd, purpose,
 timeout_minutes}]}]`) runs, on the final tree, every check whose globs match a
 path the bead's diff touches, before the bead may finish `done` (budget-landed
 included). A red gate check is one more implement iteration, or a human gate
-when a limit is spent. A gated recipe skips the final broader pass: a done
+when a limit is spent. At a budget limit an acceptance `repair` with
+`criteria_met: true` budget-lands like `verify_more`; the extra request becomes
+a P3 `alloy-bug` follow-up. A gated recipe skips the final broader pass: a done
 verdict goes straight to the gate.
 
 `verification: {rerun_tests: "<cmd with {files}>", base_setup: <cmd>}` lets

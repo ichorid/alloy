@@ -270,6 +270,9 @@ class AcceptanceVerdict(BaseModel):
     decision: AcceptanceDecision
     reason: str = ""
     confidence: float = 0.0
+    criteria_met: bool = False
+    """Every listed acceptance criterion is shown by passing evidence, even
+    when the decision asks for more (see `workflow_nodes.budget_landing`)."""
 
     @classmethod
     def schema_for_agents(cls) -> dict[str, Any]:
@@ -280,8 +283,9 @@ class AcceptanceVerdict(BaseModel):
                 "decision": {"type": "string", "enum": list(ACCEPTANCE_DECISIONS)},
                 "reason": {"type": "string"},
                 "confidence": {"type": "number"},
+                "criteria_met": {"type": "boolean"},
             },
-            "required": ["decision", "reason", "confidence"],
+            "required": ["decision", "reason", "confidence", "criteria_met"],
             "additionalProperties": False,
         }
 

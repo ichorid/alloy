@@ -435,6 +435,9 @@ def limit_stop(breach: str, where: str, *, next_instructions: str = "") -> dict[
     }
 
 
+ACCEPTANCE_REPAIR_PREFIX = "acceptance gate asked for a repair: "
+"""Reason prefix of the retry the acceptance gate hands guard on a repair."""
+
 VERIFY_MORE_BREACH_PREFIX = "acceptance asked for more verification but "
 """Reason prefix of the decision acceptance_gate hands guard when it wanted
 more evidence but a run budget was spent -- the one "nothing is wrong, it
@@ -809,7 +812,7 @@ def _make_acceptance_nodes(ctx, _implementer):
             instructions = f"The acceptance gate asked for a repair: {verdict.reason}."
             if risks:
                 instructions += f" Remaining risks: {risks}"
-            reason = f"acceptance gate asked for a repair: {verdict.reason}"
+            reason = f"{ACCEPTANCE_REPAIR_PREFIX}{verdict.reason}"
             update.update(
                 acceptance_route="guard",
                 decision=JudgeDecision(

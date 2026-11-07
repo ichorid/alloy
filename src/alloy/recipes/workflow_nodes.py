@@ -61,6 +61,7 @@ from alloy.recipes.role_prompts import (
     tests_review_prompt,
 )
 from alloy.recipes.shared_verification import (
+    ACCEPTANCE_REPAIR_PREFIX,
     VERIFY_MORE_BREACH_PREFIX,
     _check_hints,
     _check_target,
@@ -854,6 +855,22 @@ def _guard_decision(proposed, tests_green, ctx):
     return decision
 
 
+def _landable_acceptance(breach: str, decision: JudgeDecision, acceptance: dict[str, Any]) -> str | None:
+    """Which acceptance ask a budget stop may land over: `verify_more`, a
+    repair beyond met criteria (`criteria_met`), or None."""
+    if not breach.startswith(BUDGET_LIMITS) or decision.decision != "retry":
+        return None
+    if decision.reason.startswith(VERIFY_MORE_BREACH_PREFIX) and acceptance.get("decision") == "verify_more":
+        return "verify_more"
+    if (
+        decision.reason.startswith(ACCEPTANCE_REPAIR_PREFIX)
+        and acceptance.get("decision") == "repair"
+        and acceptance.get("criteria_met") is True
+    ):
+        return "criteria_met"
+    return None
+
+
 def budget_landing(ctx, state: TddState, breach: str, decision: JudgeDecision) -> dict[str, Any] | None:
     """Whether a budget-stopped run may finish as done anyway, and the audit
     record for it; None keeps today's needs-human park.
@@ -861,18 +878,17 @@ def budget_landing(ctx, state: TddState, breach: str, decision: JudgeDecision) -
     Deliberately conservative -- every condition must hold:
     - the stop is a pure budget limit (`BUDGET_LIMITS`);
     - the last word was the acceptance gate asking for *more* verification
-      (`VERIFY_MORE_BREACH_PREFIX`), not a failing check, a repair or a
+      (`VERIFY_MORE_BREACH_PREFIX`), or asking for a repair while saying every
+      listed criterion is met (`criteria_met`: the demand goes beyond the
+      criteria and is filed as a follow-up bug) -- never a failing check or a
       judge's verdict (whose free text may name a defect);
     - the latest `regression` check (the broad one) passed with exit 0;
     - no check of the final iteration failed;
     - the worktree is non-empty and unchanged since that regression ran.
     """
-    if not breach.startswith(BUDGET_LIMITS):
-        return None
     acceptance = state.get("acceptance") or {}
-    if decision.decision != "retry" or not decision.reason.startswith(VERIFY_MORE_BREACH_PREFIX):
-        return None
-    if acceptance.get("decision") != "verify_more":
+    kind = _landable_acceptance(breach, decision, acceptance)
+    if kind is None:
         return None
     checks = [CheckResult.model_validate(item) for item in state.get("checks") or []]
     regressions = [check for check in checks if check.kind == "regression"]
@@ -889,12 +905,15 @@ def budget_landing(ctx, state: TddState, breach: str, decision: JudgeDecision) -
     if tree_fingerprint(ctx.worktree.path) != regression.fingerprint:
         return None
     green = list(dict.fromkeys(check.command for check in [*final, regression]))
-    return {
+    landing = {
         "limit": breach,
         "regression": regression.command,
         "green_checks": green,
         "acceptance_reason": acceptance.get("reason", ""),
     }
+    if kind == "criteria_met":
+        landing["kind"] = kind
+    return landing
 
 
 def _budget_landed_update(ctx, state: TddState, breach: str, decision: JudgeDecision) -> dict[str, Any] | None:
@@ -902,6 +921,8 @@ def _budget_landed_update(ctx, state: TddState, breach: str, decision: JudgeDeci
     landing = budget_landing(ctx, state, breach, decision)
     if landing is None:
         return None
+    if landing.get("kind") == "criteria_met":
+        landing["follow_up"] = _file_follow_up(ctx, landing["acceptance_reason"])
     log.warning(
         "%s: budget-landed -- %s, but the regression check `%s` and every final check are green "
         "on an unchanged tree; finishing as done and marking the bead budget-landed",
@@ -924,6 +945,31 @@ def _budget_landed_update(ctx, state: TddState, breach: str, decision: JudgeDeci
             confidence=decision.confidence,
         ).model_dump(),
     }
+
+
+def _file_follow_up(ctx, request: str) -> str | None:
+    """A P3 alloy-bug for what the acceptance gate asked beyond the bead's
+    criteria (bench full-6/toy-2: every criterion green, five iterations spent
+    on an extra overflow edge case, twelve dependents blocked). Best effort."""
+    if ctx.beads is None:
+        return None
+    try:
+        return ctx.beads.create_bug(
+            title=f"Follow-up from {ctx.bead.id}: {ctx.bead.title}",
+            description=(
+                f"The acceptance gate asked for this beyond {ctx.bead.id}'s acceptance criteria, which "
+                f"were all met when the run's budget ran out:\n\n{request}"
+            ),
+            acceptance=request,
+            discovered_from=ctx.bead.id,
+            priority=3,
+            labels=[LABEL_BUG],
+            metadata={META_DISCOVERED_IN_RUN: ctx.run_id},
+            claim=False,
+        )
+    except Exception as exc:
+        log.warning("%s: could not file the follow-up bug: %s", ctx.bead.id, exc)
+        return None
 
 
 def _breach_update(ctx, state: TddState, breach: str, decision: JudgeDecision) -> dict[str, Any]:
