@@ -84,6 +84,8 @@ class TddState(TypedDict, total=False):
     outcome: str | None
     outcome_reason: str
     limit_hit: str | None
+    exhaustion: str | None
+    """Why a limit parked the run (`workflow_nodes.classify_exhaustion`)."""
     limit_breach: str | None
     """Set by a node's limit gate (see `workflow_nodes.limit_gate`) when it
     refused to start more work because a run limit is spent; the node routes

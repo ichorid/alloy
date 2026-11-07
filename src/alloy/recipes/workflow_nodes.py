@@ -44,7 +44,7 @@ from alloy.recipes.bug_triage import (
     triage_reports,
     untriaged,
 )
-from alloy.recipes.known_red import excused_note
+from alloy.recipes.known_red import excused_note, failing_tests, failure_key, read_log
 from alloy.recipes.role_prompts import (
     CONTEXT_SCHEMA,
     context_prompt,
@@ -61,6 +61,7 @@ from alloy.recipes.role_prompts import (
 from alloy.recipes.shared_verification import (
     VERIFY_MORE_BREACH_PREFIX,
     _check_hints,
+    _check_target,
     _checks_headline,
     _checks_of,
     _evidence_packet,
@@ -81,9 +82,105 @@ from alloy.recipes.shared_verification import (
 from alloy.recipes.state import CriticInput, TddState
 from alloy.worktree import is_test_path, tree_fingerprint
 
-BUDGET_LIMITS: tuple[str, ...] = ("max_agent_calls", "max_cheap_agent_calls", "max_iterations", "max_wall_time")
-"""Breaches a budget-stop auto-land may follow. Other stops (consiliums,
-total checks) say something about the work, not just the clock."""
+BUDGET_LIMITS: tuple[str, ...] = (
+    "max_agent_calls",
+    "max_cheap_agent_calls",
+    "max_iterations",
+    "max_wall_time",
+    "max_total_checks",
+)
+"""Breaches a budget-stop auto-land may follow. A consilium stop says
+something about the work, not just the clock. `max_total_checks` is one since
+the bench calibration (2026-11-07): finished work with every check green was
+parked on it; `budget_landing`'s green-regression-on-an-unchanged-tree rule
+still keeps a verifier spinning on red checks from landing."""
+
+EXHAUSTION_NEARLY_DONE = "nearly-done"
+EXHAUSTION_STALLED = "stalled"
+EXHAUSTION_INFRASTRUCTURE = "infrastructure"
+EXHAUSTION_PROGRESSING = "progressing"
+
+
+def red_signature(state: TddState, iteration: int) -> set[str]:
+    """What is still red at the end of `iteration`: the failing test ids its
+    red required checks report (pytest, dart), else the check target itself.
+    Test ids, not commands, so a verifier that narrows `pytest tests/x.py` to
+    one node id between iterations does not look like progress."""
+    red: set[str] = set()
+    for check in _latest_per_target(_checks_of(state, iteration)):
+        if not _is_red(check):
+            continue
+        result = CheckResult.model_validate(check)
+        excused = set(result.excused)
+        tests = {failure_key(test) for test in failing_tests(read_log(result))} - excused
+        red |= tests or {_check_target(result.command)}
+    return red
+
+
+def stalled(state: TddState, iterations: int = 1) -> bool:
+    """Nothing red got fixed over the last `iterations` iterations: each
+    iteration's red signature contains the one before it."""
+    iteration = state.get("iteration", 0)
+    later = red_signature(state, iteration)
+    for back in range(1, iterations + 1):
+        earlier = red_signature(state, iteration - back)
+        if not earlier or not earlier <= later:
+            return False
+        later = earlier
+    return True
+
+
+def classify_exhaustion(state: TddState, decision: JudgeDecision) -> str:
+    """Why a limit stopped this run, from its checks alone:
+
+    - infrastructure: a check of the final iteration could not run, or a
+      runner was unavailable;
+    - nearly-done: every target of the final iteration is green, so only the
+      evidence or the verdict was missing;
+    - stalled: everything red in the previous iteration is still red;
+    - progressing: something got fixed, something is still red.
+    """
+    latest = _latest_per_target(_checks_of(state, state.get("iteration", 0)))
+    if any(not CheckResult.model_validate(check).runnable for check in latest) or "unavailable" in decision.reason:
+        return EXHAUSTION_INFRASTRUCTURE
+    if latest and not any(_is_red(check) for check in latest):
+        return EXHAUSTION_NEARLY_DONE
+    if stalled(state):
+        return EXHAUSTION_STALLED
+    return EXHAUSTION_PROGRESSING
+
+
+STALL_ITERATIONS = 2
+"""Iterations in a row that fixed nothing before guard turns a retry into a
+consilium (while the consilium budget lasts)."""
+
+
+def _stall_consilium(ctx, state: TddState, decision: JudgeDecision, recorded: dict[str, Any]) -> JudgeDecision:
+    """A retry after `STALL_ITERATIONS` iterations that fixed nothing becomes
+    a consilium, while the consilium budget lasts and a critic is available:
+    fresh critics read the evidence instead of the same implementer trying a
+    third time (bench calibration: cheap implementers repeat one failing
+    approach until max_iterations). Returns `decision` unchanged otherwise;
+    a stall is journalled through guard's `recorded` update."""
+    if decision.decision != "retry" or not stalled(state, STALL_ITERATIONS):
+        return decision
+    if state.get("consiliums", 0) >= ctx.recipe.limits.max_consiliums * ctx.budget(state):
+        return decision
+    if not ctx.available_critics():
+        return decision
+    red = sorted(red_signature(state, state.get("iteration", 0)))
+    sample = ", ".join(red[:3]) + (f" and {len(red) - 3} more" if len(red) > 3 else "")
+    stall = JudgeDecision(
+        decision="consilium",
+        reason=(
+            f"Alloy: {sample} stayed red for {STALL_ITERATIONS + 1} iterations; asking the critics "
+            f"instead of another retry. Last reason: {decision.reason}"
+        ),
+        next_instructions=decision.next_instructions,
+        confidence=decision.confidence,
+    )
+    recorded["journal"] = [f"iteration {state.get('iteration', 0)}: {stall.reason}"]
+    return stall
 
 
 def _make_node__capture_bugs(ctx):
@@ -763,12 +860,14 @@ def _breach_update(ctx, state: TddState, breach: str, decision: JudgeDecision) -
     landed = _budget_landed_update(ctx, state, breach, decision)
     if landed is not None:
         return landed
+    cause = classify_exhaustion(state, decision)
     return {
         "stage": "guard",
         "limit_hit": breach,
+        "exhaustion": cause,
         "decision": JudgeDecision(
             decision="human",
-            reason=f"Alloy stopped the loop: {breach}. Last judge reason: {decision.reason}",
+            reason=f"Alloy stopped the loop ({cause}): {breach}. Last judge reason: {decision.reason}",
             next_instructions=decision.next_instructions,
             confidence=decision.confidence,
         ).model_dump(),
@@ -858,6 +957,8 @@ def _make_node_guard(ctx):
         if breach:
             return {**recorded, **_breach_update(ctx, state, breach, decision)}
 
+        decision = _stall_consilium(ctx, state, decision, recorded)
+
         if decision.decision == "consilium" and state.get(
             "consiliums", 0
         ) >= ctx.recipe.limits.max_consiliums * ctx.budget(state):
@@ -890,9 +991,10 @@ def _make_node_guard(ctx):
         }
         if state.get("final_pass"):
             update["journal"] = [
+                *update.get("journal", []),
                 f"iteration {iteration}: the final broader check found a problem -- "
                 f"{decision.reason or 'see the last check'}. Fixing it is this task's "
-                "own responsibility; back to implement."
+                "own responsibility; back to implement.",
             ]
         if ctx.recipe.complexity.routing == "live" and retries >= ctx.recipe.complexity.escalate_after_retries:
             previous = state["complexity"]

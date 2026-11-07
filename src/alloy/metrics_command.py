@@ -27,6 +27,7 @@ from alloy.events import (
 from alloy.usage import normalize
 
 _LIMIT = re.compile(r"\b(max_[a-z_]+) reached")
+_EXHAUSTION = re.compile(r"^Alloy stopped the loop \(([a-z-]+)\):")
 _ID = re.compile(r"\b[a-z][a-z0-9]*-[a-z0-9]{2,}(?:\.\d+)*\b")
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
@@ -162,6 +163,11 @@ def compute_metrics(
 
     event_counts = Counter(str(event.get("event")) for event in events)
     causes = Counter(needs_human_cause(event) for event in events if event.get("event") == EVENT_NEEDS_HUMAN)
+    exhaustion = Counter(
+        match.group(1)
+        for event in events
+        if event.get("event") == EVENT_NEEDS_HUMAN and (match := _EXHAUSTION.match(str(event.get("reason") or "")))
+    )
     parks = sum(1 for event in events if event.get("event") == EVENT_STALLED and event.get("stage") == "parked")
 
     titles = Counter(_title_key(str(bug.get("title") or "")) for bug in bugs)
@@ -198,7 +204,12 @@ def compute_metrics(
             "by_model": dict(sorted(by_model.items(), key=lambda item: -item[1]["hours"])),
         },
         "events": dict(event_counts),
-        "needs_human": {"total": sum(causes.values()), "by_cause": dict(causes.most_common())},
+        "needs_human": {
+            "total": sum(causes.values()),
+            "by_cause": dict(causes.most_common()),
+            # Limit stops by `classify_exhaustion` class (stalled, nearly-done, ...).
+            "by_exhaustion": dict(exhaustion.most_common()),
+        },
         "parks": parks,
         "flaky_checks": event_counts.get(EVENT_FLAKY_CHECK, 0),
         "bugs": {

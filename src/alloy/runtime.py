@@ -784,13 +784,18 @@ class RunContext:
         """Tier-scaled ceiling on calls of `limits.cheap_roles`, before budget extensions."""
         return resolve_max_cheap_agent_calls(self.recipe, state.get("complexity"))
 
-    def check_limits(self, state: Mapping[str, Any], *, include_iterations: bool = True) -> str | None:
+    def check_limits(
+        self, state: Mapping[str, Any], *, include_iterations: bool = True, include_checks: bool = True
+    ) -> str | None:
         """Return a description of the first limit breached, else None.
 
         `include_iterations=False` is for gates *inside* an iteration (the
         verifier loop, triage, the acceptance gate): `max_iterations` caps how
         many implement iterations may *start*, so the last allowed iteration
-        must still be verifiable. Every other limit applies everywhere."""
+        must still be verifiable. `include_checks=False` is for the roles that
+        judge evidence already gathered (acceptance, judge): `max_total_checks`
+        caps running checks, and a spent check budget must still let the
+        evidence be read. Every other limit applies everywhere."""
         limits = self.recipe.limits
         multiplier = self.budget(dict(state))
         self._budget_multiplier = multiplier
@@ -814,7 +819,7 @@ class RunContext:
         if cheap_calls >= allowed_cheap:
             return f"max_cheap_agent_calls reached ({cheap_calls}/{allowed_cheap})"
 
-        if self.total_checks(state) >= self.total_checks_allowed(state):
+        if include_checks and self.total_checks(state) >= self.total_checks_allowed(state):
             return "max_total_checks reached"
 
         return self._wall_breach(limits.max_wall_time_minutes * multiplier)

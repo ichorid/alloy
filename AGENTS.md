@@ -136,6 +136,12 @@ on the base commit too (pre-existing) neither sends the run back to implement
 nor blocks `done`; it gets one `alloy-bug` and an out-of-scope note in later
 implement prompts (README "Verification is deterministic").
 
+A spent `max_total_checks` hands the iteration's evidence to acceptance
+instead of parking; limit stops read `Alloy stopped the loop (<class>): ...`
+with class nearly-done / stalled / progressing / infrastructure; two
+iterations that fix nothing turn the next retry into a consilium (README "The
+judge proposes; Alloy disposes").
+
 A fast-track recipe with `escalate: {after_iterations: N,
 when_packages_touched_over: M, package_roots: [glob...], to: <recipe>}`
 reroutes a bead that ran N implement rounds without done, or touched more

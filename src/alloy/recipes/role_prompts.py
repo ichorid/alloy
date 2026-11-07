@@ -191,8 +191,10 @@ Requirements:
 When you are done, answer with the structured output: `summary` (one paragraph naming which
 test files you added or changed and what each asserts) and `baseline_checks`, the exact
 shell commands, each with its purpose, that Alloy will run to demonstrate the requested
-behaviour is not implemented yet. Every command must target only the tests you wrote
-(e.g. one test file or node id), never the whole suite, and must be red right now.
+behaviour is not implemented yet. Every command must target only the tests you wrote,
+never the whole suite, and must be red right now. Use as few commands as the test runner
+allows: one per test file you added or changed, or one naming several node ids -- not one
+per test (each command spends the task's check budget).
 Alloy runs them itself and decides from the exit codes.
 {QUOTE_ARGUMENTS}
 
@@ -724,7 +726,9 @@ Answer with the structured output. Either:
   Leave out out-of-scope work and concerns no command can settle.
 
 Prefer the most targeted check that would move the evidence: the tests written for
-this task first, then what the diff could have broken, then lint or build. Use kind
+this task first -- all of them in one command (every test file or node id in one
+invocation), not one check per test -- then what the diff could have broken, then
+lint or build. Every check spends the task's check budget. Use kind
 `targeted` for these. Run the full suite (kind `regression`) only once the targeted
 checks are green, and again only if the code changed after it passed: Alloy reuses a
 passing result for the exact same command on an unchanged tree (marked cached), so

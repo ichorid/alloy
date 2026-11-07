@@ -199,6 +199,19 @@ bug-repair ones included. Wall time is also checked right before each agent
 call, fallbacks included: once it is spent no new call starts (only `harvest`
 and `memory_reviewer`, which run after the loop, are exempt).
 
+The run-wide check cap (`verification.max_total_checks`) stops the verifier, not
+the run: when it is spent mid-iteration, the acceptance gate and the judge still
+read the evidence already gathered (they are exempt from that one limit), and a
+green iteration finishes `done`. An acceptance `verify_more` at the cap may
+budget-land like any other budget stop. A needs-human limit stop names its
+class in the reason, `Alloy stopped the loop (<class>): <limit>`: `nearly-done`
+(every target of the last iteration green), `stalled` (nothing red in the
+previous iteration got fixed, compared by failing test id where the log names
+them), `progressing` or `infrastructure` (a check could not run, a runner was
+unavailable); `alloy metrics` counts them under `needs_human.by_exhaustion`.
+When a retry follows two iterations in a row that fixed nothing, guard calls a
+consilium instead (while `max_consiliums` lasts and a critic is available).
+
 ```yaml
 limits:
   max_iterations: 5

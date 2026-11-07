@@ -402,7 +402,7 @@ LIMIT_GATE_PREFIX = "Alloy limit gate: "
 """Reason prefix of the decision a node's limit gate hands guard."""
 
 
-def limit_gate(ctx, state, *, include_iterations: bool) -> str | None:
+def limit_gate(ctx, state, *, include_iterations: bool, include_checks: bool = True) -> str | None:
     """The breach a node must stop on before it starts more agent work, else
     None. Every loop edge passes one of these -- `implement` (with
     `max_iterations`, it starts a new iteration), triage, the verifier loop,
@@ -410,8 +410,9 @@ def limit_gate(ctx, state, *, include_iterations: bool) -> str | None:
     reported-bug repair cycle implement -> triage -> implement included) can
     run past a limit just because it never reaches guard. Iteration-internal
     gates pass `include_iterations=False`: the last allowed iteration must
-    still be verifiable."""
-    return ctx.check_limits(state, include_iterations=include_iterations)
+    still be verifiable; the acceptance gate and the judge pass
+    `include_checks=False` (see `RunContext.check_limits`)."""
+    return ctx.check_limits(state, include_iterations=include_iterations, include_checks=include_checks)
 
 
 def limit_refused(result: AgentResult | None) -> bool:
@@ -468,6 +469,18 @@ def _make_verifier_nodes(ctx):
             "verifier_stop": None,
         }
 
+        if total >= allowed_total and _checks_of(state, iteration):
+            # The run's check budget is spent, but this iteration has
+            # evidence: let the acceptance gate read it instead of parking a
+            # run whose checks may all be green (bench calibration: finished
+            # work stopped on max_total_checks). A verify_more answer goes to
+            # guard as a budget stop, which `budget_landing` may still finish.
+            update["verifier_stop"] = VerifierAction(
+                action="stop",
+                reason=f"Alloy stopped verification: the run's check budget is spent ({total} checks)",
+                remaining_risks=["no further checks can run in this run"],
+            ).model_dump()
+            return update
         if total >= allowed_total:
             update.update(
                 verify_route="guard",
@@ -713,7 +726,7 @@ def _make_acceptance_nodes(ctx, _implementer):
         finalise `done`."""
         iteration = state.get("iteration", 0)
         ctx.set_stage("acceptance", iteration=iteration)
-        breach = limit_gate(ctx, state, include_iterations=False)
+        breach = limit_gate(ctx, state, include_iterations=False, include_checks=False)
         if breach:
             return {
                 "stage": "acceptance",
@@ -829,7 +842,7 @@ def _make_judge_node(ctx, _implementer):
 
     async def judge(state: TddState) -> dict[str, Any]:
         ctx.set_stage("judge", iteration=state.get("iteration", 0))
-        breach = limit_gate(ctx, state, include_iterations=False)
+        breach = limit_gate(ctx, state, include_iterations=False, include_checks=False)
         if breach:
             return {"stage": "judge", **limit_stop(breach, f"judge in iteration {state.get('iteration', 0)}")}
         spec = ctx.recipe.role("judge")

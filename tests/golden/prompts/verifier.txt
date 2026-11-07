@@ -15,7 +15,9 @@ Answer with the structured output. Either:
   Leave out out-of-scope work and concerns no command can settle.
 
 Prefer the most targeted check that would move the evidence: the tests written for
-this task first, then what the diff could have broken, then lint or build. Use kind
+this task first -- all of them in one command (every test file or node id in one
+invocation), not one check per test -- then what the diff could have broken, then
+lint or build. Every check spends the task's check budget. Use kind
 `targeted` for these. Run the full suite (kind `regression`) only once the targeted
 checks are green, and again only if the code changed after it passed: Alloy reuses a
 passing result for the exact same command on an unchanged tree (marked cached), so

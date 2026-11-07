@@ -145,12 +145,14 @@ def test_rule_lands_when_every_condition_holds(dirty_project):
         "max_iterations reached (5/5)",
         "max_wall_time reached (93m/90m)",
         "max_cheap_agent_calls reached (80/80)",
+        # Since the bench calibration: finished work was parked on the check cap.
+        "max_total_checks reached",
     ):
         assert budget_landing(_rule_ctx(dirty_project), _state(dirty_project), breach, _wants_more(breach))
 
 
 def test_rule_refuses_a_non_budget_stop(dirty_project):
-    breach = "max_total_checks reached"
+    breach = "max_consiliums reached (3/2)"
     assert budget_landing(_rule_ctx(dirty_project), _state(dirty_project), breach, _wants_more(breach)) is None
 
 

@@ -18,6 +18,7 @@ from alloy.store import Store
         ("Alloy stopped the loop: max_iterations reached (5/5). Last judge reason: x", "max_iterations"),
         ("Alloy stopped the loop: max_wall_time reached (91m/90m). Last judge reason: y", "max_wall_time"),
         ("Alloy stopped the loop: max_total_checks reached. Last judge reason: the run's", "max_total_checks"),
+        ("Alloy stopped the loop (stalled): max_iterations reached (4/4). Last judge reason: z", "max_iterations"),
         ("baseline not runnable: no baseline command given", "baseline-not-runnable"),
         ("baseline unexpectedly green: `echo x`", "baseline-green"),
         ("the tests role failed: timed out after 1200s", "tests-role-failed"),
@@ -80,7 +81,11 @@ def test_compute_metrics_aggregates_runs_calls_events_and_bugs() -> None:
         _call("zzz", "implement"),  # a run outside the window is ignored
     ]
     events = [
-        {"event": "needs-human", "run": "b", "reason": "Alloy stopped the loop: max_iterations reached (5/5)."},
+        {
+            "event": "needs-human",
+            "run": "b",
+            "reason": "Alloy stopped the loop (stalled): max_iterations reached (5/5).",
+        },
         {"event": "needs-human", "run": "c", "reason": "baseline not runnable: x"},
         {"event": "stalled", "run": "b", "stage": "parked", "reason": "parked after 5 min"},
         {"event": "stalled", "run": "c", "stage": "dispatch-hold", "reason": "held"},
@@ -109,6 +114,7 @@ def test_compute_metrics_aggregates_runs_calls_events_and_bugs() -> None:
     assert report["needs_human"] == {
         "total": 2,
         "by_cause": {"max_iterations": 1, "baseline-not-runnable": 1},
+        "by_exhaustion": {"stalled": 1},
     }
     assert report["parks"] == 1
     assert report["flaky_checks"] == 1

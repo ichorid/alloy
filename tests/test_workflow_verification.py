@@ -150,26 +150,50 @@ async def test_max_checks_per_iteration_forces_verifier_stop(project, alloy_home
     assert any("verifier check budget exhausted" in risk for risk in final["verifier_stop"]["remaining_risks"])
 
 
-async def test_max_total_checks_parks_at_human_gate(project, alloy_home, fake_harnesses):
-    """A run-wide check cap parks at the human gate like max_iterations.
+def _check_capped(total: int):
+    return replace(
+        load_config(),
+        verification=replace(load_config().verification, max_total_checks=total, max_checks_per_iteration=10),
+    )
+
+
+async def test_a_spent_check_budget_hands_green_evidence_to_acceptance(project, alloy_home, fake_harnesses):
+    """The run-wide check cap stops the verifier, not the run: the acceptance
+    gate reads the evidence gathered so far, and an accept finishes the run
+    (bench calibration: finished work was parked on max_total_checks).
 
     Distinct commands: a repeat of one passing command on an unchanged tree
     is answered from the check cache and spends no budget
     (tests/test_cached_checks_budget.py)."""
-    config = replace(
-        load_config(),
-        verification=replace(
-            load_config().verification,
-            max_total_checks=3,
-            max_checks_per_iteration=10,
-        ),
-    )
     fake_harnesses.configure(
         verification_script(
             verifier=[verifier_run_entry(f'sh -c "exit 0; : {n}"', kind="custom") for n in range(20)],
+            acceptance=[acceptance_entry("accept", "every check is green")],
         )
     )
-    harness = make_harness(project, alloy_home, config=config)
+    harness = make_harness(project, alloy_home, config=_check_capped(3))
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done", final.get("limit_hit")
+    assert "check budget is spent" in final["verifier_stop"]["reason"]
+    log_dir = alloy_home / "logs" / harness.run_id
+    assert len(list(log_dir.glob("check-*.log"))) <= 3
+
+
+async def test_a_spent_check_budget_over_red_checks_parks_classified(project, alloy_home, fake_harnesses):
+    """Red evidence at the check cap is still a needs-human stop, now with
+    its class in the reason."""
+    fake_harnesses.configure(
+        verification_script(
+            implement=[implement_entry(succeed=True)],
+            verifier=[verifier_run_entry(f'sh -c "exit 1; : {n}"', kind="custom") for n in range(20)],
+            acceptance=[acceptance_entry("repair", "the checks are red")],
+        )
+    )
+    harness = make_harness(project, alloy_home, config=_check_capped(3))
     try:
         final = await harness.start()
     finally:
@@ -177,8 +201,8 @@ async def test_max_total_checks_parks_at_human_gate(project, alloy_home, fake_ha
 
     assert final.get("limit_hit") == "max_total_checks reached"
     assert "__interrupt__" in final
-    log_dir = alloy_home / "logs" / harness.run_id
-    assert len(list(log_dir.glob("check-*.log"))) <= 3
+    assert final["exhaustion"] in ("progressing", "stalled")
+    assert final["__interrupt__"][0].value["reason"].startswith(f"Alloy stopped the loop ({final['exhaustion']}):")
 
 
 async def test_verifier_runs_arbitrary_project_script(project, alloy_home, fake_harnesses):
