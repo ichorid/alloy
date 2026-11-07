@@ -167,6 +167,9 @@ async def test_tdd_loop_lets_done_stand_over_a_pre_existing_failure(project, all
     assert final["iteration"] == 1
     assert final["known_red"] == {"tests/test_old.py::test_old": PRE_EXISTING}
     assert not any("overridden by Alloy" in row["reason"] for row in final["attempts"])
+    # The verifier is told not to chase it (bench stuck-1: 7 of 20 checks did).
+    after = fake_harnesses.calls_for("verifier")[1]["prompt"]
+    assert NOT_OURS in after and "Spend no checks investigating them" in after
 
 
 # -- notes and bugs ----------------------------------------------------------------

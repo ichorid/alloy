@@ -23,7 +23,7 @@ from alloy.models import (
     parse_pinned_check_hints,
 )
 from alloy.prompts import assemble
-from alloy.recipes.known_red import review_red_check
+from alloy.recipes.known_red import VERIFIER_ADVICE, excused_note, review_red_check
 from alloy.recipes.role_prompts import (
     _project_layer,
     _render_history,
@@ -527,6 +527,7 @@ def _make_verifier_nodes(ctx):
             memory=state.get("memory_block", ""),
             repo_root=ctx.worktree.path,
             pinned_checks=parse_pinned_check_hints(state.get("memory_pinned_checks", "")),
+            not_ours=excused_note(state.get("known_red") or {}, ctx.worktree.base_commit, advice=VERIFIER_ADVICE),
         )
         result, error, session_update = await _ask_verifier(
             ctx, state, spec, tests_session, prompt_args, prompt_kwargs, iteration

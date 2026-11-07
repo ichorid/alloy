@@ -762,8 +762,12 @@ def verifier_prompt(
     repo_root: Path | None = None,
     resumed: bool = False,
     pinned_checks: list[str] | None = None,
+    not_ours: str = "",
 ) -> str:
-    """`resumed` is the continuation variant sent into the tests writer's own
+    """`not_ours` is `known_red.excused_note` for the verifier: failing tests
+    Alloy already excused, which no check should chase.
+
+    `resumed` is the continuation variant sent into the tests writer's own
     session: it drops the task brief, acceptance criteria and repository context
     (already in the window) and keeps the evidence, the diff and the budget."""
     results = [CheckResult.model_validate(item) for item in checks_this_run]
@@ -820,6 +824,8 @@ def verifier_prompt(
 ## Budget
 iteration {iteration}; {checks_left_iteration} more check(s) allowed this iteration, \
 {checks_left_run} more in this run"""
+    if not_ours:
+        volatile = f"{volatile}\n\n{not_ours}"
     if resumed:
         volatile = f"{VERIFIER_RESUMED}\n\n{volatile}"
     return assemble(VERIFIER_STATIC, _project_layer(memory), run, task, volatile).text

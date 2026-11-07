@@ -240,9 +240,17 @@ async def _red_on_base(ctx, template: str, keys: set[str], result: CheckResult) 
     return keys & set(base.get("failures") or ())
 
 
-def excused_note(known: dict[str, str], base_commit: str) -> str:
-    """The implement-prompt section naming the failures that are not this
-    bead's; "" when there are none."""
+VERIFIER_ADVICE = (
+    "Alloy has already rerun each of these, files each as a separate bug, and does not count them "
+    "against this task. Spend no checks investigating them; a suite run where only these fail is green "
+    "for this task."
+)
+
+
+def excused_note(known: dict[str, str], base_commit: str, *, advice: str = "") -> str:
+    """The prompt section naming the failures that are not this bead's; ""
+    when there are none. `advice` replaces the implementer's closing
+    instructions (the verifier gets `VERIFIER_ADVICE`)."""
     if not known:
         return ""
     lines = []
@@ -253,13 +261,12 @@ def excused_note(known: dict[str, str], base_commit: str) -> str:
             else "failed once and passed when run again"
         )
         lines.append(f"- `{key}` -- {why}")
-    return (
-        "## Failing tests that are not this task's\n"
-        + "\n".join(lines)
-        + "\n\nAlloy has filed each as a separate bug. Leave these tests and the code they cover exactly as "
+    advice = advice or (
+        "Alloy has filed each as a separate bug. Leave these tests and the code they cover exactly as "
         "they are at the base commit: a change there is out of scope for this task even when it turns them "
         "green. If an earlier attempt changed them only to make them pass, revert that part."
     )
+    return "## Failing tests that are not this task's\n" + "\n".join(lines) + "\n\n" + advice
 
 
 def file_outside_bugs(ctx, found: dict[str, str], result: CheckResult) -> list[str]:
