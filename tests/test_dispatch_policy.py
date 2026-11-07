@@ -236,3 +236,30 @@ def test_a_stop_whose_diff_was_called_complete_is_not_parked(scheduler, beads_pr
     assert scheduler.next_task() is None
     assert scheduler.engine.beads.show(stuck).status == bd.STATUS_WAITING_HUMAN
     assert scheduler.engine.store.get_run(run_id)["status"] == RUN_WAITING_HUMAN
+
+
+def test_stash_all_handles_intent_to_add_entries(tmp_path):
+    """Alloy's diff stages new files with `git add --intent-to-add`; a plain
+    `git stash push` refuses those ("not uptodate. Cannot merge"), which made
+    a park cancel the run and then leave its work in the checkout, holding
+    the queue for good (bench run, 2026-11-07)."""
+    from alloy.worktree import WorktreeManager
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "init"]):
+        subprocess.run(["git", *args], cwd=repo, check=True)
+    (repo / "new").mkdir()
+    (repo / "new" / "cells.py").write_text("x = 1\n")
+    (repo / "loose.txt").write_text("untracked\n")
+    subprocess.run(["git", "add", "-A", "--intent-to-add"], cwd=repo, check=True)
+
+    manager = WorktreeManager(repo=repo, root=tmp_path / "wt")
+    stash = manager.stash_all(repo, "alloy-park t-1 run r")
+
+    assert stash
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True).stdout
+    assert status == ""
+    subprocess.run(["git", "stash", "pop", "-q"], cwd=repo, check=True)
+    assert (repo / "new" / "cells.py").read_text() == "x = 1\n"
+    assert (repo / "loose.txt").exists()

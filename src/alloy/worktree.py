@@ -244,10 +244,12 @@ class WorktreeManager:
         Returns the stash commit, or None when there was nothing to stash."""
         if not self.has_uncommitted_tracked_changes(path) and not self.untracked_files(path, exclude=exclude):
             return None
-        _git(
-            ["stash", "push", "--include-untracked", "-m", message, "--", ".", *self._own_excludes(exclude)],
-            path,
-        )
+        excludes = self._own_excludes(exclude)
+        # The judge's diff stages new files with `--intent-to-add`, and
+        # `git stash` refuses such entries ("not uptodate. Cannot merge"):
+        # stage them for real first so the stash can take them.
+        _git(["add", "-A", "--", ".", *excludes], path)
+        _git(["stash", "push", "--include-untracked", "-m", message, "--", ".", *excludes], path)
         return _git(["rev-parse", "stash@{0}"], path).stdout.strip()
 
     def head(self, path: Path) -> str:
