@@ -1,0 +1,885 @@
+{
+  "meta": {
+    "scenario": "affected",
+    "version": 1,
+    "alloy_sha": "d3093ff1598003d264885e1e36747aa9e656f2ba",
+    "seed_sha": "c7c9a4195ad0f6de643ec5a00cb908f7dd3981f3",
+    "toy": "/home/vader/MY_SRC/alloy-toy-sheet-affected-4",
+    "reported_at": "2026-11-07T16:29:12.462271+00:00",
+    "deadline_hit": false,
+    "cli": {
+      "cursor-agent": "2026.11.05-86047df",
+      "claude": "2.1.319 (Claude Code)",
+      "bd": "bd version 1.3.0 (f45b249ce)"
+    }
+  },
+  "oracle": {
+    "score": 0.46,
+    "passed": 70,
+    "total": 152,
+    "areas": {
+      "cells": {
+        "passed": 10,
+        "total": 10,
+        "fraction": 1.0
+      },
+      "format": {
+        "passed": 5,
+        "total": 5,
+        "fraction": 1.0
+      },
+      "arith": {
+        "passed": 14,
+        "total": 14,
+        "fraction": 1.0
+      },
+      "refs": {
+        "passed": 12,
+        "total": 12,
+        "fraction": 1.0
+      },
+      "ranges": {
+        "passed": 0,
+        "total": 14,
+        "fraction": 0.0
+      },
+      "errors": {
+        "passed": 12,
+        "total": 14,
+        "fraction": 0.857
+      },
+      "logic": {
+        "passed": 0,
+        "total": 14,
+        "fraction": 0.0
+      },
+      "copy": {
+        "passed": 0,
+        "total": 10,
+        "fraction": 0.0
+      },
+      "rows": {
+        "passed": 0,
+        "total": 10,
+        "fraction": 0.0
+      },
+      "undo": {
+        "passed": 1,
+        "total": 8,
+        "fraction": 0.125
+      },
+      "files": {
+        "passed": 1,
+        "total": 8,
+        "fraction": 0.125
+      },
+      "csv": {
+        "passed": 6,
+        "total": 6,
+        "fraction": 1.0
+      },
+      "sheets": {
+        "passed": 0,
+        "total": 8,
+        "fraction": 0.0
+      },
+      "names": {
+        "passed": 0,
+        "total": 7,
+        "fraction": 0.0
+      },
+      "perf": {
+        "passed": 1,
+        "total": 4,
+        "fraction": 0.25
+      },
+      "robust": {
+        "passed": 8,
+        "total": 8,
+        "fraction": 1.0
+      }
+    }
+  },
+  "oracle_failures": [
+    {
+      "area": "ranges",
+      "name": "SUM",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "ranges",
+      "name": "AVERAGE",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "ranges",
+      "name": "MIN",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "ranges",
+      "name": "MAX",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "ranges",
+      "name": "COUNT ignores text",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "ranges",
+      "name": "SUM ignores text",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "ranges",
+      "name": "2D range",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "ranges",
+      "name": "range plus number",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "ranges",
+      "name": "empty range is zero",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "ranges",
+      "name": "lowercase function",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "ranges",
+      "name": "function in expression",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "ranges",
+      "name": "reversed range",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "ranges",
+      "name": "range recalc",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "ranges",
+      "name": "nested functions",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "errors",
+      "name": "unknown function",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "errors",
+      "name": "error in range",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "IF true",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "IF on cell",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "IF false",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "equals",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "not equals",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "AND",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "OR",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "NOT",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "join text",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "join cells",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "LEN",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "UPPER",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "LOWER",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "IF numeric result",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "copy",
+      "name": "relative down",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY B1 B2', '']"
+    },
+    {
+      "area": "copy",
+      "name": "relative right",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY A2 B2', '']"
+    },
+    {
+      "area": "copy",
+      "name": "absolute",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY B1 B3', '']"
+    },
+    {
+      "area": "copy",
+      "name": "row anchored",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY B1 B3', '']"
+    },
+    {
+      "area": "copy",
+      "name": "column anchored",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY A2 B2', '']"
+    },
+    {
+      "area": "copy",
+      "name": "plain value",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY A1 C5', '']"
+    },
+    {
+      "area": "copy",
+      "name": "range shifts",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY B1 B3', '']"
+    },
+    {
+      "area": "copy",
+      "name": "copy is independent",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY B1 B2', '']"
+    },
+    {
+      "area": "copy",
+      "name": "overwrites target",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY B1 C1', '99']"
+    },
+    {
+      "area": "copy",
+      "name": "off the sheet",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY B2 B1', '']"
+    },
+    {
+      "area": "rows",
+      "name": "insert moves cells",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: INSERTROW 1', '', '5']"
+    },
+    {
+      "area": "rows",
+      "name": "insert keeps reference",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: INSERTROW 1', '']"
+    },
+    {
+      "area": "rows",
+      "name": "insert below keeps",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: INSERTROW 3', '5']"
+    },
+    {
+      "area": "rows",
+      "name": "delete moves cells up",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: DELETEROW 1', '1']"
+    },
+    {
+      "area": "rows",
+      "name": "delete referenced row",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: DELETEROW 2', '3']"
+    },
+    {
+      "area": "rows",
+      "name": "delete keeps reference",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: DELETEROW 2', '3']"
+    },
+    {
+      "area": "rows",
+      "name": "insert inside range grows it",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: INSERTROW 2', '#ERROR!']"
+    },
+    {
+      "area": "rows",
+      "name": "delete inside range shrinks it",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: DELETEROW 2', '#ERROR!']"
+    },
+    {
+      "area": "rows",
+      "name": "formula moves with row",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR cannot do: INSERTROW 1', '']"
+    },
+    {
+      "area": "rows",
+      "name": "deleted row is gone",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: DELETEROW 1', '1']"
+    },
+    {
+      "area": "undo",
+      "name": "undo set",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: UNDO', '2']"
+    },
+    {
+      "area": "undo",
+      "name": "undo to empty",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: UNDO', '1']"
+    },
+    {
+      "area": "undo",
+      "name": "undo twice",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: UNDO', 'ERROR cannot do: UNDO', '3']"
+    },
+    {
+      "area": "undo",
+      "name": "undo recalculates",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: UNDO', '10']"
+    },
+    {
+      "area": "undo",
+      "name": "undo copy",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY B1 B2', 'ERROR cannot do: UNDO', '']"
+    },
+    {
+      "area": "undo",
+      "name": "undo insert row",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: INSERTROW 1', 'ERROR cannot do: UNDO', '5']"
+    },
+    {
+      "area": "undo",
+      "name": "undo delete row",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: DELETEROW 1', 'ERROR cannot do: UNDO', '5']"
+    },
+    {
+      "area": "files",
+      "name": "values survive",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-hc4o09z9/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-hc4o09z9/w', '', '']"
+    },
+    {
+      "area": "files",
+      "name": "formulas survive",
+      "ok": false,
+      "seconds": 0.05,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-5jgrm3fm/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-5jgrm3fm/w', '']"
+    },
+    {
+      "area": "files",
+      "name": "load replaces",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-ry9wgger/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-ry9wgger/w', '9']"
+    },
+    {
+      "area": "files",
+      "name": "save twice",
+      "ok": false,
+      "seconds": 0.05,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-tc5auv11/w', 'ERROR cannot do: SAVE /tmp/sheet-oracle-tc5auv11/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-tc5auv11/w', '']"
+    },
+    {
+      "area": "files",
+      "name": "errors survive",
+      "ok": false,
+      "seconds": 0.05,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-46i0b3og/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-46i0b3og/w', '']"
+    },
+    {
+      "area": "files",
+      "name": "ranges survive",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-hasxx1rn/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-hasxx1rn/w', '']"
+    },
+    {
+      "area": "files",
+      "name": "text with comma",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-vgu8s998/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-vgu8s998/w', '']"
+    },
+    {
+      "area": "sheets",
+      "name": "cross-sheet reference",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: SHEET Data', 'ERROR cannot do: SHEET Main', '#ERROR!']"
+    },
+    {
+      "area": "sheets",
+      "name": "sheets are separate",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: SHEET One', 'ERROR cannot do: SHEET Two', 'ERROR cannot do: SHEET One', '2']"
+    },
+    {
+      "area": "sheets",
+      "name": "cross-sheet recalc",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR cannot do: SHEET Data', 'ERROR cannot do: SHEET Main', 'ERROR cannot do: SHEET Data', 'ERROR cannot do: SHEET Main', '9']"
+    },
+    {
+      "area": "sheets",
+      "name": "cross-sheet range",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: SHEET Data', 'ERROR cannot do: SHEET Main', '#ERROR!']"
+    },
+    {
+      "area": "sheets",
+      "name": "missing sheet",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: SHEET Main', '#ERROR!']"
+    },
+    {
+      "area": "sheets",
+      "name": "sheets survive save",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR cannot do: SHEET Data', 'ERROR cannot do: SHEET Main', 'ERROR cannot do: SAVE /tmp/sheet-oracle-1e32pb6g/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-1e32pb6g/w', 'ERROR cannot do: SHEET Main', '']"
+    },
+    {
+      "area": "sheets",
+      "name": "lowercase sheet ref",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: SHEET Data', 'ERROR cannot do: SHEET Main', '#ERROR!']"
+    },
+    {
+      "area": "sheets",
+      "name": "default sheet works",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: SHEET Other', '1']"
+    },
+    {
+      "area": "names",
+      "name": "sum over name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: NAME data A1:A3', '#ERROR!']"
+    },
+    {
+      "area": "names",
+      "name": "name in average",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: NAME data A1:A3', '#ERROR!']"
+    },
+    {
+      "area": "names",
+      "name": "name recalc",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: NAME data A1:A3', '#ERROR!']"
+    },
+    {
+      "area": "names",
+      "name": "unknown name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "names",
+      "name": "case-insensitive name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: NAME Data A1:A3', '#ERROR!']"
+    },
+    {
+      "area": "names",
+      "name": "single-cell name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: NAME rate A1', '#NAME?']"
+    },
+    {
+      "area": "names",
+      "name": "redefine name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: NAME data A1:A2', 'ERROR cannot do: NAME data A1:A3', '#ERROR!']"
+    },
+    {
+      "area": "perf",
+      "name": "10k chain",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "perf",
+      "name": "10k chain recalc",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "perf",
+      "name": "sum of 10k",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['#ERROR!']"
+    }
+  ],
+  "beads": {
+    "by_status": {
+      "closed": 4
+    },
+    "roadmap": {
+      "toy-31": "closed",
+      "toy-32": "closed"
+    },
+    "filed_by_alloy": [
+      "Flaky test tests/test_ids.py::test_ids_are_unique_within_a_workbook",
+      "Pre-existing failing test tests/test_units.py::test_an_inch_is_72_points"
+    ]
+  },
+  "signature": {
+    "D1_budget_exhaustion": 0,
+    "D2_more_verification": 0,
+    "D3_trap_files_touched": [
+      "sheet/ids.py",
+      "sheet/units.py",
+      "tests/test_ids.py",
+      "tests/test_units.py"
+    ],
+    "D3_trap_bugs": [
+      "Flaky test tests/test_ids.py::test_ids_are_unique_within_a_workbook",
+      "Pre-existing failing test tests/test_units.py::test_an_inch_is_72_points"
+    ],
+    "D3_red_checks_only_traps": 7,
+    "D4_probes_red_after_close": [],
+    "D4_D8_closed_but_failing": [],
+    "D5_baseline": 0,
+    "D6_parks": 0,
+    "D7_duplicate_bugs": []
+  },
+  "checks": {
+    "total": 38,
+    "red": 21,
+    "by_kind": {
+      "targeted": 21,
+      "regression": 17
+    },
+    "red_only_traps": 7,
+    "red_with_traps": 11
+  },
+  "probes": [
+    {
+      "bead": "toy-31",
+      "bead_status": "closed",
+      "cmd": "python3 -m pytest -q tests/test_csvio.py",
+      "exit": 0,
+      "tail": "........                                                                 [100%]\n8 passed in 0.06s\n"
+    }
+  ],
+  "metrics": {
+    "recipe": null,
+    "runs": {
+      "total": 4,
+      "top_level": 4,
+      "remediation": 0,
+      "by_status": {
+        "done": 4
+      },
+      "by_outcome": {
+        "done": 4
+      }
+    },
+    "beads": {
+      "total": 4,
+      "done": 4,
+      "with_multiple_runs": 0
+    },
+    "done_runs": {
+      "count": 4,
+      "iterations_mean": 1.75,
+      "agent_calls_mean": 6.0,
+      "wall_minutes_p50": 5.9,
+      "wall_minutes_p90": 7.7
+    },
+    "agents": {
+      "calls": 59,
+      "failed": 0,
+      "hours": 0.32,
+      "tokens": 847354,
+      "cost_usd": 0.19,
+      "by_role": {
+        "implement": {
+          "calls": 7,
+          "failed": 0,
+          "hours": 0.09,
+          "tokens": 250853,
+          "cost_usd": null
+        },
+        "tests": {
+          "calls": 7,
+          "failed": 0,
+          "hours": 0.08,
+          "tokens": 407011,
+          "cost_usd": null
+        },
+        "context": {
+          "calls": 4,
+          "failed": 0,
+          "hours": 0.05,
+          "tokens": 133009,
+          "cost_usd": null
+        },
+        "verifier": {
+          "calls": 19,
+          "failed": 0,
+          "hours": 0.04,
+          "tokens": 21980,
+          "cost_usd": 0.09
+        },
+        "tests_review": {
+          "calls": 4,
+          "failed": 0,
+          "hours": 0.02,
+          "tokens": 11328,
+          "cost_usd": 0.02
+        },
+        "refine": {
+          "calls": 2,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 5719,
+          "cost_usd": 0.01
+        },
+        "estimate": {
+          "calls": 4,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 3286,
+          "cost_usd": 0.02
+        },
+        "acceptance": {
+          "calls": 5,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 9213,
+          "cost_usd": 0.02
+        },
+        "harvest": {
+          "calls": 4,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 3857,
+          "cost_usd": 0.02
+        },
+        "triage": {
+          "calls": 3,
+          "failed": 0,
+          "hours": 0.0,
+          "tokens": 1098,
+          "cost_usd": 0.01
+        }
+      },
+      "by_model": {
+        "cursor/composer-2.5": {
+          "calls": 14,
+          "failed": 0,
+          "hours": 0.17,
+          "tokens": 657864,
+          "cost_usd": null
+        },
+        "claude/haiku": {
+          "calls": 41,
+          "failed": 0,
+          "hours": 0.1,
+          "tokens": 56481,
+          "cost_usd": 0.19
+        },
+        "cursor-plan/composer-2.5": {
+          "calls": 4,
+          "failed": 0,
+          "hours": 0.05,
+          "tokens": 133009,
+          "cost_usd": null
+        }
+      }
+    },
+    "events": {
+      "flaky-check": 2,
+      "done": 4
+    },
+    "needs_human": {
+      "total": 0,
+      "by_cause": {},
+      "by_exhaustion": {}
+    },
+    "parks": 0,
+    "flaky_checks": 2,
+    "bugs": {
+      "filed": 2,
+      "open": 0,
+      "duplicates": []
+    },
+    "since": null
+  },
+  "seed_files_changed": [
+    "sheet/__main__.py",
+    "sheet/ids.py",
+    "sheet/units.py",
+    "tests/test_ids.py",
+    "tests/test_main.py",
+    "tests/test_units.py"
+  ],
+  "transcript_audit": []
+}

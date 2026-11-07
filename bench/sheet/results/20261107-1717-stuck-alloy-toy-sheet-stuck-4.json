@@ -1,0 +1,819 @@
+{
+  "meta": {
+    "scenario": "stuck",
+    "version": 1,
+    "alloy_sha": "d3093ff1598003d264885e1e36747aa9e656f2ba",
+    "seed_sha": "c5efe23c30fe7ff30cad839f6186534721c55066",
+    "toy": "/home/vader/MY_SRC/alloy-toy-sheet-stuck-4",
+    "reported_at": "2026-11-07T16:17:56.314115+00:00",
+    "deadline_hit": false,
+    "cli": {
+      "cursor-agent": "2026.11.05-86047df",
+      "claude": "2.1.319 (Claude Code)",
+      "bd": "bd version 1.3.0 (f45b249ce)"
+    }
+  },
+  "oracle": {
+    "score": 0.542,
+    "passed": 81,
+    "total": 152,
+    "areas": {
+      "cells": {
+        "passed": 10,
+        "total": 10,
+        "fraction": 1.0
+      },
+      "format": {
+        "passed": 5,
+        "total": 5,
+        "fraction": 1.0
+      },
+      "arith": {
+        "passed": 14,
+        "total": 14,
+        "fraction": 1.0
+      },
+      "refs": {
+        "passed": 12,
+        "total": 12,
+        "fraction": 1.0
+      },
+      "ranges": {
+        "passed": 0,
+        "total": 14,
+        "fraction": 0.0
+      },
+      "errors": {
+        "passed": 11,
+        "total": 14,
+        "fraction": 0.786
+      },
+      "logic": {
+        "passed": 0,
+        "total": 14,
+        "fraction": 0.0
+      },
+      "copy": {
+        "passed": 0,
+        "total": 10,
+        "fraction": 0.0
+      },
+      "rows": {
+        "passed": 8,
+        "total": 10,
+        "fraction": 0.8
+      },
+      "undo": {
+        "passed": 1,
+        "total": 8,
+        "fraction": 0.125
+      },
+      "files": {
+        "passed": 1,
+        "total": 8,
+        "fraction": 0.125
+      },
+      "csv": {
+        "passed": 2,
+        "total": 6,
+        "fraction": 0.333
+      },
+      "sheets": {
+        "passed": 6,
+        "total": 8,
+        "fraction": 0.75
+      },
+      "names": {
+        "passed": 0,
+        "total": 7,
+        "fraction": 0.0
+      },
+      "perf": {
+        "passed": 3,
+        "total": 4,
+        "fraction": 0.75
+      },
+      "robust": {
+        "passed": 8,
+        "total": 8,
+        "fraction": 1.0
+      }
+    }
+  },
+  "oracle_failures": [
+    {
+      "area": "ranges",
+      "name": "SUM",
+      "ok": false,
+      "seconds": 0.11,
+      "detail": "exit 1: ader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A3)"
+    },
+    {
+      "area": "ranges",
+      "name": "AVERAGE",
+      "ok": false,
+      "seconds": 0.14,
+      "detail": "exit 1: ader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A3)"
+    },
+    {
+      "area": "ranges",
+      "name": "MIN",
+      "ok": false,
+      "seconds": 0.11,
+      "detail": "exit 1: ader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A3)"
+    },
+    {
+      "area": "ranges",
+      "name": "MAX",
+      "ok": false,
+      "seconds": 0.11,
+      "detail": "exit 1: ader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A3)"
+    },
+    {
+      "area": "ranges",
+      "name": "COUNT ignores text",
+      "ok": false,
+      "seconds": 0.14,
+      "detail": "exit 1: ader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A4)"
+    },
+    {
+      "area": "ranges",
+      "name": "SUM ignores text",
+      "ok": false,
+      "seconds": 0.15,
+      "detail": "exit 1: ader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A4)"
+    },
+    {
+      "area": "ranges",
+      "name": "2D range",
+      "ok": false,
+      "seconds": 0.11,
+      "detail": "exit 1: ader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :B2)"
+    },
+    {
+      "area": "ranges",
+      "name": "range plus number",
+      "ok": false,
+      "seconds": 0.15,
+      "detail": "exit 1: er/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A2,5)"
+    },
+    {
+      "area": "ranges",
+      "name": "empty range is zero",
+      "ok": false,
+      "seconds": 0.12,
+      "detail": "exit 1: ader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A3)"
+    },
+    {
+      "area": "ranges",
+      "name": "lowercase function",
+      "ok": false,
+      "seconds": 0.12,
+      "detail": "exit 1: ader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :a3)"
+    },
+    {
+      "area": "ranges",
+      "name": "function in expression",
+      "ok": false,
+      "seconds": 0.15,
+      "detail": "exit 1: /MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A3)*2+1"
+    },
+    {
+      "area": "ranges",
+      "name": "reversed range",
+      "ok": false,
+      "seconds": 0.15,
+      "detail": "exit 1: ader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A1)"
+    },
+    {
+      "area": "ranges",
+      "name": "range recalc",
+      "ok": false,
+      "seconds": 0.15,
+      "detail": "exit 1: ader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A3)"
+    },
+    {
+      "area": "ranges",
+      "name": "nested functions",
+      "ok": false,
+      "seconds": 0.13,
+      "detail": "exit 1: /alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A3)-MIN(A1:A3)"
+    },
+    {
+      "area": "errors",
+      "name": "unknown function",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "errors",
+      "name": "cycle through range",
+      "ok": false,
+      "seconds": 0.12,
+      "detail": "exit 1: ader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A3)"
+    },
+    {
+      "area": "errors",
+      "name": "error in range",
+      "ok": false,
+      "seconds": 0.15,
+      "detail": "exit 1: ader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A2)"
+    },
+    {
+      "area": "logic",
+      "name": "IF true",
+      "ok": false,
+      "seconds": 0.16,
+      "detail": "exit 1: C/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: >0,\"yes\",\"no\")"
+    },
+    {
+      "area": "logic",
+      "name": "IF on cell",
+      "ok": false,
+      "seconds": 0.15,
+      "detail": "exit 1: oy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: >=10,\"big\",\"small\")"
+    },
+    {
+      "area": "logic",
+      "name": "IF false",
+      "ok": false,
+      "seconds": 0.14,
+      "detail": "exit 1: oy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: >=10,\"big\",\"small\")"
+    },
+    {
+      "area": "logic",
+      "name": "equals",
+      "ok": false,
+      "seconds": 0.15,
+      "detail": "exit 1: /vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: =1"
+    },
+    {
+      "area": "logic",
+      "name": "not equals",
+      "ok": false,
+      "seconds": 0.15,
+      "detail": "exit 1: vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: <>2"
+    },
+    {
+      "area": "logic",
+      "name": "AND",
+      "ok": false,
+      "seconds": 0.15,
+      "detail": "exit 1: r/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: >0,2>3)"
+    },
+    {
+      "area": "logic",
+      "name": "OR",
+      "ok": false,
+      "seconds": 0.13,
+      "detail": "exit 1: r/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: >0,2>3)"
+    },
+    {
+      "area": "logic",
+      "name": "NOT",
+      "ok": false,
+      "seconds": 0.11,
+      "detail": "exit 1: vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: >0)"
+    },
+    {
+      "area": "logic",
+      "name": "join text",
+      "ok": false,
+      "seconds": 0.1,
+      "detail": "exit 1: r/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: \"a\"&\"b\""
+    },
+    {
+      "area": "logic",
+      "name": "join cells",
+      "ok": false,
+      "seconds": 0.11,
+      "detail": "exit 1: r/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: &\" \"&B1"
+    },
+    {
+      "area": "logic",
+      "name": "LEN",
+      "ok": false,
+      "seconds": 0.11,
+      "detail": "exit 1: /MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: \"hello\")"
+    },
+    {
+      "area": "logic",
+      "name": "UPPER",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "logic",
+      "name": "LOWER",
+      "ok": false,
+      "seconds": 0.14,
+      "detail": "exit 1: er/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: \"AbC\")"
+    },
+    {
+      "area": "logic",
+      "name": "IF numeric result",
+      "ok": false,
+      "seconds": 0.14,
+      "detail": "exit 1: Y_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: >2,A1*2,0)"
+    },
+    {
+      "area": "copy",
+      "name": "relative down",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR cannot do: COPY B1 B2', '']"
+    },
+    {
+      "area": "copy",
+      "name": "relative right",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY A2 B2', '']"
+    },
+    {
+      "area": "copy",
+      "name": "absolute",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY B1 B3', '']"
+    },
+    {
+      "area": "copy",
+      "name": "row anchored",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY B1 B3', '']"
+    },
+    {
+      "area": "copy",
+      "name": "column anchored",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY A2 B2', '']"
+    },
+    {
+      "area": "copy",
+      "name": "plain value",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR cannot do: COPY A1 C5', '']"
+    },
+    {
+      "area": "copy",
+      "name": "range shifts",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY B1 B3', '']"
+    },
+    {
+      "area": "copy",
+      "name": "copy is independent",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY B1 B2', '']"
+    },
+    {
+      "area": "copy",
+      "name": "overwrites target",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY B1 C1', '99']"
+    },
+    {
+      "area": "copy",
+      "name": "off the sheet",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: COPY B2 B1', '']"
+    },
+    {
+      "area": "rows",
+      "name": "insert inside range grows it",
+      "ok": false,
+      "seconds": 0.09,
+      "detail": "exit 1: der/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 135, in rewrite_row_refs\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A3)"
+    },
+    {
+      "area": "rows",
+      "name": "delete inside range shrinks it",
+      "ok": false,
+      "seconds": 0.1,
+      "detail": "exit 1: der/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 135, in rewrite_row_refs\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A3)"
+    },
+    {
+      "area": "undo",
+      "name": "undo set",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: UNDO', '2']"
+    },
+    {
+      "area": "undo",
+      "name": "undo to empty",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: UNDO', '1']"
+    },
+    {
+      "area": "undo",
+      "name": "undo twice",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: UNDO', 'ERROR cannot do: UNDO', '3']"
+    },
+    {
+      "area": "undo",
+      "name": "undo recalculates",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR cannot do: UNDO', '10']"
+    },
+    {
+      "area": "undo",
+      "name": "undo copy",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR cannot do: COPY B1 B2', 'ERROR cannot do: UNDO', '']"
+    },
+    {
+      "area": "undo",
+      "name": "undo insert row",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: UNDO', '']"
+    },
+    {
+      "area": "undo",
+      "name": "undo delete row",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: UNDO', '']"
+    },
+    {
+      "area": "files",
+      "name": "values survive",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-ysg6mjqa/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-ysg6mjqa/w', '', '']"
+    },
+    {
+      "area": "files",
+      "name": "formulas survive",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-xi73a6z2/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-xi73a6z2/w', '']"
+    },
+    {
+      "area": "files",
+      "name": "load replaces",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-rfge6ahj/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-rfge6ahj/w', '9']"
+    },
+    {
+      "area": "files",
+      "name": "save twice",
+      "ok": false,
+      "seconds": 0.06,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-id5drbqd/w', 'ERROR cannot do: SAVE /tmp/sheet-oracle-id5drbqd/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-id5drbqd/w', '']"
+    },
+    {
+      "area": "files",
+      "name": "errors survive",
+      "ok": false,
+      "seconds": 0.06,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-2svhmw0u/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-2svhmw0u/w', '']"
+    },
+    {
+      "area": "files",
+      "name": "ranges survive",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-6vvqnh5h/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-6vvqnh5h/w', '']"
+    },
+    {
+      "area": "files",
+      "name": "text with comma",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-8w0np94t/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-8w0np94t/w', '']"
+    },
+    {
+      "area": "csv",
+      "name": "import values",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: IMPORT /tmp/sheet-oracle-xcwpihwg/in.csv', '', '']"
+    },
+    {
+      "area": "csv",
+      "name": "imported numbers are numbers",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: IMPORT /tmp/sheet-oracle-phrnfnv0/in.csv', '0']"
+    },
+    {
+      "area": "csv",
+      "name": "quoted comma",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: IMPORT /tmp/sheet-oracle-mq33lhsv/in.csv', '']"
+    },
+    {
+      "area": "csv",
+      "name": "round trip",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: IMPORT /tmp/sheet-oracle-jv47eg5c/o.csv', '4']"
+    },
+    {
+      "area": "sheets",
+      "name": "cross-sheet range",
+      "ok": false,
+      "seconds": 0.09,
+      "detail": "exit 1: ader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A2)"
+    },
+    {
+      "area": "sheets",
+      "name": "sheets survive save",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR cannot do: SAVE /tmp/sheet-oracle-pjsp5700/w', 'ERROR cannot do: LOAD /tmp/sheet-oracle-pjsp5700/w', '', '']"
+    },
+    {
+      "area": "names",
+      "name": "sum over name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: NAME data A1:A3', '#ERROR!']"
+    },
+    {
+      "area": "names",
+      "name": "name in average",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR cannot do: NAME data A1:A3', '#ERROR!']"
+    },
+    {
+      "area": "names",
+      "name": "name recalc",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR cannot do: NAME data A1:A3', '#ERROR!']"
+    },
+    {
+      "area": "names",
+      "name": "unknown name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['#ERROR!']"
+    },
+    {
+      "area": "names",
+      "name": "case-insensitive name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: NAME Data A1:A3', '#ERROR!']"
+    },
+    {
+      "area": "names",
+      "name": "single-cell name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: NAME rate A1', '#NAME?']"
+    },
+    {
+      "area": "names",
+      "name": "redefine name",
+      "ok": false,
+      "seconds": 0.02,
+      "detail": "got ['ERROR cannot do: NAME data A1:A2', 'ERROR cannot do: NAME data A1:A3', '#ERROR!']"
+    },
+    {
+      "area": "perf",
+      "name": "sum of 10k",
+      "ok": false,
+      "seconds": 0.09,
+      "detail": "exit 1: /MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 164, in refs_in_formula\n    for kind, text in tokenize(src):\n                      ~~~~~~~~^^^^^\n  File \"/home/vader/MY_SRC/alloy-toy-sheet-stuck-4/sheet/formulas.py\", line 23, in tokenize\n    raise SyntaxError(src[pos:])\nSyntaxError: :A10000)"
+    }
+  ],
+  "beads": {
+    "by_status": {
+      "closed": 5
+    },
+    "roadmap": {
+      "toy-41": "closed",
+      "toy-42": "closed",
+      "toy-43": "closed"
+    },
+    "filed_by_alloy": [
+      "Pre-existing failing test tests/test_units.py::test_an_inch_is_72_points",
+      "Flaky test tests/test_ids.py::test_ids_are_unique_within_a_workbook"
+    ]
+  },
+  "signature": {
+    "D1_budget_exhaustion": 0,
+    "D2_more_verification": 0,
+    "D3_trap_files_touched": [
+      "sheet/ids.py",
+      "sheet/units.py",
+      "tests/test_ids.py",
+      "tests/test_units.py"
+    ],
+    "D3_trap_bugs": [
+      "Pre-existing failing test tests/test_units.py::test_an_inch_is_72_points",
+      "Flaky test tests/test_ids.py::test_ids_are_unique_within_a_workbook"
+    ],
+    "D3_red_checks_only_traps": 15,
+    "D4_probes_red_after_close": [],
+    "D4_D8_closed_but_failing": [
+      {
+        "bead": "toy-41",
+        "area": "perf",
+        "fraction": 0.75
+      },
+      {
+        "bead": "toy-42",
+        "area": "rows",
+        "fraction": 0.8
+      },
+      {
+        "bead": "toy-43",
+        "area": "sheets",
+        "fraction": 0.75
+      }
+    ],
+    "D5_baseline": 0,
+    "D6_parks": 0,
+    "D7_duplicate_bugs": []
+  },
+  "checks": {
+    "total": 52,
+    "red": 26,
+    "by_kind": {
+      "targeted": 28,
+      "regression": 17,
+      "lint": 7
+    },
+    "red_only_traps": 15,
+    "red_with_traps": 15
+  },
+  "probes": [],
+  "metrics": {
+    "recipe": null,
+    "runs": {
+      "total": 5,
+      "top_level": 5,
+      "remediation": 0,
+      "by_status": {
+        "done": 5
+      },
+      "by_outcome": {
+        "done": 5
+      }
+    },
+    "beads": {
+      "total": 5,
+      "done": 5,
+      "with_multiple_runs": 0
+    },
+    "done_runs": {
+      "count": 5,
+      "iterations_mean": 1.6,
+      "agent_calls_mean": 6.2,
+      "wall_minutes_p50": 6.9,
+      "wall_minutes_p90": 10.7
+    },
+    "agents": {
+      "calls": 84,
+      "failed": 0,
+      "hours": 0.55,
+      "tokens": 924725,
+      "cost_usd": 0.32,
+      "by_role": {
+        "implement": {
+          "calls": 8,
+          "failed": 0,
+          "hours": 0.14,
+          "tokens": 295366,
+          "cost_usd": null
+        },
+        "tests": {
+          "calls": 10,
+          "failed": 0,
+          "hours": 0.11,
+          "tokens": 304128,
+          "cost_usd": null
+        },
+        "context": {
+          "calls": 5,
+          "failed": 0,
+          "hours": 0.1,
+          "tokens": 202946,
+          "cost_usd": null
+        },
+        "verifier": {
+          "calls": 30,
+          "failed": 0,
+          "hours": 0.08,
+          "tokens": 48407,
+          "cost_usd": 0.16
+        },
+        "acceptance": {
+          "calls": 11,
+          "failed": 0,
+          "hours": 0.04,
+          "tokens": 28619,
+          "cost_usd": 0.06
+        },
+        "tests_review": {
+          "calls": 5,
+          "failed": 0,
+          "hours": 0.03,
+          "tokens": 19846,
+          "cost_usd": 0.03
+        },
+        "refine": {
+          "calls": 3,
+          "failed": 0,
+          "hours": 0.02,
+          "tokens": 11587,
+          "cost_usd": 0.02
+        },
+        "estimate": {
+          "calls": 5,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 3372,
+          "cost_usd": 0.02
+        },
+        "judge": {
+          "calls": 2,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 5658,
+          "cost_usd": 0.01
+        },
+        "harvest": {
+          "calls": 5,
+          "failed": 0,
+          "hours": 0.01,
+          "tokens": 4796,
+          "cost_usd": 0.03
+        }
+      },
+      "by_model": {
+        "cursor/composer-2.5": {
+          "calls": 18,
+          "failed": 0,
+          "hours": 0.25,
+          "tokens": 599494,
+          "cost_usd": null
+        },
+        "claude/haiku": {
+          "calls": 61,
+          "failed": 0,
+          "hours": 0.19,
+          "tokens": 122285,
+          "cost_usd": 0.32
+        },
+        "cursor-plan/composer-2.5": {
+          "calls": 5,
+          "failed": 0,
+          "hours": 0.1,
+          "tokens": 202946,
+          "cost_usd": null
+        }
+      }
+    },
+    "events": {
+      "flaky-check": 2,
+      "done": 5
+    },
+    "needs_human": {
+      "total": 0,
+      "by_cause": {},
+      "by_exhaustion": {}
+    },
+    "parks": 0,
+    "flaky_checks": 2,
+    "bugs": {
+      "filed": 2,
+      "open": 0,
+      "duplicates": []
+    },
+    "since": null
+  },
+  "seed_files_changed": [
+    "scripts/affected.py",
+    "sheet/__main__.py",
+    "sheet/ids.py",
+    "sheet/units.py",
+    "tests/test_ids.py",
+    "tests/test_main.py",
+    "tests/test_units.py"
+  ],
+  "transcript_audit": []
+}
