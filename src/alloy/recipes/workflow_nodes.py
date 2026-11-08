@@ -294,6 +294,34 @@ def refined_acceptance(original: str, answer: RefinedSpec) -> str:
     return "\n".join([original.rstrip(), "", *lines]).strip()
 
 
+OTHER_TASKS_SHOWN = 30
+
+
+def _other_open_tasks(ctx) -> list[str]:
+    """ "id: title" of the open tasks besides this bead (no epics, no Alloy
+    bugs), same epic first, so refine leaves their behaviour to them (bench
+    full-4/toy-7: copy gained cross-sheet criteria before sheets existed)."""
+    if ctx.beads is None:
+        return []
+    try:
+        rows = ctx.beads.all_rows()
+        root = ctx.beads.epic_root(ctx.bead.id)
+    except Exception:
+        log.warning("%s: could not list the other open tasks for refine", ctx.bead.id, exc_info=True)
+        return []
+    others = [
+        row
+        for row in rows
+        if row.get("id") != ctx.bead.id
+        and row.get("status") not in ("closed", "tombstone")
+        and row.get("issue_type") != "epic"
+        and LABEL_BUG not in (row.get("labels") or [])
+    ]
+    same_epic = {bead.id for bead in ctx.beads.open_descendants(root)} if root else set()
+    others.sort(key=lambda row: (row.get("id") not in same_epic, row.get("priority", 2)))
+    return [f"{row.get('id')}: {row.get('title', '')}" for row in others[:OTHER_TASKS_SHOWN]]
+
+
 def _make_node_refine(ctx):
     async def refine(state: TddState) -> dict[str, Any]:
         """Bench calibration (D8): a bead whose description names five
@@ -317,6 +345,7 @@ def _make_node_refine(ctx):
                 ctx.bead.acceptance_criteria,
                 state.get("context", {}),
                 memory=state.get("memory_block", ""),
+                other_tasks=_other_open_tasks(ctx),
             ),
             model_cls=RefinedSpec,
             default=default,

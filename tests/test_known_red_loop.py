@@ -170,6 +170,9 @@ async def test_tdd_loop_lets_done_stand_over_a_pre_existing_failure(project, all
     # The verifier is told not to chase it (bench stuck-1: 7 of 20 checks did).
     after = fake_harnesses.calls_for("verifier")[1]["prompt"]
     assert NOT_OURS in after and "Spend no checks investigating them" in after
+    # So are the evaluators (bench full-4/toy-8: the judge asked a human to "waive the gate").
+    evaluators = [call["prompt"] for role in ("judge", "acceptance") for call in fake_harnesses.calls_for(role)]
+    assert evaluators and all(NOT_OURS in p and "ask a human to waive" in p for p in evaluators)
 
 
 # -- notes and bugs ----------------------------------------------------------------
@@ -196,6 +199,38 @@ class _Beads:
         return f"bug-{len(self.created)}"
 
 
+def _bug_ctx(beads):
+    return SimpleNamespace(
+        beads=beads,
+        run_id="r1",
+        bead=SimpleNamespace(id="b-1"),
+        worktree=SimpleNamespace(base_commit="abc1234567"),
+        recipe=SimpleNamespace(verification=SimpleNamespace(rerun_tests="pytest -q {files}")),
+    )
+
+
+def test_one_bug_per_file_for_tests_one_cause_broke():
+    """Bench full-8: a landed bead broke 9 CSV tests; the next bead filed 9 bugs."""
+    beads = _Beads([{"title": "x", "description": "- `t_csv.py::old`", "status": "open"}])
+    found = {f"t_csv.py::t{n}": PRE_EXISTING for n in range(5)} | {"t_csv.py::old": PRE_EXISTING}
+    found["t_units.py::inch"] = PRE_EXISTING
+
+    filed = file_outside_bugs(_bug_ctx(beads), found, CheckResult(command="pytest", exit_code=1))
+
+    assert filed == ["bug-1", "bug-2"]
+    csv, units = beads.created
+    assert csv["title"] == "Pre-existing failing tests in t_csv.py (5)"
+    assert all(f"`t_csv.py::t{n}`" in csv["acceptance"] for n in range(5)) and "::old" not in csv["description"]
+    assert "git bisect run pytest -q t_csv.py" in csv["description"]
+    assert units["title"] == "Pre-existing failing test t_units.py::inch"
+
+    # A later run seeing the same tests files nothing: the grouped bug names each of them.
+    beads.existing = [{"title": csv["title"], "description": csv["description"], "status": "open"}]
+    assert (
+        file_outside_bugs(_bug_ctx(beads), {"t_csv.py::t3": PRE_EXISTING}, CheckResult(command="p", exit_code=1)) == []
+    )
+
+
 def test_one_bug_per_excused_test_deduplicated_against_open_bugs():
     beads = _Beads(
         [
@@ -203,9 +238,7 @@ def test_one_bug_per_excused_test_deduplicated_against_open_bugs():
             {"title": "Flaky test t.py::b", "status": "closed"},
         ]
     )
-    ctx = SimpleNamespace(
-        beads=beads, run_id="r1", bead=SimpleNamespace(id="b-1"), worktree=SimpleNamespace(base_commit="abc1234567")
-    )
+    ctx = _bug_ctx(beads)
     result = CheckResult(command="pytest", exit_code=1)
 
     filed = file_outside_bugs(ctx, {"t.py::a": PRE_EXISTING, "t.py::b": FLAKY, "t.py::c": PRE_EXISTING}, result)
@@ -214,3 +247,38 @@ def test_one_bug_per_excused_test_deduplicated_against_open_bugs():
     titles = [bug["title"] for bug in beads.created]
     assert titles == ["Flaky test t.py::b", "Pre-existing failing test t.py::c"]
     assert all(bug["priority"] == 3 and bug["discovered_from"] == "b-1" for bug in beads.created)
+
+
+# -- a filed bug that is already fixed (bench full-8/toy-9j2) ----------------------
+
+
+def _bug_harness(project, alloy_home, keys: str):
+    config = load_config()
+    config = replace(config, verification=replace(config.verification, rerun_tests=RERUN))
+    return make_harness(project, alloy_home, config=config, bead=make_bead(metadata={"alloy_known_red": keys}))
+
+
+async def test_a_filed_bug_whose_tests_pass_closes_without_work(project, alloy_home, fake_harnesses):
+    _commit_base(project, "")  # the filed test passes by now
+    fake_harnesses.configure(verification_script())
+    harness = _bug_harness(project, alloy_home, "tests/test_old.py::test_old")
+    try:
+        final = await harness.start()
+    finally:
+        harness.close()
+
+    assert final["outcome"] == "done"
+    assert final["outcome_reason"].startswith("already fixed: tests/test_old.py::test_old")
+    assert fake_harnesses.calls == [], "no agent is called"
+
+
+async def test_a_filed_bug_whose_tests_still_fail_runs_as_usual(project, alloy_home, fake_harnesses):
+    _commit_base(project, OLD + "\n")
+    fake_harnesses.configure(verification_script())
+    harness = _bug_harness(project, alloy_home, "tests/test_old.py::test_old")
+    try:
+        await harness.start()
+    finally:
+        harness.close()
+
+    assert fake_harnesses.calls, "the run goes on to the agents"

@@ -252,6 +252,22 @@ def existing_lessons(memory: ProjectMemory | None) -> dict[str, str]:
 # --------------------------------------------------------------------------
 
 
+def _make_node_already_fixed(ctx: RunContext):
+    async def already_fixed_step(state: TddState) -> dict[str, Any]:
+        """A bug Alloy filed for failing tests that pass by now closes as done
+        with nothing to commit (`known_red.already_fixed`)."""
+        from alloy.models import Outcome
+        from alloy.recipes.known_red import already_fixed
+
+        reason = await already_fixed(ctx)
+        if reason is None:
+            return {}
+        log.warning("%s: %s; closing without a change", ctx.bead.id, reason)
+        return {"stage": "finish", "outcome": Outcome.DONE.value, "outcome_reason": reason}
+
+    return already_fixed_step
+
+
 def build_graph(ctx: RunContext, *, skip_context: bool = False):
     """Compile the tdd-loop graph bound to one task's runtime.
 
@@ -321,10 +337,11 @@ def build_graph(ctx: RunContext, *, skip_context: bool = False):
         graph.add_conditional_edges("landing_gate", route_after_landing_gate, ["finish", "implement", "human_gate"])
 
     graph.add_node("refine", refine)
-    if skip_context:
-        graph.add_edge(START, "refine")
-    else:
-        graph.add_edge(START, "context")
+    graph.add_node("already_fixed", _make_node_already_fixed(ctx))
+    graph.add_edge(START, "already_fixed")
+    first = "refine" if skip_context else "context"
+    graph.add_conditional_edges("already_fixed", lambda state: END if state.get("outcome") else first, [END, first])
+    if not skip_context:
         graph.add_edge("context", "refine")
     graph.add_edge("refine", "estimate")
     graph.add_edge("estimate", "tests")

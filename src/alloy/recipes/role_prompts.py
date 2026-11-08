@@ -156,6 +156,13 @@ description asks for that no criterion names will be left out. Make the criteria
 - Where the task is vague ("a few text functions", "like a spreadsheet does"), choose the
   conventional behaviour a user of such a tool expects, write it as a criterion, and record the
   choice in `assumptions`. Record assumptions instead of asking.
+- Fit the code as it is. Read the project's interface and its tests first and use their
+  conventions: indexing, command names, output and error format. Walk every example through
+  step by step, with what each earlier command in it leaves behind (an undo undoes the last
+  change, whatever it was), and write the result that walk gives. Leave out a criterion you
+  cannot make consistent with the code and the other criteria.
+- Stay inside this task. A behaviour one of the other open tasks covers is theirs: add no
+  criterion for it, and none that needs one of them done first.
 - Keep every existing criterion. Add nothing the task does not ask for, and give no
   implementation advice. At most 12 criteria.
 
@@ -164,8 +171,14 @@ Answer `decision` "refined" with `criteria` (the added ones only) and `assumptio
 when the task has no discernible goal or contradicts itself -- say why in `reason`."""
 
 
-def refine_prompt(brief: str, acceptance: str, context: dict[str, Any], *, memory: str = "") -> str:
-    return assemble(REFINE_STATIC, _project_layer(memory), _run_layer(context), _task_layer(brief, acceptance), "").text
+def refine_prompt(
+    brief: str, acceptance: str, context: dict[str, Any], *, memory: str = "", other_tasks: list[str] | None = None
+) -> str:
+    """`other_tasks` are the open beads besides this one, "id: title" each."""
+    others = "## Other open tasks (not this task's)\n" + "\n".join(f"- {t}" for t in other_tasks) if other_tasks else ""
+    return assemble(
+        REFINE_STATIC, _project_layer(memory), _run_layer(context), _task_layer(brief, acceptance), others
+    ).text
 
 
 ROOT_CAUSE_RULE = """Fix the cause, not the symptom: a guard, catch, retry or longer timeout that only hides the
@@ -663,14 +676,16 @@ def judge_prompt(
     verifier_stop: dict[str, Any] | None = None,
     changed_tests: list[str] | None = None,
     memory: str = "",
+    not_ours: str = "",
 ) -> str:
+    """`not_ours` is `known_red.excused_note` with `EVALUATOR_ADVICE`."""
     volatile = f"""{_diff_section(diff)}
 
 ## Tests changed by the implementer
 {chr(10).join(changed_tests or []) or "(none)"}
 
 ## Test results
-{_render_results(checks, verifier_stop)}
+{_render_results(checks, verifier_stop)}{_section_after(not_ours)}
 
 ## Attempt history
 {_render_history(history) or "(first attempt)"}
@@ -718,7 +733,9 @@ def acceptance_prompt(
     checks_this_iteration: list[dict[str, Any]],
     verifier_stop: dict[str, Any] | None,
     declined: int = 0,
+    not_ours: str = "",
 ) -> str:
+    """`not_ours` is `known_red.excused_note` with `EVALUATOR_ADVICE`."""
     task = f"## Acceptance criteria\n{acceptance or '(none stated)'}"
     prior = ""
     if declined:
@@ -733,7 +750,7 @@ def acceptance_prompt(
 {chr(10).join(changed_tests) or "(none)"}
 
 ## Check evidence (this iteration)
-{_render_results(checks_this_iteration, verifier_stop)}{prior}"""
+{_render_results(checks_this_iteration, verifier_stop)}{_section_after(not_ours)}{prior}"""
     return assemble(ACCEPTANCE_STATIC, "", "", task, volatile).text
 
 
@@ -1080,6 +1097,11 @@ def _render_checks(checks: list[dict[str, Any]]) -> str:
         check = CheckRequest.model_validate(raw)
         lines.append(f"- `{check.command}`" + (f" -- {check.purpose}" if check.purpose else ""))
     return "\n".join(lines)
+
+
+def _section_after(section: str) -> str:
+    """`section` as a following prompt section, or "" when it is empty."""
+    return f"\n\n{section}" if section else ""
 
 
 def _render_check_lines(results: list[CheckResult]) -> list[str]:

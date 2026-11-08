@@ -51,6 +51,10 @@ from alloy.worktree import Worktree, WorktreeError, WorktreeManager
 RECURSION_LIMIT = 200
 
 _UNTRACKED_SHOWN = 10
+
+ESCALATED_REASON_PREFIX = "escalated from "
+"""Outcome reason of a run that escalated (fast-track `escalate:`). Its edits
+stay in the checkout for the target recipe's run of the same bead."""
 """How many untracked files the in-place start refusal names."""
 
 log = logging.getLogger("alloy.engine")
@@ -1130,7 +1134,7 @@ class Engine:
                 raise self._lost_settle(bead.id, run_id, Outcome.FAILED.value)
             deliver_pending(self.store, self.beads, bead_id=bead.id)
             return RunResult(bead.id, run_id, Outcome.FAILED.value, reason=reason, worktree=str(ctx.worktree.path))
-        reason = f"escalated from {recipe_name} to {target}: {why}"
+        reason = f"{ESCALATED_REASON_PREFIX}{recipe_name} to {target}: {why}"
         if not self.store.finish_run(
             run_id,
             expect=self._owned(),

@@ -247,6 +247,14 @@ VERIFIER_ADVICE = (
 )
 
 
+EVALUATOR_ADVICE = (
+    "Alloy has already rerun each of these, filed each as a separate bug, and does not count them "
+    "against this task: a check whose only failures are these is green for this task. They are not a "
+    "reason to withhold done, to ask for a repair, or to ask a human to waive anything; that decision "
+    "is already made."
+)
+
+
 def excused_note(known: dict[str, str], base_commit: str, *, advice: str = "") -> str:
     """The prompt section naming the failures that are not this bead's; ""
     when there are none. `advice` replaces the implementer's closing
@@ -270,50 +278,106 @@ def excused_note(known: dict[str, str], base_commit: str, *, advice: str = "") -
 
 
 def file_outside_bugs(ctx, found: dict[str, str], result: CheckResult) -> list[str]:
-    """One alloy-bug bead per newly excused test, unless an open alloy-bug
-    already names that test. Returns the ids filed."""
+    """One alloy-bug bead per test file and kind for the newly excused tests,
+    leaving out tests an open alloy-bug already names. Returns the ids filed.
+
+    Grouped by file because one cause usually breaks several tests of a file
+    at once (bench full-8: a landed bead broke 9 CSV tests, filed as 9 bugs
+    whose fixes then overlapped)."""
     if ctx.beads is None or not found:
         return []
-    from alloy.beads import LABEL_BUG, META_DISCOVERED_IN_RUN
+    from alloy.beads import LABEL_BUG, META_DISCOVERED_IN_RUN, META_KNOWN_RED
 
     try:
-        open_titles = " ".join(
-            str(row.get("title") or "") for row in ctx.beads.filed_bugs() if row.get("status") != "closed"
+        named = " ".join(
+            " ".join(str(row.get(field) or "") for field in ("title", "description", "acceptance_criteria"))
+            for row in ctx.beads.filed_bugs()
+            if row.get("status") != "closed"
         )
     except Exception:
         log.warning("could not list filed bugs; skipping dedupe", exc_info=True)
-        open_titles = ""
-    filed: list[str] = []
+        named = ""
+    groups: dict[tuple[str, str], list[str]] = {}
     for key, kind in sorted(found.items()):
-        if key in open_titles:
-            continue
-        title = f"{'Pre-existing failing' if kind == PRE_EXISTING else 'Flaky'} test {key}"
-        what = (
-            f"fails the same way on the base commit {ctx.worktree.base_commit[:9]}"
-            if kind == PRE_EXISTING
-            else "failed in a check and passed when run again on the same tree"
-        )
+        if key not in named:
+            groups.setdefault((kind, key.split("::", 1)[0]), []).append(key)
+    filed: list[str] = []
+    for (kind, file), keys in sorted(groups.items()):
         try:
+            metadata = {META_DISCOVERED_IN_RUN: ctx.run_id}
+            if kind == PRE_EXISTING:
+                metadata[META_KNOWN_RED] = " ".join(keys)
             bug_id = ctx.beads.create_bug(
-                title=title,
-                description=(
-                    f"`{key}` {what}. Seen by run {ctx.run_id} of {ctx.bead.id} in `{result.command}` "
-                    f"(log {result.log_path or '(none)'}). Not caused by {ctx.bead.id}; filed so it is fixed "
-                    f"once, on its own.\n\n{clip(result.output_tail, 1500)}"
-                ),
-                acceptance=f"`{key}` passes reliably; no assertion is weakened or skipped.",
+                **_outside_bug(ctx, kind, file, keys, result),
+                claim=False,
                 discovered_from=ctx.bead.id,
                 priority=3,
                 labels=[LABEL_BUG],
-                metadata={META_DISCOVERED_IN_RUN: ctx.run_id},
-                claim=False,
+                metadata=metadata,
             )
         except Exception:
-            log.warning("could not file a bug for %s", key, exc_info=True)
+            log.warning("could not file a bug for %s", ", ".join(keys), exc_info=True)
             continue
         filed.append(bug_id)
-        open_titles += " " + title
     return filed
+
+
+def _outside_bug(ctx, kind: str, file: str, keys: list[str], result: CheckResult) -> dict[str, str]:
+    """Title, description and acceptance of the bug for `keys` (one file, one kind)."""
+    base = ctx.worktree.base_commit[:9]
+    label = "Pre-existing failing" if kind == PRE_EXISTING else "Flaky"
+    title = f"{label} test {keys[0]}" if len(keys) == 1 else f"{label} tests in {file} ({len(keys)})"
+    what = (
+        f"fail the same way on the base commit {base}"
+        if kind == PRE_EXISTING
+        else "failed in a check and passed when run again on the same tree"
+    )
+    listed = "\n".join(f"- `{key}`" for key in keys)
+    origin = ""
+    if kind == PRE_EXISTING:
+        rerun = _rerun_command(ctx.recipe.verification.rerun_tests or "", [file])
+        origin = (
+            "\n\nIf these tests passed when the work that added them landed, a later commit broke them: "
+            f"`git bisect run {rerun}` between that commit and {base} names it, and the fix belongs there."
+        )
+    description = (
+        f"These tests {what}:\n{listed}\n\nSeen by run {ctx.run_id} of {ctx.bead.id} in `{result.command}` "
+        f"(log {result.log_path or '(none)'}). Not caused by {ctx.bead.id}; filed so they are fixed once, "
+        f"together.{origin}\n\n{clip(result.output_tail, 1500)}"
+    )
+    acceptance = f"Every test listed passes reliably; no assertion is weakened or skipped:\n{listed}"
+    if len(keys) == 1:
+        acceptance = f"`{keys[0]}` passes reliably; no assertion is weakened or skipped."
+    return {"title": title, "description": description, "acceptance": acceptance}
+
+
+async def already_fixed(ctx) -> str | None:
+    """Why this bug needs no work, else None: it is a bug Alloy filed for
+    pre-existing failing tests (`META_KNOWN_RED`) and every one of them
+    passes on the current tree. Bench full-8/toy-9j2: another bug's fix had
+    already greened its test, and five iterations could not produce a diff."""
+    from alloy.beads import META_KNOWN_RED
+
+    keys = str(ctx.bead.metadata.get(META_KNOWN_RED) or "").split()
+    template = ctx.recipe.verification.rerun_tests
+    if not keys or not template:
+        return None
+    files = sorted({key.split("::", 1)[0] for key in keys})
+    result = await verify.run_check(
+        CheckRequest(
+            command=_rerun_command(template, files), purpose="are the filed failures still red", kind="targeted"
+        ),
+        ctx.worktree.path,
+        timeout_s=ctx.recipe.verification.max_command_timeout_minutes * 60,
+        log_dir=ctx.log_dir,
+        index=_log_index(ctx),
+    )
+    if not result.runnable:
+        return None
+    red = {failure_key(t) for t in failing_tests(read_log(result), roots=(ctx.worktree.path,))}
+    if red & set(keys) or (not result.ok and not red):
+        return None
+    return f"already fixed: {', '.join(keys)} pass on {ctx.worktree.base_commit[:9]} (`{result.command}`)"
 
 
 async def review_red_check(

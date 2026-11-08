@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 from support import load_config, make_bead, make_harness
 from workflow_support import script
@@ -116,3 +117,37 @@ async def test_an_unclear_bead_is_labelled_and_the_run_goes_on(project, alloy_ho
     assert final["outcome"] == "done"
     assert any(call[0] == "label" and call[2] == "alloy-needs-spec" for call in beads.calls)
     assert not any(call[0] == "acceptance" for call in beads.calls)
+
+
+class _Project(_Beads):
+    """Open tasks around the refined bead (bench full-4/toy-7, full-9/toy-9)."""
+
+    def all_rows(self):
+        return [
+            {"id": "t-other-epic", "title": "Several sheets", "status": "open", "priority": 1},
+            {"id": "t-sibling", "title": "Undo", "status": "open", "priority": 2},
+            {"id": "t-done", "title": "Cells", "status": "closed"},
+            {"id": "t-epic", "title": "Editing", "status": "open", "issue_type": "epic"},
+            {"id": "t-bug", "title": "Flaky test x", "status": "open", "labels": ["alloy-bug"]},
+        ]
+
+    def epic_root(self, bead_id):
+        return "t-epic"
+
+    def open_descendants(self, epic_id):
+        return [SimpleNamespace(id="t-sibling")]
+
+
+async def test_refine_sees_the_other_open_tasks_and_fits_the_code(project, alloy_home, fake_harnesses):
+    fake_harnesses.configure(script(refine=[{"structured": ANSWER}]))
+    harness = make_harness(project, alloy_home, config=_config(), beads=_Project())
+    try:
+        await harness.start()
+    finally:
+        harness.close()
+
+    prompt = fake_harnesses.calls_for("refine")[0]["prompt"]
+    others = prompt.split("## Other open tasks (not this task's)\n", 1)[1]
+    assert others.splitlines()[:2] == ["- t-sibling: Undo", "- t-other-epic: Several sheets"]
+    assert "Cells" not in others and "Editing" not in others and "Flaky" not in others
+    assert "Fit the code as it is" in prompt and "Stay inside this task" in prompt

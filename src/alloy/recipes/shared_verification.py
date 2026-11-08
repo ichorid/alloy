@@ -23,7 +23,7 @@ from alloy.models import (
     parse_pinned_check_hints,
 )
 from alloy.prompts import assemble
-from alloy.recipes.known_red import VERIFIER_ADVICE, excused_note, review_red_check
+from alloy.recipes.known_red import EVALUATOR_ADVICE, VERIFIER_ADVICE, excused_note, review_red_check
 from alloy.recipes.role_prompts import (
     _project_layer,
     _render_history,
@@ -755,6 +755,7 @@ def _make_acceptance_nodes(ctx, _implementer):
                 checks,
                 stop_raw,
                 declined=int(state.get("verify_more_declined", 0) or 0),
+                not_ours=excused_note(state.get("known_red") or {}, ctx.worktree.base_commit, advice=EVALUATOR_ADVICE),
             ),
             model_cls=AcceptanceVerdict,
             default=AcceptanceVerdict(decision="escalate", reason="acceptance role failed"),
@@ -864,6 +865,7 @@ def _make_judge_node(ctx, _implementer):
             verifier_stop=state.get("verifier_stop"),
             changed_tests=changed_tests,
             memory=state.get("memory_block", ""),
+            not_ours=excused_note(state.get("known_red") or {}, ctx.worktree.base_commit, advice=EVALUATOR_ADVICE),
         )
         for asked in range(2):
             result = await ctx.call(

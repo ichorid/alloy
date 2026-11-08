@@ -207,3 +207,61 @@ async def test_a_target_that_escalates_itself_fails_the_run_instead_of_cycling(
     assert "escalate" in result.reason and TARGET in result.reason
     bead = engine.beads.show(bead_id)
     assert bead.recipe == "fast-track", "nothing was rerouted"
+
+
+# -- the escalated bead owns its leftover edits (i2i.16, 0qk.8) ---------------
+
+
+async def test_the_escalated_bead_dispatches_next_despite_its_own_edits(
+    beads_project, alloy_home, fake_harnesses, monkeypatch
+):
+    from alloy.scheduler import Scheduler
+
+    config = escalating(after_iterations=1)
+    engine = Engine.open(beads_project, alloy_home)
+    monkeypatch.setattr(engine, "load_config", lambda name: config if name == "fast-track" else load_config())
+    fake_harnesses.configure({"implement": [retry_entry(1), retry_entry(2)]})
+    escalated = bd_create(beads_project, "one-line fix", priority=2, alloy_recipe="fast-track")
+    await engine.run(escalated)
+    assert engine.primary_checkout_dirty() is not None, "the escalation keeps its edits in the checkout"
+    urgent = bd_create(beads_project, "urgent", priority=0, alloy_recipe="tdd-loop")
+    scheduler = Scheduler(engine=engine, poll_seconds=0.01, once=True)
+
+    picked = scheduler.next_task()
+
+    assert picked is not None and picked.id == escalated, "the leftover's owner goes first"
+    assert scheduler._dirty_checkout_holds(picked) is False
+    assert scheduler.engine.store.runs_for_bead(urgent) == []
+
+
+async def test_foreign_edits_after_an_escalation_still_hold(beads_project, alloy_home, fake_harnesses, monkeypatch):
+    """Only the escalation's own leftover is exempt: once the bead's next run
+    has committed, a dirty checkout is someone else's again."""
+    from alloy.scheduler import PRIMARY_CHECKOUT_HOLDER, Scheduler
+
+    config = escalating(after_iterations=1)
+    engine = Engine.open(beads_project, alloy_home)
+    monkeypatch.setattr(engine, "load_config", lambda name: config if name == "fast-track" else load_config())
+    fake_harnesses.configure({"implement": [retry_entry(1), retry_entry(2)]})
+    escalated = bd_create(beads_project, "one-line fix", alloy_recipe="fast-track")
+    await engine.run(escalated)
+    # A later run of another bead that really started (base commit recorded) supersedes it.
+    other = bd_create(beads_project, "other", alloy_recipe="tdd-loop")
+    engine.store.create_run(
+        run_id="later-run",
+        bead_id=other,
+        thread_id="later-run",
+        recipe="tdd-loop",
+        repo=engine.repo,
+        worktree=engine.repo,
+        branch=None,
+        log_dir=None,
+        base_commit="abc",
+    )
+    engine.store.update_run("later-run", status="failed")
+    scheduler = Scheduler(engine=engine, poll_seconds=0.01, once=True)
+
+    assert scheduler._escalation_leftover() is None
+    picked = scheduler.next_task()
+    assert picked is not None and scheduler._dirty_checkout_holds(picked) is True
+    assert scheduler._hold[0] == PRIMARY_CHECKOUT_HOLDER

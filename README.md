@@ -176,8 +176,11 @@ the run changed get one isolated rerun; a green rerun marks the test flaky.
 Tests still red are rerun on the base commit; red there too marks them
 pre-existing. A check whose every failure is flaky or pre-existing does not
 send the run back to implement or block `done`. Alloy files one `alloy-bug`
-per such test, deduplicated against open bugs, and later implement prompts
-list those tests as not this task's. A load or compile error, more than 20
+per test file and kind, leaving out tests an open bug already names, and later
+implement, verifier, acceptance and judge prompts list those tests as not this
+task's. A pre-existing bug carries the test ids (metadata `alloy_known_red`)
+and a `git bisect run` hint; a tdd-loop run of it first reruns those tests and
+closes it as already fixed, with no agent call, when they pass. A load or compile error, more than 20
 failing files, or any unparsed failure leaves the check red as before.
 
 **The judge proposes; Alloy disposes.** `guard` is a plain Python function and it
@@ -248,7 +251,9 @@ writes the conventional choice for each vague point as an assumption, and
 appends both to the bead's acceptance in bd under "Refined by Alloy" (metadata
 `alloy_refined` records that it ran; alloy-bug beads are skipped). A bead with
 no discernible goal is labelled `alloy-needs-spec` and the run goes on with
-its own criteria. Without the role nothing changes.
+its own criteria. The role sees the other open tasks' titles (same epic first)
+and is told to leave their behaviour to them and to fit the code's existing
+conventions. Without the role nothing changes.
 
 Cursor roles (`cursor`, `cursor-plan`) take the CLI's model ids, and every
 id must be an explicit **non-fast** variant: `composer-2.5`, `grok-4.7-high`.
@@ -388,7 +393,8 @@ Before each implement call Alloy checks both triggers (either may be left
 out). When one fires, the run ends and the bead is rerouted exactly as
 `alloy reroute <bead> <to>` does: the target recipe is pinned, the run booked
 cancelled, the checkout's edits kept and the bead left ready for the
-scheduler. A note on the bead and an `escalated` event say why. Without
+scheduler, which dispatches it next: those edits are its own, so the
+clean-checkout hold does not apply to it, and other beads wait behind it. A note on the bead and an `escalated` event say why. Without
 `escalate:` nothing changes. `to` must name a known recipe other than the
 recipe itself (checked when the recipe loads), and a target that has its own
 `escalate:` block is refused at reroute time -- the run fails with the reason

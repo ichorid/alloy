@@ -135,8 +135,10 @@ verdict goes straight to the gate.
 the check loop excuse failures that are not the bead's: a failing test
 outside the changed files that is green on one isolated rerun (flaky) or red
 on the base commit too (pre-existing) neither sends the run back to implement
-nor blocks `done`; it gets one `alloy-bug` and an out-of-scope note in later
-implement prompts (README "Verification is deterministic").
+nor blocks `done`; it gets one `alloy-bug` per test file (metadata
+`alloy_known_red`; a run of that bug closes it when the tests already pass)
+and an out-of-scope note in later implement, verifier, acceptance and judge
+prompts (README "Verification is deterministic").
 
 A spent `max_total_checks` hands the iteration's evidence to acceptance
 instead of parking; limit stops read `Alloy stopped the loop (<class>): ...`
@@ -146,13 +148,15 @@ judge proposes; Alloy disposes").
 
 A tdd-loop recipe with a `refine` role appends testable criteria and recorded
 assumptions to a vague bead's acceptance in bd ("## Refined by Alloy",
-metadata `alloy_refined`, label `alloy-needs-spec` when it finds no goal).
+metadata `alloy_refined`, label `alloy-needs-spec` when it finds no goal); it
+sees the other open tasks' titles and leaves their behaviour to them.
 
 A fast-track recipe with `escalate: {after_iterations: N,
 when_packages_touched_over: M, package_roots: [glob...], to: <recipe>}`
 reroutes a bead that ran N implement rounds without done, or touched more
 than M package roots, to `<recipe>` -- like `alloy reroute`, with a bead note
-and an `escalated` event.
+and an `escalated` event. The rerouted bead dispatches next despite its own
+edits in the checkout; other beads wait behind it.
 
 Agents start long commands (suites, builds, anything that may queue) with
 `alloy job start -- <cmd>` and poll with `alloy job wait`, which returns

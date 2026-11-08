@@ -83,6 +83,10 @@ LABEL_NEEDS_SPEC = "alloy-needs-spec"
 """The refine role found no testable goal in the bead (see `workflow_nodes.refine`)."""
 META_REFINED = "alloy_refined"
 """The refine role's decision for this bead; set once, so later runs skip it."""
+META_KNOWN_RED = "alloy_known_red"
+"""On a bug Alloy filed for pre-existing failing tests: the test ids, space
+separated. A run of that bug first reruns them and closes it when they pass
+(see `known_red.already_fixed`)."""
 # A bead Alloy finished through a budget-stop auto-land (see META_BUDGET_LANDED).
 LABEL_BUDGET_LANDED = "budget-landed"
 # Labels that mark a bead as human-operated, like META_MANUAL.

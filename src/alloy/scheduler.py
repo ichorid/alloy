@@ -23,7 +23,7 @@ from typing import Callable
 
 from alloy import beads as bd
 from alloy.config import ConfigError, DispatchSpec, MemorySpec, RecipeConfig, discover_recipes
-from alloy.engine import Engine, EngineError, RunResult
+from alloy.engine import ESCALATED_REASON_PREFIX, Engine, EngineError, RunResult
 from alloy.events import EVENT_STALLED
 from alloy.memory_schedule import (
     MEMORY_REVIEW_RECIPE,
@@ -48,7 +48,7 @@ from alloy.procs import read_pid
 from alloy.sandbox import ENV_MODE as ENV_SANDBOX_MODE
 from alloy.sandbox import host_info as sandbox_host_info
 from alloy.sandbox import write_status as write_sandbox_status
-from alloy.store import RUN_CLAIMING, RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN, _pid_alive
+from alloy.store import RUN_CANCELLED, RUN_CLAIMING, RUN_DONE, RUN_FAILED, RUN_RUNNING, RUN_WAITING_HUMAN, _pid_alive
 
 LABEL_NEEDS_TEST_CMD = "alloy-needs-test-cmd"
 """A ready bead its recipe's `dispatch.require_test_cmd` keeps from running."""
@@ -310,10 +310,30 @@ class Scheduler:
             return False
         return await self._run_picked(bead)
 
+    def _escalation_leftover(self) -> str | None:
+        """The bead whose escalated run (fast-track `escalate:`) left its edits
+        in the dirty checkout, else None. Those edits are that bead's own work,
+        which its run on the target recipe picks up, so it dispatches next and
+        everything else waits behind it (i2i.16, 0qk.8: the clean-checkout hold
+        used to stop all dispatch, the escalated bead's included)."""
+        for run in self.engine.store.all_runs(limit=20, repo=self.engine.repo):
+            if not run.get("base_commit"):
+                continue  # a start refused for a dirty checkout never touched it
+            escalated = run["status"] == RUN_CANCELLED and (run.get("outcome_reason") or "").startswith(
+                ESCALATED_REASON_PREFIX
+            )
+            if escalated and self.engine.primary_checkout_dirty() is not None:
+                return run["bead_id"]
+            return None
+        return None
+
     def _dirty_checkout_holds(self, bead: bd.Bead) -> bool:
         """An in-place start refuses a dirty primary checkout; holding dispatch
         here keeps the scheduler from booking a refused run every poll (and
-        from the retry that used to slip past the refusal)."""
+        from the retry that used to slip past the refusal). An escalated
+        bead's own leftover edits do not hold it (`_escalation_leftover`)."""
+        if bead.id == self._escalation_leftover():
+            return False
         dirty = self.engine.primary_checkout_dirty()
         if dirty is None:
             return False
@@ -489,7 +509,14 @@ class Scheduler:
         ready = self.engine.beads.ready(include_unassigned=self._default_recipe is not None)
         self._report_pinned_recipes(ready)
         held_by: tuple[str, str] | None = None
+        leftover = self._escalation_leftover()
         for bead in ready:
+            if leftover is not None and bead.id != leftover:
+                held_by = held_by or (
+                    leftover,
+                    "escalated to a heavier recipe; its edits are in the checkout until that run takes them",
+                )
+                continue
             if bead.manual:
                 continue  # human-operated: never Alloy's, whatever its recipe says
             if bead.issue_type == "epic":
