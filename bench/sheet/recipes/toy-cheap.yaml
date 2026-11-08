@@ -110,13 +110,15 @@ limits:
   max_wall_time_minutes: 90
   max_agent_calls: 20
 
-# The toy's own change-based selection, deliberately imperfect like real ones:
-# scripts/affected.py maps changed files to tests by name only.
+# The whole suite: it takes about a second, and its pre-existing failures are
+# rerun on the base commit and excused. Until 2026-11-08 the gate ran the toy's
+# change-based selection, scripts/affected.py (name-only mapping), and full-8 at
+# 0a80098 landed a sheets change that broke 9 CSV tests through it.
 landing_gate:
   - paths: ["sheet/**", "tests/**"]
     checks:
-      - cmd: python3 scripts/affected.py --run
-        purpose: tests of the changed modules
+      - cmd: python3 -m pytest -q
+        purpose: the whole suite
         timeout_minutes: 10
         rerun_on_base: python3 -m pytest -q {files}
 

@@ -182,7 +182,25 @@ def start(toy: Path, sha: str) -> None:
         log("systemd-run missing: the toy runs without a memory cap")
     cmd = [*scope, str(binary), "start", "--poll", "15", "--stall-minutes", "20"]
     subprocess.run(cmd, cwd=toy, env=toy_env(toy), check=True, text=True, capture_output=True)
-    log(f"started scheduler for {toy.name} (cgroup {unit or 'none'})")
+    if scope:
+        (toy / ".alloy" / "bench-unit").write_text(unit)
+    log(f"started scheduler for {toy.name} (cgroup {unit if scope else 'none'})")
+
+
+def stop(toy: Path, sha: str) -> None:
+    """Stop the toy's scheduler, then its whole scope: a process the scheduler
+    left behind keeps the scope alive (2026-11-08: full-9's scope ran six hours
+    past `scheduler down`)."""
+    alloy(sha, toy, "stop", "--now", check=False)
+    for _ in range(60):
+        if not scheduler_alive(toy):
+            break
+        time.sleep(5)
+    unit_file = toy / ".alloy" / "bench-unit"
+    if unit_file.exists() and shutil.which("systemctl"):
+        unit = unit_file.read_text().strip()
+        subprocess.run(["systemctl", "--user", "stop", f"{unit}.scope"], check=False, capture_output=True)
+        log(f"{toy.name}: stopped {unit}.scope")
 
 
 def ready_work(toy: Path) -> list[str]:
@@ -228,11 +246,11 @@ def wait(toys: list[Path], sha: str, hours: float) -> None:
             if quiet[toy] >= 3 or not alive:
                 why = "queue empty" if quiet[toy] >= 3 else "scheduler gone"
                 log(f"{toy.name}: {why}")
-                alloy(sha, toy, "stop", "--now", check=False)
+                stop(toy, sha)
                 pending.discard(toy)
     for toy in pending:
         log(f"{toy.name}: deadline reached; stopping")
-        alloy(sha, toy, "stop", "--now", check=False)
+        stop(toy, sha)
         (toy / ".alloy" / "bench-deadline").write_text(datetime.now(timezone.utc).isoformat())
 
 

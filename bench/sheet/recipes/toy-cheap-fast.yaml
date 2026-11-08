@@ -29,8 +29,8 @@ escalate:
 landing_gate:
   - paths: ["sheet/**", "tests/**"]
     checks:
-      - cmd: python3 scripts/affected.py --run
-        purpose: tests of the changed modules
+      - cmd: python3 -m pytest -q
+        purpose: the whole suite (see toy-cheap.yaml)
         timeout_minutes: 10
         rerun_on_base: python3 -m pytest -q {files}
 dispatch:
