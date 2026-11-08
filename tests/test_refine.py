@@ -151,3 +151,6 @@ async def test_refine_sees_the_other_open_tasks_and_fits_the_code(project, alloy
     assert others.splitlines()[:2] == ["- t-sibling: Undo", "- t-other-epic: Several sheets"]
     assert "Cells" not in others and "Editing" not in others and "Flaky" not in others
     assert "Fit the code as it is" in prompt and "Stay inside this task" in prompt
+    # bench full-11/toy-8: a guess in the context role's risks became an open question for a human.
+    assert "never a question or a decision left to the user" in prompt
+    assert "another agent's quick read of the code" in prompt

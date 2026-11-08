@@ -174,3 +174,62 @@ async def test_a_load_failure_is_never_pre_existing(project, alloy_home, fake_ha
     assert final["outcome"] == "done"
     assert len(fake_harnesses.calls_for("implement")) == 4
     assert _rerun_logs(alloy_home) == []
+
+
+# -- flaky at the gate (bench full-11, 2026-11-08) -----------------------------
+
+
+def _commit_flaky_base(project: Path, marker: Path) -> None:
+    # The check fails once (the first run anywhere) on a test that passes on the base and on any rerun.
+    (project / "check.sh").write_text(
+        f'if [ ! -e "{marker}" ]; then touch "{marker}"; echo "{NEW}"; exit 1; fi\n', encoding="utf-8"
+    )
+    subprocess.run(["git", "add", "-A"], cwd=project, check=True)
+    subprocess.run(["git", "commit", "-qm", "base with a flaky test"], cwd=project, check=True)
+
+
+async def test_a_flaky_failure_outside_the_diff_does_not_hold_the_bead(project, alloy_home, fake_harnesses, tmp_path):
+    _commit_flaky_base(project, tmp_path / "ran-once")
+    fake_harnesses.configure(
+        {
+            "implement": [
+                run_check_entry(PROBE, write=[{"path": "mypkg/__init__.py", "content": IMPLEMENTATION}]),
+                done_entry(reason="verified"),
+            ]
+        }
+    )
+    final = await _harness(project, alloy_home, _config()).start()
+
+    assert final["outcome"] == "done"
+    assert len(fake_harnesses.calls_for("implement")) == 2, "a flaky failure is not a new iteration"
+    assert any("flaky" in entry and "new broken" in entry for entry in final["journal"])
+    assert final["known_red"] == {"test/new_test.dart::new broken": "flaky"}
+
+
+async def test_a_failure_in_a_file_the_bead_changed_is_not_rerun_as_flaky(
+    project, alloy_home, fake_harnesses, tmp_path
+):
+    _commit_flaky_base(project, tmp_path / "ran-once")
+    fake_harnesses.configure(
+        {
+            "implement": [
+                run_check_entry(
+                    PROBE,
+                    write=[
+                        {"path": "mypkg/__init__.py", "content": IMPLEMENTATION},
+                        {"path": "test/new_test.dart", "content": "// changed by the bead\n"},
+                    ],
+                ),
+                done_entry(reason="verified"),
+                run_check_entry(PROBE),
+                done_entry(reason="fixed"),
+            ]
+        }
+    )
+    final = await _harness(project, alloy_home, _config()).start()
+
+    assert final["outcome"] == "done"
+    calls = fake_harnesses.calls_for("implement")
+    assert len(calls) == 4
+    assert "new broken" in calls[2]["prompt"], "the bead's own test file stays its failure"
+    assert not (final.get("known_red") or {})

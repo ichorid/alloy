@@ -916,3 +916,12 @@ def test_fast_track_static_layer_carries_the_ub_mode_design_rules():
     static = fast_track_prompt("# bead-a\n\nAdd slugify().", "acceptance", "", []).split(LAYER_SEPARATOR, 1)[0]
     assert DATA_SHAPE_RULE in static and REFACTOR_RULE in static
     assert "Ship the smallest edit that solves the task" in static
+
+
+def test_tests_role_bounds_its_time_limit_tests_and_judge_keeps_human_for_real_decisions():
+    """bench full-12/toy-14: red perf tests ran for 3 x 20 min; full-11/toy-8: the judge sent a met
+    task to a human over behaviour no criterion named."""
+    from alloy.recipes.role_prompts import JUDGE_STATIC, TESTS_STATIC
+
+    assert "A test of a time limit must stop itself" in TESTS_STATIC
+    assert "behaviour no acceptance criterion names is not one" in JUDGE_STATIC

@@ -19,9 +19,12 @@ A red check with `rerun_on_base` gets one more look first: Alloy reads the
 failing test names from its log (dart/flutter `[E]` lines, pytest `FAILED`
 lines), reruns just those test files on the run's base commit in a temporary
 `git worktree`, and when every one of them fails there as well, the failure is
-pre-existing -- journalled, noted on the bead, and the gate moves on. A load
-or compile failure, a timeout, a log without test names, or a test that
-passes on the base keeps the check red. The base result is kept per command
+pre-existing -- journalled, noted on the bead, and the gate moves on. A test
+that passes on the base, in a file the bead did not change, is run once more on
+the final tree; a pass there is flaky (journalled, filed as an alloy-bug,
+deduplicated) and does not hold the gate either. A load or compile failure, a
+timeout, a log without test names, or a test that passes on the base and fails
+again keeps the check red. The base result is kept per command
 for the rest of the run, so the base rerun happens at most once per command.
 
 All green: the run finishes. A red check sends the run back to `implement`
@@ -39,9 +42,12 @@ from typing import Any, Iterable
 from alloy.config import CommandSpec, LandingGateEntry
 from alloy.models import CheckRequest, CheckResult, JudgeDecision, clip
 from alloy.recipes.known_red import (  # noqa: F401  (failing_tests, LOAD_FAILURE: re-exported)
+    FLAKY,
     LOAD_FAILURE,
     failing_tests,
     failure_key,
+    file_outside_bugs,
+    passing_on_rerun,
     read_log,
     rerun_on_base,
 )
@@ -95,33 +101,49 @@ def gate_checks(entries: Iterable[LandingGateEntry], changed_paths: Iterable[str
     return list(selected.values())
 
 
-async def _known_red(ctx, spec: CommandSpec, result: CheckResult, memo: dict[str, Any]) -> str | None:
-    """A journal line when every failing test of this red gate check also
-    fails on the run's base commit; None when the failure stands."""
+async def _known_red(
+    ctx, spec: CommandSpec, result: CheckResult, memo: dict[str, Any]
+) -> tuple[str | None, dict[str, str]]:
+    """A journal line when every failing test of this red gate check either
+    fails the same way on the run's base commit or, in a file the bead did not
+    change, passes when run again (flaky); None when the failure stands. Also
+    the flaky verdicts found (test key -> FLAKY)."""
     if not spec.rerun_on_base or not result.runnable:
-        return None
+        return None, {}
     worktree = ctx.worktree
     current = failing_tests(read_log(result), roots=(worktree.path,))
     if not current or any(name == LOAD_FAILURE for _, name in current):
-        return None
+        return None, {}
     if "{files}" in spec.rerun_on_base and any(file is None for file, _ in current):
-        return None
+        return None, {}
     files = sorted({file for file, _ in current if file})
     base = memo.get(spec.cmd)
     if base is None:
         base = await _rerun_on_base(ctx, spec, files)
         memo[spec.cmd] = base
-    base_failures = set(base.get("failures") or ())
-    missing = [failure_key(test) for test in sorted(current, key=failure_key) if failure_key(test) not in base_failures]
-    if missing or not base.get("ran"):
+    base_failures = set(base.get("failures") or ()) if base.get("ran") else set()
+    keys = sorted(failure_key(test) for test in current)
+    missing = [key for key in keys if key not in base_failures]
+    # A test that passes on the base may still be flaky rather than broken by this bead (bench full-11: four
+    # gate rounds spent on one flaky test the check loop had already excused).
+    changed = set(ctx.worktrees.changed_files(ctx.worktree))
+    outside = [test for test in current if failure_key(test) in missing and test[0] and test[0] not in changed]
+    flaky = {key: FLAKY for key in await passing_on_rerun(ctx, spec.rerun_on_base, outside)}
+    missing = [key for key in missing if key not in flaky]
+    if missing:
         log.info("%s: gate check `%s` red beyond its base (%s)", ctx.bead.id, spec.cmd, missing[:3] or base.get("why"))
-        return None
+        return None, {}
     short = worktree.base_commit[:9]
-    names = ", ".join(failure_key(test) for test in sorted(current, key=failure_key))
+    pre = [key for key in keys if key not in flaky]
+    parts = []
+    if pre:
+        parts.append(f"fail the same way on the base commit {short} (pre-existing): {clip(', '.join(pre), 600)}")
+    if flaky:
+        parts.append(f"pass when run again (flaky): {clip(', '.join(sorted(flaky)), 600)}")
     return (
-        f"landing gate check {_label(spec)} failed only on tests that fail the same way on the base commit "
-        f"{short}: {clip(names, 600)}; treated as pre-existing, not this bead's failure"
-    )
+        f"landing gate check {_label(spec)} failed only on tests that {'; or that '.join(parts)}; "
+        "not this bead's failure"
+    ), flaky
 
 
 async def _rerun_on_base(ctx, spec: CommandSpec, files: list[str]) -> dict[str, Any]:
@@ -143,6 +165,7 @@ def _make_node_landing_gate(ctx):
         selected = gate_checks(ctx.recipe.landing_gate, ctx.worktrees.changed_files(ctx.worktree, keep_lockfiles=True))
         records: list[dict[str, Any]] = []
         memo = dict(state.get("landing_gate_base_failures") or {})
+        known_red = dict(state.get("known_red") or {})
         journal: list[str] = []
         for spec in selected:
             request = CheckRequest(command=spec.cmd, purpose=spec.purpose or LANDING_GATE_PURPOSE, kind="regression")
@@ -152,16 +175,19 @@ def _make_node_landing_gate(ctx):
             records.append(result.model_dump(mode="json"))
             if result.ok:
                 continue
-            known = await _known_red(ctx, spec, result, memo)
+            known, flaky = await _known_red(ctx, spec, result, memo)
             if known is not None:
                 log.warning("%s: %s", ctx.bead.id, known)
                 journal.append(f"iteration {iteration}: the {known}")
                 if ctx.beads is not None:
                     ctx.beads.note(ctx.bead.id, f"Alloy: the {known}.")
+                fresh = {key: kind for key, kind in flaky.items() if key not in known_red}
+                known_red.update(flaky)
+                file_outside_bugs(ctx, fresh, result)
                 continue
             failed = _gate_failed(ctx, state, spec, result)
             failed["journal"] = journal + failed["journal"]
-            return {"checks": records, "landing_gate_base_failures": memo, **failed}
+            return {"checks": records, "landing_gate_base_failures": memo, "known_red": known_red, **failed}
         if records:
             log.info("%s: landing gate green (%d check(s))", ctx.bead.id, len(records))
         return {
@@ -169,6 +195,7 @@ def _make_node_landing_gate(ctx):
             "stage": "landing-gate",
             "landing_gate_route": "finish",
             "landing_gate_base_failures": memo,
+            "known_red": known_red,
             "journal": journal,
         }
 

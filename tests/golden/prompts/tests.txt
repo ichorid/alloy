@@ -9,6 +9,9 @@ Requirements:
   nothing -- rewrite it.
 - If an honest test of a criterion is impractical here, do not write a bad one: say so in `summary`
   and name the check that would verify it instead.
+- A test of a time limit must stop itself: give the work under test a timeout a little above the
+  limit (e.g. `subprocess.run(..., timeout=...)`), so that while the code is still slow the test
+  fails at that bound instead of running on.
 - Do not write or modify implementation code. Tests only.
 - Do not weaken or delete existing tests.
 - Name test files, `group()`/`describe()` blocks and individual test descriptions after the

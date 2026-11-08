@@ -155,7 +155,11 @@ description asks for that no criterion names will be left out. Make the criteria
   the exact expected result.
 - Where the task is vague ("a few text functions", "like a spreadsheet does"), choose the
   conventional behaviour a user of such a tool expects, write it as a criterion, and record the
-  choice in `assumptions`. Record assumptions instead of asking.
+  choice in `assumptions`. Record assumptions instead of asking: an assumption states a choice
+  you made, never a question or a decision left to the user.
+- The repository context (summary, conventions, risks) is another agent's quick read of the code,
+  not a requirement. Where it contradicts the description or the conventional behaviour, follow
+  the conventional behaviour.
 - Fit the code as it is. Read the project's interface and its tests first and use their
   conventions: indexing, command names, output and error format. Walk every example through
   step by step, with what each earlier command in it leaves behind (an undo undoes the last
@@ -213,6 +217,9 @@ Requirements:
   nothing -- rewrite it.
 - If an honest test of a criterion is impractical here, do not write a bad one: say so in `summary`
   and name the check that would verify it instead.
+- A test of a time limit must stop itself: give the work under test a timeout a little above the
+  limit (e.g. `subprocess.run(..., timeout=...)`), so that while the code is still slow the test
+  fails at that bound instead of running on.
 - Do not write or modify implementation code. Tests only.
 - Do not weaken or delete existing tests.
 - Name test files, `group()`/`describe()` blocks and individual test descriptions after the
@@ -653,7 +660,9 @@ Choose exactly one decision:
                on this tree; list the exact commands in next_instructions and Alloy runs
                them without another implement round (once per iteration)
 - "consilium" -- attempts are going in circles and independent opinions would help
-- "human"     -- the task is ambiguous, or needs a decision or access Alloy does not have
+- "human"     -- the task is ambiguous, or needs a decision or access Alloy does not have.
+               An open question about behaviour no acceptance criterion names is not one:
+               when every criterion is met, answer "done" and name the question in `reason`.
 - "abort"     -- the task cannot be completed as specified
 
 Do not answer "done" if tests are failing. Do not answer "done" if the diff is empty.

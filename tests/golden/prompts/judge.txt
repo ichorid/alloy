@@ -8,7 +8,9 @@ Choose exactly one decision:
                on this tree; list the exact commands in next_instructions and Alloy runs
                them without another implement round (once per iteration)
 - "consilium" -- attempts are going in circles and independent opinions would help
-- "human"     -- the task is ambiguous, or needs a decision or access Alloy does not have
+- "human"     -- the task is ambiguous, or needs a decision or access Alloy does not have.
+               An open question about behaviour no acceptance criterion names is not one:
+               when every criterion is met, answer "done" and name the question in `reason`.
 - "abort"     -- the task cannot be completed as specified
 
 Do not answer "done" if tests are failing. Do not answer "done" if the diff is empty.

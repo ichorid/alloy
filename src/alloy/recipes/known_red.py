@@ -194,7 +194,7 @@ async def excuse_outside_failures(
     changed = set(ctx.worktrees.changed_files(ctx.worktree))
     # Flaky: a test in a file this bead did not touch that passes when run again.
     outside = sorted(t for t in current if failure_key(t) not in excused and t[0] not in changed)
-    found = {key: FLAKY for key in await _passing_on_rerun(ctx, template, outside)}
+    found = {key: FLAKY for key in await passing_on_rerun(ctx, template, outside)}
     # Pre-existing: still red here, and red the same way on the base commit.
     still_red = keys - set(excused) - set(found)
     found.update({key: PRE_EXISTING for key in await _red_on_base(ctx, template, still_red, result)})
@@ -204,7 +204,7 @@ async def excuse_outside_failures(
     return result.model_copy(update={"excused": excused, "all_excused": keys <= set(excused)}), found
 
 
-async def _passing_on_rerun(ctx, template: str, tests: list[tuple[str | None, str]]) -> set[str]:
+async def passing_on_rerun(ctx, template: str, tests: list[tuple[str | None, str]]) -> set[str]:
     if not tests:
         return set()
     files = sorted({file for file, _ in tests if file})
