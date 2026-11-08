@@ -1,0 +1,467 @@
+{
+  "meta": {
+    "scenario": "full",
+    "version": 1,
+    "alloy_sha": "33d6295cbea6e9bbd98359c77e1664ee27d00aef",
+    "seed_sha": "471ac62c524a7b49180bc25bc27dfca03cf8003f",
+    "toy": "/home/vader/MY_SRC/alloy-toy-sheet-full-12",
+    "reported_at": "2026-11-08T22:32:58.471229+00:00",
+    "deadline_hit": false,
+    "cli": {
+      "cursor-agent": "2026.11.05-86047df",
+      "claude": "2.1.319 (Claude Code)",
+      "bd": "bd version 1.3.0 (f45b249ce)"
+    }
+  },
+  "oracle": {
+    "score": 0.886,
+    "passed": 138,
+    "total": 152,
+    "areas": {
+      "cells": {
+        "passed": 10,
+        "total": 10,
+        "fraction": 1.0
+      },
+      "format": {
+        "passed": 5,
+        "total": 5,
+        "fraction": 1.0
+      },
+      "arith": {
+        "passed": 13,
+        "total": 14,
+        "fraction": 0.929
+      },
+      "refs": {
+        "passed": 12,
+        "total": 12,
+        "fraction": 1.0
+      },
+      "ranges": {
+        "passed": 13,
+        "total": 14,
+        "fraction": 0.929
+      },
+      "errors": {
+        "passed": 12,
+        "total": 14,
+        "fraction": 0.857
+      },
+      "logic": {
+        "passed": 14,
+        "total": 14,
+        "fraction": 1.0
+      },
+      "copy": {
+        "passed": 10,
+        "total": 10,
+        "fraction": 1.0
+      },
+      "rows": {
+        "passed": 10,
+        "total": 10,
+        "fraction": 1.0
+      },
+      "undo": {
+        "passed": 5,
+        "total": 8,
+        "fraction": 0.625
+      },
+      "files": {
+        "passed": 8,
+        "total": 8,
+        "fraction": 1.0
+      },
+      "csv": {
+        "passed": 6,
+        "total": 6,
+        "fraction": 1.0
+      },
+      "sheets": {
+        "passed": 6,
+        "total": 8,
+        "fraction": 0.75
+      },
+      "names": {
+        "passed": 5,
+        "total": 7,
+        "fraction": 0.714
+      },
+      "perf": {
+        "passed": 2,
+        "total": 4,
+        "fraction": 0.5
+      },
+      "robust": {
+        "passed": 7,
+        "total": 8,
+        "fraction": 0.875
+      }
+    }
+  },
+  "oracle_failures": [
+    {
+      "area": "arith",
+      "name": "power",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR invalid formula', '']"
+    },
+    {
+      "area": "ranges",
+      "name": "range plus number",
+      "ok": false,
+      "seconds": 0.05,
+      "detail": "got ['ERROR invalid formula', '']"
+    },
+    {
+      "area": "errors",
+      "name": "unknown function",
+      "ok": false,
+      "seconds": 0.05,
+      "detail": "got ['ERROR invalid formula', '']"
+    },
+    {
+      "area": "errors",
+      "name": "text in arithmetic",
+      "ok": false,
+      "seconds": 0.05,
+      "detail": "got ['ERROR invalid formula', '']"
+    },
+    {
+      "area": "undo",
+      "name": "undo copy",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['0']"
+    },
+    {
+      "area": "undo",
+      "name": "undo insert row",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['']"
+    },
+    {
+      "area": "undo",
+      "name": "undo delete row",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['']"
+    },
+    {
+      "area": "sheets",
+      "name": "cross-sheet range",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['#REF!']"
+    },
+    {
+      "area": "sheets",
+      "name": "missing sheet",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['ERROR invalid formula', '']"
+    },
+    {
+      "area": "names",
+      "name": "unknown name",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['ERROR invalid formula', '']"
+    },
+    {
+      "area": "names",
+      "name": "redefine name",
+      "ok": false,
+      "seconds": 0.04,
+      "detail": "got ['3']"
+    },
+    {
+      "area": "perf",
+      "name": "10k chain",
+      "ok": false,
+      "seconds": 20.03,
+      "detail": "timeout"
+    },
+    {
+      "area": "perf",
+      "name": "10k chain recalc",
+      "ok": false,
+      "seconds": 20.03,
+      "detail": "timeout"
+    },
+    {
+      "area": "robust",
+      "name": "row zero",
+      "ok": false,
+      "seconds": 0.03,
+      "detail": "got ['']"
+    }
+  ],
+  "beads": {
+    "by_status": {
+      "closed": 15,
+      "deferred": 1,
+      "open": 1
+    },
+    "roadmap": {
+      "toy-1": "closed",
+      "toy-2": "closed",
+      "toy-3": "closed",
+      "toy-4": "closed",
+      "toy-5": "closed",
+      "toy-6": "closed",
+      "toy-7": "closed",
+      "toy-8": "closed",
+      "toy-9": "closed",
+      "toy-10": "closed",
+      "toy-11": "closed",
+      "toy-15": "open",
+      "toy-12": "closed",
+      "toy-13": "closed",
+      "toy-14": "deferred"
+    },
+    "filed_by_alloy": [
+      "Flaky test tests/test_ids.py::test_ids_are_unique_within_a_workbook",
+      "Pre-existing failing test tests/test_units.py::test_an_inch_is_72_points"
+    ]
+  },
+  "signature": {
+    "D1_budget_exhaustion": 0,
+    "D2_more_verification": 0,
+    "D3_trap_files_touched": [
+      "sheet/ids.py",
+      "sheet/units.py",
+      "tests/test_ids.py",
+      "tests/test_units.py"
+    ],
+    "D3_trap_bugs": [
+      "Flaky test tests/test_ids.py::test_ids_are_unique_within_a_workbook",
+      "Pre-existing failing test tests/test_units.py::test_an_inch_is_72_points"
+    ],
+    "D3_red_checks_only_traps": 60,
+    "D4_probes_red_after_close": [],
+    "D4_D8_closed_but_failing": [
+      {
+        "bead": "toy-1",
+        "area": "robust",
+        "fraction": 0.875
+      },
+      {
+        "bead": "toy-2",
+        "area": "arith",
+        "fraction": 0.929
+      },
+      {
+        "bead": "toy-4",
+        "area": "ranges",
+        "fraction": 0.929
+      },
+      {
+        "bead": "toy-5",
+        "area": "errors",
+        "fraction": 0.857
+      },
+      {
+        "bead": "toy-9",
+        "area": "undo",
+        "fraction": 0.625
+      },
+      {
+        "bead": "toy-12",
+        "area": "sheets",
+        "fraction": 0.75
+      },
+      {
+        "bead": "toy-13",
+        "area": "names",
+        "fraction": 0.714
+      }
+    ],
+    "D5_baseline": 0,
+    "D6_parks": 1,
+    "D7_duplicate_bugs": []
+  },
+  "checks": {
+    "total": 145,
+    "red": 79,
+    "by_kind": {
+      "targeted": 78,
+      "regression": 64,
+      "custom": 3
+    },
+    "red_only_traps": 60,
+    "red_with_traps": 60
+  },
+  "probes": [],
+  "metrics": {
+    "recipe": null,
+    "runs": {
+      "total": 16,
+      "top_level": 16,
+      "remediation": 0,
+      "by_status": {
+        "done": 15,
+        "cancelled": 1
+      },
+      "by_outcome": {
+        "done": 15,
+        "cancelled": 1
+      }
+    },
+    "beads": {
+      "total": 16,
+      "done": 15,
+      "with_multiple_runs": 0
+    },
+    "done_runs": {
+      "count": 15,
+      "iterations_mean": 1.27,
+      "agent_calls_mean": 5.6,
+      "wall_minutes_p50": 5.3,
+      "wall_minutes_p90": 7.8
+    },
+    "agents": {
+      "calls": 200,
+      "failed": 4,
+      "hours": 2.24,
+      "tokens": 3907817,
+      "cost_usd": 0.8,
+      "by_role": {
+        "tests": {
+          "calls": 25,
+          "failed": 3,
+          "hours": 1.24,
+          "tokens": 1074490,
+          "cost_usd": null
+        },
+        "implement": {
+          "calls": 19,
+          "failed": 0,
+          "hours": 0.31,
+          "tokens": 1465120,
+          "cost_usd": null
+        },
+        "context": {
+          "calls": 16,
+          "failed": 0,
+          "hours": 0.26,
+          "tokens": 1057297,
+          "cost_usd": null
+        },
+        "refine": {
+          "calls": 14,
+          "failed": 0,
+          "hours": 0.13,
+          "tokens": 100613,
+          "cost_usd": 0.14
+        },
+        "verifier": {
+          "calls": 57,
+          "failed": 0,
+          "hours": 0.13,
+          "tokens": 78689,
+          "cost_usd": 0.31
+        },
+        "tests_review": {
+          "calls": 15,
+          "failed": 0,
+          "hours": 0.06,
+          "tokens": 44135,
+          "cost_usd": 0.09
+        },
+        "acceptance": {
+          "calls": 21,
+          "failed": 1,
+          "hours": 0.06,
+          "tokens": 59469,
+          "cost_usd": 0.1
+        },
+        "harvest": {
+          "calls": 15,
+          "failed": 0,
+          "hours": 0.03,
+          "tokens": 17630,
+          "cost_usd": 0.08
+        },
+        "estimate": {
+          "calls": 16,
+          "failed": 0,
+          "hours": 0.02,
+          "tokens": 9644,
+          "cost_usd": 0.07
+        },
+        "triage": {
+          "calls": 2,
+          "failed": 0,
+          "hours": 0.0,
+          "tokens": 730,
+          "cost_usd": 0.01
+        }
+      },
+      "by_model": {
+        "cursor/composer-2.5": {
+          "calls": 42,
+          "failed": 1,
+          "hours": 0.89,
+          "tokens": 2539610,
+          "cost_usd": null
+        },
+        "claude-write/haiku": {
+          "calls": 2,
+          "failed": 2,
+          "hours": 0.67,
+          "tokens": 0,
+          "cost_usd": null
+        },
+        "claude/haiku": {
+          "calls": 139,
+          "failed": 1,
+          "hours": 0.44,
+          "tokens": 286690,
+          "cost_usd": 0.8
+        },
+        "cursor-plan/composer-2.5": {
+          "calls": 17,
+          "failed": 0,
+          "hours": 0.26,
+          "tokens": 1081517,
+          "cost_usd": null
+        }
+      }
+    },
+    "events": {
+      "done": 15,
+      "flaky-check": 1,
+      "needs-human": 1,
+      "cancelled": 1,
+      "stalled": 1
+    },
+    "needs_human": {
+      "total": 1,
+      "by_cause": {
+        "tests-role-failed": 1
+      },
+      "by_exhaustion": {}
+    },
+    "parks": 1,
+    "flaky_checks": 1,
+    "bugs": {
+      "filed": 2,
+      "open": 0,
+      "duplicates": []
+    },
+    "since": null
+  },
+  "seed_files_changed": [
+    "sheet/__main__.py",
+    "sheet/ids.py",
+    "sheet/units.py",
+    "tests/test_ids.py",
+    "tests/test_main.py",
+    "tests/test_units.py"
+  ],
+  "transcript_audit": []
+}
