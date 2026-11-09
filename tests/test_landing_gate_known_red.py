@@ -233,3 +233,30 @@ async def test_a_failure_in_a_file_the_bead_changed_is_not_rerun_as_flaky(
     assert len(calls) == 4
     assert "new broken" in calls[2]["prompt"], "the bead's own test file stays its failure"
     assert not (final.get("known_red") or {})
+
+
+async def test_a_flaky_failure_gets_a_second_rerun(project, alloy_home, fake_harnesses, tmp_path):
+    """bench full-13 at 5a20630: the flaky trap failed about half of single reruns."""
+    counter = tmp_path / "runs"
+    # Run 1 (the gate) and run 3 (the first rerun) fail; run 2 (the base) and run 4 (the second rerun) pass.
+    (project / "check.sh").write_text(
+        f'n=$(( $(cat "{counter}" 2>/dev/null || echo 0) + 1 )); echo $n > "{counter}"\n'
+        f'if [ $n = 1 ] || [ $n = 3 ]; then echo "{NEW}"; exit 1; fi\n',
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "-A"], cwd=project, check=True)
+    subprocess.run(["git", "commit", "-qm", "base with a flaky test"], cwd=project, check=True)
+    fake_harnesses.configure(
+        {
+            "implement": [
+                run_check_entry(PROBE, write=[{"path": "mypkg/__init__.py", "content": IMPLEMENTATION}]),
+                done_entry(reason="verified"),
+            ]
+        }
+    )
+    final = await _harness(project, alloy_home, _config()).start()
+
+    assert final["outcome"] == "done"
+    assert len(fake_harnesses.calls_for("implement")) == 2
+    assert counter.read_text().strip() == "4"
+    assert final["known_red"] == {"test/new_test.dart::new broken": "flaky"}

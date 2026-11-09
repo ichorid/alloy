@@ -282,3 +282,38 @@ async def test_a_filed_bug_whose_tests_still_fail_runs_as_usual(project, alloy_h
         harness.close()
 
     assert fake_harnesses.calls, "the run goes on to the agents"
+
+
+# -- known flaky tests (bench full-13 at 5a20630) -------------------------------
+
+
+async def test_known_flaky_tests_need_no_rerun_and_others_get_two(monkeypatch):
+    from alloy.recipes import known_red
+
+    reruns: list[list[str]] = []
+    outcomes = iter([set(), {"t_c.py::c"}])
+
+    async def fake_rerun(ctx, template, tests):
+        reruns.append(sorted(known_red.failure_key(t) for t in tests))
+        return next(outcomes)
+
+    monkeypatch.setattr(known_red, "passing_on_rerun", fake_rerun)
+    beads = _Beads(
+        [
+            {"title": "Flaky test t_b.py::b", "status": "open"},
+            {"title": "Flaky tests in t_d.py (2)", "status": "open", "metadata": {"alloy_flaky": "t_d.py::d"}},
+            {"title": "Flaky test t_e.py::e", "status": "closed"},
+        ]
+    )
+    tests = [("t_a.py", "a"), ("t_b.py", "b"), ("t_c.py", "c"), ("t_d.py", "d"), ("t_e.py", "e")]
+    flaky = await known_red.find_flaky(_bug_ctx(beads), "pytest -q {files}", tests, {"t_a.py::a": known_red.FLAKY})
+
+    assert flaky == {"t_a.py::a", "t_b.py::b", "t_c.py::c", "t_d.py::d"}
+    assert reruns == [["t_c.py::c", "t_e.py::e"], ["t_c.py::c", "t_e.py::e"]]
+
+
+def test_a_flaky_bug_records_its_tests_in_metadata():
+    beads = _Beads([])
+    found = {"t_x.py::one": FLAKY, "t_x.py::two": FLAKY}
+    file_outside_bugs(_bug_ctx(beads), found, CheckResult(command="pytest", exit_code=1))
+    assert beads.created[0]["metadata"]["alloy_flaky"] == "t_x.py::one t_x.py::two"

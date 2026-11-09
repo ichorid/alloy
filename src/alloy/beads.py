@@ -84,6 +84,7 @@ LABEL_NEEDS_SPEC = "alloy-needs-spec"
 META_REFINED = "alloy_refined"
 """The refine role's decision for this bead; set once, so later runs skip it."""
 META_KNOWN_RED = "alloy_known_red"
+META_FLAKY = "alloy_flaky"
 """On a bug Alloy filed for pre-existing failing tests: the test ids, space
 separated. A run of that bug first reruns them and closes it when they pass
 (see `known_red.already_fixed`)."""

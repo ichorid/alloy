@@ -21,8 +21,9 @@ lines), reruns just those test files on the run's base commit in a temporary
 `git worktree`, and when every one of them fails there as well, the failure is
 pre-existing -- journalled, noted on the bead, and the gate moves on. A test
 that passes on the base, in a file the bead did not change, is run once more on
-the final tree; a pass there is flaky (journalled, filed as an alloy-bug,
-deduplicated) and does not hold the gate either. A load or compile failure, a
+the final tree (up to twice); a pass there, or the run's earlier flaky
+verdict or an open flaky alloy-bug for it, makes it flaky: journalled, filed
+(deduplicated), and it does not hold the gate either. A load or compile failure, a
 timeout, a log without test names, or a test that passes on the base and fails
 again keeps the check red. The base result is kept per command
 for the rest of the run, so the base rerun happens at most once per command.
@@ -47,7 +48,7 @@ from alloy.recipes.known_red import (  # noqa: F401  (failing_tests, LOAD_FAILUR
     failing_tests,
     failure_key,
     file_outside_bugs,
-    passing_on_rerun,
+    find_flaky,
     read_log,
     rerun_on_base,
 )
@@ -102,11 +103,11 @@ def gate_checks(entries: Iterable[LandingGateEntry], changed_paths: Iterable[str
 
 
 async def _known_red(
-    ctx, spec: CommandSpec, result: CheckResult, memo: dict[str, Any]
+    ctx, spec: CommandSpec, result: CheckResult, memo: dict[str, Any], known: dict[str, str]
 ) -> tuple[str | None, dict[str, str]]:
     """A journal line when every failing test of this red gate check either
     fails the same way on the run's base commit or, in a file the bead did not
-    change, passes when run again (flaky); None when the failure stands. Also
+    change, is known flaky or passes when run again; None when the failure stands. Also
     the flaky verdicts found (test key -> FLAKY)."""
     if not spec.rerun_on_base or not result.runnable:
         return None, {}
@@ -128,7 +129,7 @@ async def _known_red(
     # gate rounds spent on one flaky test the check loop had already excused).
     changed = set(ctx.worktrees.changed_files(ctx.worktree))
     outside = [test for test in current if failure_key(test) in missing and test[0] and test[0] not in changed]
-    flaky = {key: FLAKY for key in await passing_on_rerun(ctx, spec.rerun_on_base, outside)}
+    flaky = {key: FLAKY for key in await find_flaky(ctx, spec.rerun_on_base, outside, known)}
     missing = [key for key in missing if key not in flaky]
     if missing:
         log.info("%s: gate check `%s` red beyond its base (%s)", ctx.bead.id, spec.cmd, missing[:3] or base.get("why"))
@@ -175,7 +176,7 @@ def _make_node_landing_gate(ctx):
             records.append(result.model_dump(mode="json"))
             if result.ok:
                 continue
-            known, flaky = await _known_red(ctx, spec, result, memo)
+            known, flaky = await _known_red(ctx, spec, result, memo, known_red)
             if known is not None:
                 log.warning("%s: %s", ctx.bead.id, known)
                 journal.append(f"iteration {iteration}: the {known}")

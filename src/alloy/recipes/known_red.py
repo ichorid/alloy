@@ -15,7 +15,8 @@ Two users share the machinery here:
 - the check loop (`verification.rerun_tests`, a command template with
   `{files}` such as `pytest -q {files}`): every red check whose log names
   failing tests gets one more look. Failing tests outside the files this
-  bead changed run once more on the current tree -- a pass is *flaky* -- and
+  bead changed are *flaky* when this run or an open alloy-bug already found
+  them flaky, or when one of up to two reruns on the current tree passes; and
   the tests still red run on the base commit in a throwaway worktree -- a
   failure there is *pre-existing*. A check whose every failure is one of the
   two is *excused*: it no longer counts as red, its headline names the tests,
@@ -192,16 +193,70 @@ async def excuse_outside_failures(
     keys = {failure_key(t) for t in current}
     excused = {key: PRE_EXISTING for key in keys if known.get(key) == PRE_EXISTING}
     changed = set(ctx.worktrees.changed_files(ctx.worktree))
-    # Flaky: a test in a file this bead did not touch that passes when run again.
+    # Flaky: a test in a file this bead did not touch that is known flaky or passes when run again.
     outside = sorted(t for t in current if failure_key(t) not in excused and t[0] not in changed)
-    found = {key: FLAKY for key in await passing_on_rerun(ctx, template, outside)}
+    flaky = await find_flaky(ctx, template, outside, known)
+    excused.update({key: FLAKY for key in flaky})
+    found = {key: FLAKY for key in flaky if known.get(key) != FLAKY}
     # Pre-existing: still red here, and red the same way on the base commit.
-    still_red = keys - set(excused) - set(found)
+    still_red = keys - set(excused)
     found.update({key: PRE_EXISTING for key in await _red_on_base(ctx, template, still_red, result)})
     excused.update(found)
     if not excused:
         return result, {}
     return result.model_copy(update={"excused": excused, "all_excused": keys <= set(excused)}), found
+
+
+FLAKY_RERUNS = 2
+"""Reruns a red test gets before it counts as failing for real. One was not
+enough: the bench's flaky trap failed 14 of 26 single isolated reruns, and a
+whole-suite gate held toy-5 for three rounds on it (bench full-13 at 5a20630)."""
+
+
+async def find_flaky(ctx, template: str, tests: list[tuple[str | None, str]], known: dict[str, str]) -> set[str]:
+    """The keys of `tests` that are flaky: already found flaky in this run
+    (`known`), named by an open flaky alloy-bug, or passing in one of up to
+    `FLAKY_RERUNS` reruns. The caller passes only tests outside the bead's
+    changed files."""
+    flaky = {failure_key(t) for t in tests if known.get(failure_key(t)) == FLAKY}
+    flaky |= {failure_key(t) for t in tests} & open_flaky_keys(ctx)
+    remaining = [t for t in tests if failure_key(t) not in flaky]
+    for _ in range(FLAKY_RERUNS):
+        if not remaining:
+            break
+        passed = await passing_on_rerun(ctx, template, remaining)
+        flaky |= passed
+        remaining = [t for t in remaining if failure_key(t) not in passed]
+    return flaky
+
+
+def open_flaky_keys(ctx) -> set[str]:
+    """Test keys named by open alloy-bug beads filed as flaky: their
+    `META_FLAKY` metadata, or a "Flaky test <key>" title (bugs filed before
+    the metadata)."""
+    from alloy.beads import META_FLAKY
+
+    if ctx.beads is None:
+        return set()
+    try:
+        rows = ctx.beads.filed_bugs()
+    except Exception:
+        log.warning("could not list filed bugs; no known flaky tests", exc_info=True)
+        return set()
+    keys: set[str] = set()
+    for row in rows:
+        if row.get("status") == "closed":
+            continue
+        metadata = row.get("metadata")
+        if isinstance(metadata, dict) and metadata.get(META_FLAKY):
+            keys.update(str(metadata[META_FLAKY]).split())
+        title = str(row.get("title") or "")
+        if title.startswith(FLAKY_TITLE):
+            keys.add(title[len(FLAKY_TITLE) :].strip())
+    return keys
+
+
+FLAKY_TITLE = "Flaky test "
 
 
 async def passing_on_rerun(ctx, template: str, tests: list[tuple[str | None, str]]) -> set[str]:
@@ -286,7 +341,7 @@ def file_outside_bugs(ctx, found: dict[str, str], result: CheckResult) -> list[s
     whose fixes then overlapped)."""
     if ctx.beads is None or not found:
         return []
-    from alloy.beads import LABEL_BUG, META_DISCOVERED_IN_RUN, META_KNOWN_RED
+    from alloy.beads import LABEL_BUG, META_DISCOVERED_IN_RUN, META_FLAKY, META_KNOWN_RED
 
     try:
         named = " ".join(
@@ -305,8 +360,7 @@ def file_outside_bugs(ctx, found: dict[str, str], result: CheckResult) -> list[s
     for (kind, file), keys in sorted(groups.items()):
         try:
             metadata = {META_DISCOVERED_IN_RUN: ctx.run_id}
-            if kind == PRE_EXISTING:
-                metadata[META_KNOWN_RED] = " ".join(keys)
+            metadata[META_KNOWN_RED if kind == PRE_EXISTING else META_FLAKY] = " ".join(keys)
             bug_id = ctx.beads.create_bug(
                 **_outside_bug(ctx, kind, file, keys, result),
                 claim=False,

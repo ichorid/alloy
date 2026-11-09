@@ -348,10 +348,12 @@ commit in a temporary `git worktree` under the Alloy worktree root, runs
 cannot compile without it), then `rerun_on_base` with `{files}` replaced by
 the failing test files. If every failing test fails there too, the failure is
 pre-existing: journalled, noted on the bead, and the gate moves on to its next
-check. A test that passes on the base, in a file the bead did not change, runs
-once more on the final tree with the same `rerun_on_base` command; a pass there
-is flaky: journalled, filed as an `alloy-bug` (deduplicated), and it does not
-hold the gate either. A load or compile failure, a timed-out or unparseable
+check. A test that passes on the base, in a file the bead did not change, is
+flaky when the run already found it flaky, when an open `alloy-bug` names it as
+flaky, or when one of up to two reruns of it on the final tree (the same
+`rerun_on_base` command) passes: journalled, filed as an `alloy-bug`
+(deduplicated), and it does not hold the gate either. The check loop's
+`verification.rerun_tests` uses the same rule. A load or compile failure, a timed-out or unparseable
 run, or a test that passes on the base and fails again keeps the check red. The base result is kept for the
 rest of the run, so each command reruns on the base at most once.
 
